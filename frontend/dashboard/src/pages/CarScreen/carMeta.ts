@@ -1,4 +1,12 @@
-import { Alert02Icon, Rotate360Icon, SleepingIcon, SmartPhone01Icon, SteeringIcon, ViewIcon } from '@hugeicons/core-free-icons'
+import {
+  Alert02Icon,
+  Rotate360Icon,
+  SleepingIcon,
+  SmartPhone01Icon,
+  SteeringIcon,
+  ViewIcon,
+  ViewOffSlashIcon,
+} from '@hugeicons/core-free-icons'
 import type { IconSvgElement } from '@hugeicons/react'
 import type { Behavior, DashboardLight, SafetyLevel } from '@/api/types'
 
@@ -8,9 +16,10 @@ export interface BehaviorMeta {
   icon: IconSvgElement
 }
 
-/** The 5 labels the backend knows (docs/API.md §7), in display order */
+/** The labels the backend knows (docs/API.md §4), in display order */
 export const BEHAVIORS: (BehaviorMeta & { id: Behavior })[] = [
   { id: 'looking_at_phone', label: 'Looking at phone', icon: SmartPhone01Icon },
+  { id: 'eyes_off_road', label: 'Eyes off the road', icon: ViewOffSlashIcon },
   { id: 'looking_behind', label: 'Looking behind', icon: ViewIcon },
   { id: 'turning_around', label: 'Turning around', icon: Rotate360Icon },
   { id: 'hands_off_wheel', label: 'Hands off the wheel', icon: SteeringIcon },

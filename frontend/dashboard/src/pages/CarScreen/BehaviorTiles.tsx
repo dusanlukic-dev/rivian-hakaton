@@ -14,7 +14,7 @@ const BehaviorTiles = ({ active }: BehaviorTilesProps) => {
   const tiles = [...BEHAVIORS, ...unknown.map(behaviorMeta)]
 
   return (
-    <section aria-label="Detected behaviours" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
+    <section aria-label="Detected behaviours" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
       {tiles.map(({ id, label, icon }) => {
         const seconds = active[id]
         const lit = seconds !== undefined
