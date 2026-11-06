@@ -6,7 +6,11 @@ promeni, menja se i ovaj fajl.
 > **Za Claude koji pravi frontend:** koristi tačno ove rute, polja i tipove (sekcija 4 se može
 > kopirati u `src/api/types.ts`). Ne izmišljaj endpointe ni polja. Ako nešto fali, to je izmena
 > backenda, pa to reci developeru umesto da pretpostavljaš. Aplikacija **ne šalje telemetriju**,
-> to rade modeli za kameru.
+> to rade kamera i model.
+
+Backend ima dva dela ([ARCHITECTURE.md](ARCHITECTURE.md)): **koordinator** (u kolima: WebSocket,
+kamera, model, score, sekcije od 2 s) i **server** (nalozi, istorija, izveštaj, slike). U demo-u oba
+odgovaraju na istoj adresi (`:8000`), pa aplikacija ima jednu adresu. U §5 piše koji deo služi koju rutu.
 
 ## 1. Šta aplikacija radi
 
@@ -17,8 +21,11 @@ promeni, menja se i ovaj fajl.
    Simulira vibraciju sedišta i zvučni signal.
 4. Kad score padne ispod 10, prikazuje uzbunu za hitan slučaj.
 5. Vozač završava vožnju i vidi statistiku sa savetima.
-6. Izveštaj vožnje (`GET /trips/{id}/report`, sve u jednom pozivu): rezime, ko je vozio, sirovi zapis
-   vožnje po sekundi za grafike (score, brzina, rizik modela...) i najgori momenti sa slikom i video klipom.
+6. Izveštaj vožnje (`GET /trips/{id}/report`, sve u jednom pozivu): rezime, ko je vozio, vožnja po
+   sekcijama od 2 s za grafik (score, brzina, šta je viđeno, rizik modela, opasnost) i opasni momenti sa
+   slikom najrizičnijeg trenutka. Na grafiku: osenčeni opasni delovi, čvor po momentu i kućica sa slikom
+   iznad "ultra opasnih" (`critical`).
+   Uživo, na svake 2 s, stiže i WS `section` (šta je viđeno u poslednje 2 s), za prikaz tokom vožnje.
 7. Istorija vožnji.
 8. Opciono (podrazumevano isključeno): telefon šalje svoju GPS brzinu backendu (`POST /speed`).
 
@@ -54,7 +61,7 @@ Podešavanja (IP + GET /health)
                                                Statistika (TripSummary)
                                                   │ "Izveštaj"
                                                   ▼
-                       Izveštaj ── GET /trips/{id}/report (rezime + korisnik + uzorci za grafike + momenti sa slikama)
+                       Izveštaj ── GET /trips/{id}/report (rezime + korisnik + sekcije za grafik + momenti sa slikama)
 Istorija ── GET /trips (sa tokenom: moje vožnje) ──► Statistika / Izveštaj pojedinačne vožnje
 Profil ── GET /auth/me, PATCH /auth/me (ime, kontakt za hitne slučajeve), POST /auth/logout
 ```
@@ -224,74 +231,81 @@ export interface AnalyticsOverview {
   behaviors: BehaviorBreakdown[];
 }
 
-// ---------- Izveštaj vožnje (iz Postgresa, radi i posle restarta backenda) ----------
-/** Jedna kategorija modela unutar jednog prozora. */
-export interface SampleCategory {
-  p: number | null;      // prosečna verovatnoća u prozoru
+// ---------- Izveštaj vožnje: sekcije od 2 s (koordinator ih šalje serveru, server ih čuva) ----------
+/** none = ništa rizično (ili kola stoje), dangerous = rizično ponašanje u vožnji, critical = "ultra opasno"
+ *  (crveni alarm modela, glasan alarm kola ili uzbuna). Odlučuje koordinator, aplikacija samo prikazuje. */
+export type DangerLevel = "none" | "dangerous" | "critical";
+
+/** Jedna kategorija modela unutar jedne sekcije. */
+export interface SectionCategory {
+  p: number | null;      // prosečna verovatnoća u sekciji
   p_max: number | null;
   active: boolean;       // model ju je bar jednom označio kao aktivnu
   r: number | null;      // najveći doprinos riziku modela
   run_s: number | null;  // najduže neprekidno trajanje (s)
 }
 
-/** Sve o vožnji, sabrano po prozoru od `TripTimeline.window_s` sekundi (1 s). */
-export interface TripSample {
-  t: number;              // sekundi od prvog ticka vožnje (x osa grafika)
-  ts: string;             // ISO 8601 UTC
-  ticks: number;          // broj tickova u prozoru
-  speed_kmh: number;      // prosečna brzina u prozoru
-  speed_max_kmh: number;
-  speed_source: SpeedSource;
-  score: number;          // score na kraju prozora
+/** Sekcija vožnje (`section_s` = 2 s): šta je viđeno i koliki je score. Jedna tačka na grafiku vožnje.
+ *  Stiže uživo kao WS `section` i u izveštaju (`TripReport.sections`). */
+export interface TripSection {
+  section_id: string;
+  trip_id: string;
+  seq: number;              // 0, 1, 2... sekcija n pokriva t od n*section_s do (n+1)*section_s
+  t_start: number;          // sekundi od prvog ticka vožnje (x osa grafika)
+  t_end: number;
+  started_at: string;       // ISO 8601 UTC
+  ended_at: string;
+  ticks: number;            // koliko je tickova (detekcija modela ili telemetrije) bodovano u sekciji
+  score_start: number;      // score neposredno pre sekcije
+  score_end: number;        // score na kraju sekcije (y tačke na grafiku)
   score_min: number;
-  level: SafetyLevel;     // nivo za `score`
-  behaviors: Behavior[];  // ponašanja viđena u prozoru (boduju se samo dok se kola kreću)
-  risk: number | null;    // prosečan rizik modela 0..1; null bez frejmova modela
+  level: SafetyLevel;       // nivo za score_end
+  danger: DangerLevel;
+  behaviors: Partial<Record<Behavior, number>>; // ponašanje → sekundi u sekciji (boduje se samo u vožnji)
+  speed_kmh: number;        // prosečna brzina
+  speed_max_kmh: number;
+  speed_source: SpeedSource | null;
+  risk: number | null;      // prosečan rizik modela 0..1; null bez detekcija modela
   risk_max: number | null;
-  alert: CameraAlert | null;            // najgori alarm modela u prozoru
+  alert: CameraAlert | null;            // najgori alarm modela u sekciji
   rules_triggered: string[];
-  categories: Record<string, SampleCategory>; // ključevi su imena kategorija modela
-  groups: Record<string, number | null>;      // najveći rizik po kanalu: visual, manual, fatigue
-  dashboard_light: DashboardLight;      // najozbiljnije svetlo u prozoru
+  categories: Record<string, SectionCategory>; // ključevi su imena kategorija modela
+  groups: Record<string, number | null>;       // najveći rizik po kanalu: visual, manual, fatigue
+  dashboard_light: DashboardLight;      // najozbiljnije svetlo u sekciji
   vibrate_seat: boolean;                // sedište je bar jednom vibriralo
-  sound: SoundLevel;                    // najglasniji zvuk u prozoru
+  sound: SoundLevel;                    // najglasniji zvuk u sekciji
+  emergency: boolean;                   // uzbuna je okinula u ovoj sekciji
+  image_t: number | null;               // kada (ista osa kao t_start) je snimljena slika sekcije
   lat: number | null;                   // samo sa GPS-om telefona
   lon: number | null;
+  has_image: boolean;                   // koordinator je priložio frejm najrizičnijeg trenutka
+  image_url: string | null;             // JPEG tog frejma (opasne sekcije sa videom). Uživo (WS) je uvek null
 }
 
-export interface TripTimeline {
-  trip_id: string;
-  window_s: number;
-  samples: TripSample[]; // od najstarijeg
-}
-
-/** Rizičan momenat: kola se kreću, a vidi se bodovano ponašanje ili je model dao crveni alarm.
- *  Detekcije razmaknute manje od 2 s su isti momenat. */
-export interface RiskEvent {
-  event_id: string;
-  trip_id: string;
-  started_at: string;     // ISO 8601 UTC
-  ended_at: string;
-  t_start: number;        // sekundi od prvog ticka (isto kao TripSample.t)
-  duration_s: number;     // rizične sekunde, računate kao BehaviorSummary.total_seconds
-  behaviors: Behavior[];  // najduže prvo; prazno ako je opalio samo alarm modela
-  behavior_seconds: Partial<Record<Behavior, number>>;
-  categories: Record<string, number>; // kategorije modela aktivne u momentu → najveće p
+/** Opasan momenat: uzastopne opasne sekcije spojene u jedan (jedna mirna sekcija u sredini se premošćuje).
+ *  Na grafiku: čvor na (`peak_t`, `peak_score`), a za `critical` i kućica sa slikom iznad čvora. */
+export interface DangerMoment {
+  moment_id: string;       // id prve sekcije momenta
+  t_start: number;
+  t_end: number;
+  duration_s: number;
+  danger: DangerLevel;     // najgora sekcija; critical = "ultra opasno"
+  peak_t: number;          // x čvora: vreme slike, inače sredina najgore sekcije
+  peak_score: number;      // y čvora
+  behaviors: Partial<Record<Behavior, number>>; // sekundi po ponašanju, najduže prvo
+  categories: Record<string, number>;           // kategorije modela aktivne u momentu → najveće p
   rules_triggered: string[];
-  alert: CameraAlert | null;          // najgori alarm modela u momentu
-  peak_risk: number | null;           // najveći rizik modela 0..1
-  score_start: number;    // score neposredno pre momenta
+  alert: CameraAlert | null;
+  peak_risk: number | null;
+  score_start: number;
   score_end: number;
   score_min: number;
-  score_drop: number;     // score_start - score_min: koliko je ovaj momenat koštao
-  level: SafetyLevel;     // najgori dostignut nivo
+  score_drop: number;      // score_start - score_min: koliko je momenat koštao
+  level: SafetyLevel;      // najgori dostignut nivo
   speed_avg_kmh: number;
   speed_max_kmh: number;
-  lat: number | null;
-  lon: number | null;
-  video_url: string | null;      // MP4 (H.264) oko momenta, apsolutni URL; null ako video nije strimovan
-  thumbnail_url: string | null;  // JPEG najrizičnijeg frejma
-  clip_duration_s: number | null;
+  image_url: string | null; // slika najrizičnijeg frejma momenta
+  section_ids: string[];
 }
 
 // ---------- Brzina ----------
@@ -309,11 +323,11 @@ export interface SpeedStatus {
 export interface TripReport {
   trip: TripSummary;        // rezime: final/prosek/min score, trajanje, ponašanja sa savetima
   user: User | null;        // ko je vozio; null ako je vožnja pokrenuta bez prijave
-  window_s: number;         // sekundi po uzorku (1)
-  /** Sirovi zapis vožnje, jedan red po sekundi, od najstarijeg. Grafike pravi aplikacija. */
-  samples: TripSample[];
-  /** Rizični momenti sa slikom (`thumbnail_url`) i klipom (`video_url`), od najstarijeg. */
-  events: RiskEvent[];
+  section_s: number;        // sekundi po sekciji (2)
+  /** Vožnja sekcija po sekcija, od najstarije. Grafik pravi aplikacija. */
+  sections: TripSection[];
+  /** Opasni momenti sa slikom najrizičnijeg frejma, od najstarijeg. */
+  moments: DangerMoment[];
 }
 
 // ---------- WebSocket ----------
@@ -321,6 +335,7 @@ export type LiveMessage =
   | { type: "trip_started"; data: TripState }
   | { type: "state"; data: TripState }
   | { type: "emergency"; data: TripState }
+  | { type: "section"; data: TripSection }
   | { type: "trip_ended"; data: TripSummary };
 
 // ---------- Greške ----------
@@ -338,12 +353,13 @@ export interface ApiError {
 
 ## 5. REST endpointi
 
-Sve putanje su relativne u odnosu na `http://<IP>:8000/api/v1`.
+Sve putanje su relativne u odnosu na `http://<IP>:8000/api/v1`. Uz svaku rutu piše deo backenda koji je
+služi: **[K]** koordinator (uživo, u kolima) ili **[S]** server (čuvanje, istorija, nalozi).
 
-### `GET /health`
+### `GET /health` [K, S]
 Provera veze. Odgovor `200`: `{"status": "ok"}`
 
-### `POST /trips`: početak vožnje
+### `POST /trips`: početak vožnje [K]
 Telo `TripCreate`:
 ```json
 { "driver_id": "driver-1", "emergency_contact": { "name": "Ana", "phone": "+381601234567" } }
@@ -376,7 +392,7 @@ Odgovor `201`, `TripState`:
   kontakt za hitne slučajeve je iz naloga ako ga telo ne pošalje. Telo može biti i prazno `{}`.
 - Greške: `422` ako fali `driver_id`, a vozač nije prijavljen. `401` ako je token pogrešan ili istekao.
 
-### `POST /trips/{trip_id}/end`: kraj vožnje
+### `POST /trips/{trip_id}/end`: kraj vožnje [K]
 Bez tela. Odgovor `200`, `TripSummary`:
 ```json
 {
@@ -402,28 +418,30 @@ Bez tela. Odgovor `200`, `TripSummary`:
 }
 ```
 - Može se pozvati više puta. Ako je vožnja već završena, samo vrati statistiku.
+- Koordinator pre odgovora čeka (najviše 3 s) da server primi celu vožnju, pa `GET /trips/{id}/report`
+  odmah posle kraja ima i poslednju sekciju.
 - Greške: `404` ako vožnja ne postoji (npr. backend je restartovan).
 
-### `GET /trips/{trip_id}`: trenutno stanje
+### `GET /trips/{trip_id}`: trenutno stanje [K]
 Odgovor `200`, `TripState`. Samo za vožnju koja upravo traje (iz memorije). Uglavnom nije potreban,
 jer stanje stiže preko WebSocket-a. Greške: `404`.
 
-### `GET /trips/{trip_id}/summary`: statistika
-Odgovor `200`, `TripSummary`. Radi za aktivnu vožnju (`ended_at: null`) i, iz Postgresa, za svaku
-raniju, **i posle restarta backenda**. Greške: `404`.
+### `GET /trips/{trip_id}/summary`: statistika [S]
+Odgovor `200`, `TripSummary`, iz Postgresa (preživi restart). Za aktivnu vožnju (`ended_at: null`) je to
+rezime do poslednje sekcije (najviše ~2 s unazad). Greške: `404`, `503` ako je baza dole.
 
-### `GET /trips`: istorija
+### `GET /trips`: istorija [S]
 Odgovor `200`, `TripSummary[]`, od najstarije ka najnovijoj, uključujući i aktivnu vožnju. Čita se
-iz Postgresa, pa preživi restart.
+iz Postgresa, pa preživi restart. `503` ako je baza dole (koordinator ne čuva istoriju).
 - **Sa tokenom:** vožnje tog naloga (`driver_id` se ignoriše).
 - **Bez tokena:** vožnje pokrenute bez prijave. `?driver_id=driver-1` sužava na jednog vozača.
 
 **Ko šta vidi:** vožnju pokrenutu sa tokenom vide samo zahtevi sa tokenom istog naloga. Svi ostali
-dobijaju `404`, kao da ne postoji (`/summary`, `/report`, `/timeline`, `/events`, `GET /trips/{id}`).
+dobijaju `404`, kao da ne postoji (`/summary`, `/report`, `/sections`, `GET /trips/{id}`).
 Vožnje bez prijave vidi svako, kao ranije. Živi kanal (WebSocket, `POST /trips/{id}/end`) ostaje
 otvoren, jer je to mreža samih kola.
 
-### `POST /auth/register`: novi nalog
+### `POST /auth/register`: novi nalog [S]
 Telo `RegisterIn`:
 ```json
 { "username": "ana", "password": "tajna-123", "display_name": "Ana Anić",
@@ -446,87 +464,81 @@ Odgovor `201`, `AuthOut` (vozač je odmah prijavljen):
 ```
 Greške: `409` ako je korisničko ime zauzeto, `422` za loše ime ili lozinku kraću od 6 znakova.
 
-### `POST /auth/login`: prijava
+### `POST /auth/login`: prijava [S]
 Telo `LoginIn` `{ "username": "ana", "password": "tajna-123" }`. Odgovor `200`, `AuthOut`.
 Greška: `401` `{"detail": "Wrong username or password"}` (isto i za nepostojeće ime).
 Token treba sačuvati (AsyncStorage) i slati u svakom zahtevu kao `Authorization: Bearer <token>`.
 Na `401` za sačuvani token aplikacija treba da obriše token i ponovo traži prijavu.
 
-### `GET /auth/me`, `PATCH /auth/me`, `POST /auth/logout`
+### `GET /auth/me`, `PATCH /auth/me`, `POST /auth/logout` [S]
 - `GET /auth/me` → `User` (ko je prijavljen). Za ekran profila.
 - `PATCH /auth/me` sa `UserUpdate` → `User`. Menja ime ili kontakt za hitne slučajeve.
 - `POST /auth/logout` → `204`. Briše samo ovaj token (drugi uređaji ostaju prijavljeni).
 - Svi traže token, inače `401`.
 
-### `GET /analytics/overview`: za kompaniju
-Odgovor `200`, `AnalyticsOverview`. Sadrži samo agregate, bez slika i bez podataka po vozaču.
+### `GET /analytics/overview`: za kompaniju [S]
+Odgovor `200`, `AnalyticsOverview`, iz Postgresa. Sadrži samo agregate, bez slika i bez podataka po vozaču.
 Nije potreban u aplikaciji vozača.
 
-### `GET /trips/{trip_id}/report`: sve o jednoj vožnji
-Odgovor `200`, `TripReport`: `trip` (rezime kao `TripSummary`), `user` (ko je vozio), `samples`
-(sirovi zapis vožnje po sekundi) i `events` (rizični momenti sa slikama i klipovima). **Jedan poziv
-za ekran izveštaja.** Grafike računa aplikacija iz `samples`, kako god hoće. Npr. x osa `t`, a y
-`score` (score kroz vožnju), `speed_kmh`, `risk_max` ili `categories["phone_use"].p_max`. Momente
-može da označi na grafiku po `events[].t_start`. Čita se iz Postgresa, pa radi i posle restarta
-backenda, a i za aktivnu vožnju (poslednja sekunda još nije upisana).
-Greške: `404` ako vožnja ne postoji, nije snimljena ili pripada drugom nalogu. `503` ako je
-snimanje isključeno ili Postgres nije dostupan.
-
-### `GET /trips/{trip_id}/timeline`: samo uzorci
-Odgovor `200`, `TripTimeline`: isti `samples` kao u izveštaju, bez ostatka. Greške kao za `report`.
-
-### `GET /trips/{trip_id}/events?order=worst`: najgori momenti
-Odgovor `200`, `RiskEvent[]`. `order=time` (podrazumevano) ide hronološki, a `order=worst` stavlja
-najskuplje momente prvo (najveći `score_drop`, pa `peak_risk`, pa trajanje). Ako je strana sa
-kamerom strimovala video, svaki momenat od bar 1 s (ili sa crvenim alarmom modela) ima `video_url`
-(MP4, H.264, oko 3 s pre i 2 s posle momenta) i `thumbnail_url` (JPEG najrizičnijeg frejma).
-Klip se pušta direktno sa URL-a (`expo-video` / `<video>`). Greške: kao za `timeline`.
+### `GET /trips/{trip_id}/report`: sve o jednoj vožnji [S]
+Odgovor `200`, `TripReport`: `trip` (rezime kao `TripSummary`), `user` (ko je vozio), `section_s` (2),
+`sections` (vožnja, sekcija po sekcija od 2 s) i `moments` (opasni momenti sa slikom). **Jedan poziv za
+ekran izveštaja.** Grafik pravi aplikacija (§7): x osa `t_start`/`t_end`, y `score_end`, osenčene sekcije
+sa `danger` ≠ `none`, čvor po momentu na (`peak_t`, `peak_score`) i za `critical` kućica sa `image_url`.
+Šta je viđeno u nekom delu vožnje je u sekciji (`behaviors` u sekundama, `categories` modela, `alert`,
+`rules_triggered`, `risk_max`) i u momentu (zbirno). Radi i za aktivnu vožnju (do poslednje sekcije) i
+posle restarta backenda.
+Greške: `404` ako vožnja ne postoji ili pripada drugom nalogu. `503` ako je čuvanje isključeno ili Postgres
+nije dostupan (tada sakrij izveštaj umesto greške).
 
 Primer jednog momenta:
 ```json
 {
-  "event_id": "b6895bbcc632405a98c278170f4538f7",
-  "trip_id": "13618edac23b492388e642d1060f3c43",
-  "started_at": "2026-11-06T16:20:19.084192Z",
-  "ended_at": "2026-11-06T16:20:21.667485Z",
-  "t_start": 11.9,
-  "duration_s": 3.1,
-  "behaviors": ["eyes_off_road", "looking_at_phone"],
-  "behavior_seconds": { "eyes_off_road": 3.1, "looking_at_phone": 3.1 },
-  "categories": { "phone_use": 0.82, "eyes_off_road": 0.7 },
-  "rules_triggered": ["phone_sustained"],
-  "alert": "red",
-  "peak_risk": 0.78,
-  "score_start": 100.0, "score_end": 83.9, "score_min": 83.9, "score_drop": 16.1,
-  "level": "caution",
-  "speed_avg_kmh": 43.8, "speed_max_kmh": 49.8,
-  "lat": null, "lon": null,
-  "video_url": "http://192.168.43.57:8000/api/v1/media/clips/13618e.../b6895b....mp4",
-  "thumbnail_url": "http://192.168.43.57:8000/api/v1/media/clips/13618e.../b6895b....jpg",
-  "clip_duration_s": 7.6
+  "moment_id": "9d347aaac3834f818bbcaeef6d1d4128",
+  "t_start": 14.0, "t_end": 22.0, "duration_s": 8.0,
+  "danger": "critical",
+  "peak_t": 19.297, "peak_score": 71.3,
+  "behaviors": { "looking_at_phone": 5.7, "eyes_off_road": 5.5 },
+  "categories": { "eyes_off_road": 0.9, "phone_use": 0.9 },
+  "rules_triggered": ["long_distraction", "phone_sustained"],
+  "alert": "red", "peak_risk": 0.944,
+  "score_start": 100.0, "score_end": 71.3, "score_min": 71.3, "score_drop": 28.7,
+  "level": "warning",
+  "speed_avg_kmh": 52.2, "speed_max_kmh": 56.1,
+  "image_url": "http://192.168.43.57:8000/api/v1/media/sections/a91741d4.../9d347aaa....jpg",
+  "section_ids": ["9d347aaa...", "5c0e...", "b81f...", "e2d4..."]
 }
 ```
 
-### `GET /media/{key}`: klip ili thumbnail
-Vraća fajl iz S3 (`video/mp4` ili `image/jpeg`) i podržava `Range`, pa plejer može da premotava.
-URL-ove ne sklapaj sam, nego koristi `video_url` / `thumbnail_url` iz `RiskEvent`. Oni idu preko
-backenda (port 8000), pa rade preko hotspota bez obzira na IP. Greške: `404`, `503`.
+### `GET /trips/{trip_id}/sections?after_seq=N`: samo sekcije [S]
+Odgovor `200`, `TripSection[]` (isto kao `report.sections`), od najstarije. Sa `after_seq=N` samo sekcije
+posle sekcije N, npr. za osvežavanje grafika aktivne vožnje. Greške kao za `report`.
 
-### `GET /speed`: odakle dolazi brzina
+### `GET /media/{key}`: slika momenta [S]
+Vraća sliku iz S3 (`image/jpeg`) i podržava `Range`. URL-ove ne sklapaj sam, nego koristi `image_url` iz
+sekcije ili momenta. Idu preko backenda (port 8000), pa rade preko hotspota bez obzira na IP.
+Greške: `404`, `503`.
+
+### `GET /coordinator/status`: dijagnostika [K]
+Da li kamera šalje (fps), da li je model povezan i koliko brzo odgovara, veličina video keša i da li
+server prima sekcije. Za debug i demo, nije deo ugovora sa aplikacijom (polja se mogu menjati).
+
+### `GET /speed`: odakle dolazi brzina [K]
 Odgovor `200`, `SpeedStatus`. Kamera ne zna brzinu. Backend je uzima ovim redom:
 1. **GPS telefona** (`POST /speed`), samo ako je `phone_enabled` i očitavanje nije starije od 5 s;
 2. `speed_kmh` iz samog ticka (simulator, testovi);
 3. **mock vožnja** backenda: scenario (`city`, `highway`, `stop_and_go`, `country_road`, `cruise`,
    `parked`) izabran po vožnji, sa glatkim ubrzavanjem i kočenjem (Bezier), uključujući stajanje na 0 km/h.
 
-### `POST /speed`: GPS brzina telefona (opciono, podrazumevano isključeno)
+### `POST /speed`: GPS brzina telefona (opciono, podrazumevano isključeno) [K]
 Telo `PhoneSpeedIn`: `{ "speed_kmh": 47.5, "lat": 44.8125, "lon": 20.4612 }`. Odgovor `200`, `SpeedStatus`.
 Slati ~1/s tokom vožnje, i to **samo ako `GET /speed` vrati `phone_enabled: true`** (backend sa
 `PHONE_SPEED_ENABLED=true`). Inače `409`. Sveže očitavanje telefona ima prednost nad mock brzinom,
 a `lat`/`lon` se upisuju u izveštaj. Ovo je za kola bez sopstvene računarske snage, gde telefon zna brzinu.
 
-### `POST /telemetry`: NIJE za aplikaciju
-Ovo zovu modeli za kameru preko `notebooks/safety_client.py`. Aplikacija ga ne koristi.
+### `POST /telemetry`: NIJE za aplikaciju [K]
+Ovo zovu simulator (`notebooks/safety_client.py`, `tools/sim.py`) ili model koji sam računa rizik.
+Kamera i model rade drugim putem (`WS /camera/ws` i `WS /model/ws`, vidi ispod). Aplikacija ga ne koristi.
 Model šalje svoj zapis frejma neizmenjen (bez `perception`), a backend preslikava njegove aktivne
 kategorije na `Behavior` (`phone_use` → `looking_at_phone`, `eyes_closed` i `drowsiness` → `drowsy`...,
 tabela u `backend/README.md`) i prosleđuje `camera` aplikaciji. U `camera.categories` mogu da stignu i
@@ -534,11 +546,14 @@ kategorije koje se ne boduju (npr. `eating_drinking`), pa ih prikaži sirovim im
 `speed_kmh` je opciono i model ga ne šalje: brzinu daje backend (`GET /speed`). Simulator ga šalje
 da bi vožnja kroz nivoe bila ista svaki put.
 
-### `POST /video/frames`: NIJE za aplikaciju
-Strana sa kamerom šalje JPEG frejmove (~8/s, telo je sirov JPEG, `Content-Type: image/jpeg`) preko
-`SafetyClient.send_video_frame`. Backend u memoriji drži samo poslednjih nekoliko sekundi i iseče klip
-samo oko rizičnih momenata (S3). Odgovor `204`. Greške: `409` bez aktivne vožnje, `415` ako nije
-`image/jpeg`, `413` preko 2 MB, `422` ako telo nije JPEG.
+### `POST /video/frames`: NIJE za aplikaciju [K]
+Jedan JPEG frejm kamere kao telo (`Content-Type: image/jpeg`), npr. `SafetyClient.send_video_frame`.
+Frejm ide u video keš koordinatora (5 min) i modelu, ako je povezan. Odgovor `204`. Greške: `409` bez
+aktivne vožnje, `415` ako nije `image/jpeg`, `413` preko 2 MB, `422` ako telo nije JPEG.
+
+### `WS /camera/ws` i `WS /model/ws`: NISU za aplikaciju [K]
+Kamera šalje jedan JPEG po binarnoj poruci (`tools/camera_stream.py`), a model worker (`model/worker.py`)
+prima frejmove i vraća detekcije. Protokol je u [ARCHITECTURE.md](ARCHITECTURE.md).
 
 Primer: ovo aplikacija dobija u `camera` kad tick stigne od modela:
 ```json
@@ -560,12 +575,14 @@ Svaka poruka sa servera je JSON `LiveMessage`: `{"type": ..., "data": ...}`.
 
 | `type` | Kada stiže | `data` |
 |---|---|---|
-| `state` | posle svakog ticka sa kamere (~2/s, simulator 1/s), i **odmah po povezivanju** ako vožnja traje | `TripState` |
+| `state` | ~2/s dok vožnja traje (model daje 5–10 detekcija/s, pa koordinator šalje na 0.5 s i odmah na svaku promenu nivoa, reakcije ili ponašanja; simulator: posle svakog ticka), i **odmah po povezivanju** ako vožnja traje | `TripState` |
 | `trip_started` | počela je vožnja | `TripState` |
 | `emergency` | score je pao ispod 10, jednom po vožnji, odmah posle `state` iz istog ticka | `TripState` |
+| `section` | na svake 2 s vožnje (i poslednja kad se vožnja završi): rezime sekcije, šta je viđeno, opasnost | `TripSection` (`image_url` je uvek `null`) |
 | `trip_ended` | vožnja je završena | `TripSummary` |
 
 - Ako nema aktivne vožnje, posle povezivanja ne stiže ništa dok ne stigne `trip_started`.
+- Nepoznat `type` aplikacija treba da ignoriše (tako je `section` dodat bez lomljenja starih klijenata).
 - Server ignoriše poruke koje aplikacija pošalje. Socket služi samo za prijem.
 - Socket se prekida kad hotspot zabode ili aplikacija ode u pozadinu, pa aplikacija mora sama da se
   **ponovo poveže**. Po povezivanju odmah dobija trenutni `state`.
@@ -647,16 +664,22 @@ Nazivi ponašanja za prikaz:
 `final_score` (finalni koeficijent), pored njega `average_score` i `min_score`, a zatim
 `behaviors` kao listu sa `tip` savetima. Prazan `behaviors` znači da je vožnja bila bez grešaka.
 
-**Izveštaj (predlog):** sa ekrana statistike dugme "Izveštaj", koje radi jedan `GET /trips/{id}/report`:
+**Izveštaj (grafik vožnje):** sa ekrana statistike, jedan `GET /trips/{id}/report`:
 - zaglavlje iz `report.trip` (kao statistika) i `report.user.display_name`;
-- grafik `score` kroz vreme (`samples[].t` / `.score`), ispod njega brzina (`speed_kmh`).
-  Pozadinu možeš obojiti po `level`. Podaci su sirovi, pa je oblik grafika na aplikaciji;
-- na grafiku oznake za `events[].t_start`;
-- lista "Najgori momenti" (`events` sortiraj po `score_drop`, prva 3–5): thumbnail, ponašanja,
-  trajanje, `-score_drop` poena, brzina u tom trenutku, a tap pušta `video_url`.
+- **grafik**: linija `score_end` kroz `t_end` (početna tačka je `sections[0].score_start` na t = 0),
+  pozadina sekcija sa `danger` = `dangerous` (žuto-narandžasto) i `critical` (crveno);
+- **čvor** za svaki momenat na (`peak_t`, `peak_score`); za `critical` ("ultra opasno") **kućica sa
+  slikom** (`image_url`) iznad čvora, povezana linijom. Ako se kućice preklapaju, drugi red iznad, ili
+  samo čvor;
+- tap na čvor ili sliku: detalji momenta: slika, `behaviors` (sekunde), `categories` (p modela),
+  `rules_triggered`, `-score_drop` poena, brzina;
+- lista "Opasni momenti" (najveći `score_drop` prvo).
 
-Momenti bez videa (`video_url: null`) se prikazuju bez slike. Ako `report` vrati `503`, snimanje ne
-radi (Postgres ili S3 su dole), pa sakrij dugme umesto da prikažeš grešku.
+Uživo (Drive ekran) poslednje `section` poruke daju traku "poslednji minut" (30 sekcija) i red "šta je
+viđeno u poslednje 2 s". Opasnost i nivo računa backend: aplikacija samo boji.
+
+Momenti bez slike (`image_url: null`, npr. nije bilo videa) se prikazuju bez kućice. Ako `report` vrati
+`503`, čuvanje ne radi (Postgres dole), pa sakrij grafik umesto da prikažeš grešku.
 
 ## 8. Greške
 
@@ -667,38 +690,46 @@ radi (Postgres ili S3 su dole), pa sakrij dugme umesto da prikažeš grešku.
 | `409` | `POST /auth/register` sa zauzetim imenom | `{"detail": "Username ana is taken"}` |
 | `409` | `/telemetry` ili `/video/frames` bez aktivne vožnje | `{"detail": "No active trip - start one from the app first"}` |
 | `409` | `POST /speed` dok je GPS telefona isključen na backendu | `{"detail": "Phone speed is disabled (PHONE_SPEED_ENABLED=false); ..."}` |
-| `503` | `/timeline`, `/events`, `/media`: snimanje je isključeno ili Postgres / S3 nisu dostupni | `{"detail": "Postgres is unreachable; ..."}` |
+| `503` | `/report`, `/sections`, `/summary`, `GET /trips`, `/media`, `/auth/*`: čuvanje je isključeno ili Postgres / S3 nisu dostupni | `{"detail": "Postgres is unreachable (...)"}` |
+| `503` | `POST /trips` sa tokenom dok server ne odgovara (koordinator ne može da proveri prijavu) | `{"detail": "Can't check the login: ..."}` |
+| `403` | `/internal/*` bez ispravnog `X-Internal-Token` (ruta za koordinator, ne za aplikaciju) | `{"detail": "Internal route: ..."}` |
 | `422` | loše telo zahteva | `{"detail": [{"type": "missing", "loc": ["body", "driver_id"], "msg": "Field required", "input": {}}]}` |
 
 Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početak vožnje.
 
 ## 9. Testiranje bez modela i bez auta
 
-1. U `backend/`: `python run.py` (zapiši IP).
+1. U `backend/`: `docker compose up -d` (Postgres + RustFS; ili `.\scripts\services.ps1 start`), pa
+   `python run.py` (zapiši IP).
 2. Poveži aplikaciju na taj IP.
-3. U drugom terminalu: `python notebooks/safety_client.py` (sa `--interval 0.3` ide brže).
+3. **Ceo tok kamera → model → koordinator** bez kamere i bez CV paketa (iz korena repoa, backend venv):
+   `python tools/camera_stream.py` (test slika, 10 fps) i `python model/worker.py --fake` (skriptovane
+   detekcije u krugu od 60 s: telefon, pogled van puta, mikrospavanje, ruke van volana). Pokreni vožnju iz
+   aplikacije. Stižu `state` i `section`, a na kraju izveštaj ima sekcije, momente i slike.
+   Pravi model: `model/README.md`. Snimak umesto test slike: `camera_stream.py --video snimak.mp4`.
+4. **Simulator bez videa:** `python notebooks/safety_client.py` (sa `--interval 0.3` ide brže).
    Simulator sam pokrene vožnju, prođe kroz sve nivoe od zelenog do uzbune i završi vožnju.
-   Aplikacija sve to dobija preko WebSocket-a. Simulator šalje samo labele, pa je `camera` tada `null`.
-4. Sa pravim podacima modela: `python notebooks/safety_client.py --replay frames.jsonl`
+   Šalje samo labele, pa je `camera` tada `null`, a sekcije nemaju slike.
+5. Sa snimljenim izlazom modela: `python notebooks/safety_client.py --replay frames.jsonl`
    (`--speedup 2` ide duplo brže, `--speed-kmh 90` zakuca brzinu). Tada `camera` stiže popunjen.
-5. Za izveštaj sa klipovima: u `backend/` prvo `.\scripts\services.ps1 start` (Postgres + RustFS),
-   pa simulator sa videom: `--video 0` (web kamera) ili `--video snimak.mp4` (treba OpenCV).
-   Na kraju simulator ispiše najgore momente sa `video_url`.
 6. `--backend-speed`: simulator ne šalje brzinu, nego je određuje mock vožnja backenda.
+7. `GET /coordinator/status` pokazuje kameru, model, video keš i isporuku serveru.
 
 Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventualno pokrenula
-(pravilo jedne aktivne vožnje).
+(pravilo jedne aktivne vožnje). Ne puštaj simulator i model istovremeno: oba boduju istu vožnju.
 
 ## 10. Ograničenja
 
-- Samo stanje aktivne vožnje (`GET /trips/{id}`, WebSocket) je u memoriji. Istorija, statistika i
-  izveštaj su u Postgresu (klipovi u S3) i preživljavaju restart. Ako backend padne usred vožnje,
-  ta vožnja ostaje sa rezimeom do poslednjeg upisa (najviše ~10 s ranije) i na sledećem startu se
-  označi kao završena.
+- Uživo stanje aktivne vožnje (`GET /trips/{id}`, WebSocket) je u memoriji koordinatora. Istorija,
+  statistika, sekcije i izveštaj su na serveru (Postgres, slike u S3) i preživljavaju restart. Ako
+  koordinator padne usred vožnje, ta vožnja ostaje sa rezimeom do poslednje sekcije (~2 s ranije) i
+  zatvori se kad se koordinator ponovo pokrene.
+- Dok server ne radi, koordinator drži sekcije u memoriji (do 10 000 po vožnji, 300 MB slika) i šalje ih
+  kad se server vrati. Istorija i izveštaj su za to vreme `503`.
 - Nalozi: nema reseta ni promene lozinke, potvrde emaila ni uloga. Token važi 30 dana.
 - `started_at` / `ended_at` su u UTC (`Z`). Za prikaz ih pretvori u lokalno vreme.
-- `duration_s` se računa iz vremena tickova sa kamere, a ne iz `started_at` / `ended_at`.
-- Brzinu daje backend (mock vožnja). GPS telefona (`POST /speed`) postoji, ali je podrazumevano
-  isključen (`PHONE_SPEED_ENABLED=false`).
-- Klipovi su za demo u **javnom** lokalnom bucketu (RustFS). Pristup za produkciju (poseban server
-  za izveštaje, potpisani URL-ovi) još nije dizajniran. Kompanija (`/analytics`) nikad ne dobija slike.
+- `duration_s` se računa iz vremena tickova, a ne iz `started_at` / `ended_at`.
+- Brzinu daje koordinator (mock vožnja, u pravim kolima CAN). GPS telefona (`POST /speed`) postoji, ali je
+  podrazumevano isključen (`PHONE_SPEED_ENABLED=false`).
+- Slika momenta je jedan frejm (najrizičniji), ne video. Video celog momenta je planiran (ARCHITECTURE.md).
+- Slike su za demo u **javnom** lokalnom bucketu (RustFS). Kompanija (`/analytics`) nikad ne dobija slike.

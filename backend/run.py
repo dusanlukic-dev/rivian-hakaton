@@ -1,16 +1,20 @@
-"""Run the API for the in-car demo.
+"""Run the backend for the in-car demo.
 
-Listens on every network interface so the phone can reach the laptop over the mobile
-hotspot, and prints the address to put into the app (a hotspot has no DNS).
+Listens on every network interface so the phone can reach the laptop over the mobile hotspot, and prints
+the address to put into the app (a hotspot has no DNS).
 
-    python run.py            # port 8000
+    python run.py                                   # coordinator + server in one process, port 8000 (the demo)
     python run.py --port 9000
+    python run.py --role server --port 8001         # split: the server alone...
+    SERVER_URL=http://127.0.0.1:8001/api/v1 python run.py --role coordinator   # ...and the coordinator alone
 """
 
 import argparse
 import socket
 
 import uvicorn
+
+APPS = {"all": "app.main:app", "coordinator": "app.coordinator.main:app", "server": "app.server.main:app"}
 
 
 def lan_ip() -> str:
@@ -26,16 +30,26 @@ def lan_ip() -> str:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--role", choices=sorted(APPS), default="all", help="both parts (default) or one of them")
+    parser.add_argument("--no-reload", action="store_true", help="don't restart on code changes")
     args = parser.parse_args()
 
-    ip = lan_ip()
-    print(
-        "\n  Mobile app:\n"
-        f"    REST       http://{ip}:{args.port}/api/v1\n"
-        f"    WebSocket  ws://{ip}:{args.port}/api/v1/ws\n"
-        "  Camera models (same laptop):\n"
-        f"    telemetry  http://127.0.0.1:{args.port}/api/v1/telemetry\n"
-        f"    video      http://127.0.0.1:{args.port}/api/v1/video/frames\n"
-        "  Recording needs Postgres + RustFS: .\\scripts\\services.ps1 start (or docker compose up -d)\n"
-    )
-    uvicorn.run("app.main:app", host="0.0.0.0", port=args.port, reload=True, reload_dirs=["app"])
+    ip, port = lan_ip(), args.port
+    lines = [f"\n  Role: {args.role}  (docs/ARCHITECTURE.md)"]
+    if args.role in ("all", "coordinator"):
+        lines += [
+            "  Phone / dashboard:",
+            f"    REST       http://{ip}:{port}/api/v1",
+            f"    WebSocket  ws://{ip}:{port}/api/v1/ws",
+            "  Camera + model (same laptop):",
+            f"    camera     ws://127.0.0.1:{port}/api/v1/camera/ws   (python ../tools/camera_stream.py)",
+            f"    model      ws://127.0.0.1:{port}/api/v1/model/ws    (python ../model/worker.py)",
+            f"    simulator  http://127.0.0.1:{port}/api/v1/telemetry (python ../notebooks/safety_client.py)",
+            f"    status     http://127.0.0.1:{port}/api/v1/coordinator/status",
+        ]
+    if args.role in ("all", "server"):
+        lines += [
+            "  Server storage: Postgres :5433 + RustFS :9000 (docker compose up -d, or .\\scripts\\services.ps1 start)",
+        ]
+    print("\n".join(lines) + "\n")
+    uvicorn.run(APPS[args.role], host="0.0.0.0", port=port, reload=not args.no_reload, reload_dirs=["app"])

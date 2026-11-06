@@ -58,6 +58,8 @@
 
 ## Backend storage + speed (2026-11-06, backend session; verified with real Postgres + RustFS)
 
+> **Superseded in part** by the coordinator/server split below: `/timeline`, `/events`, `TripSample`, `RiskEvent` and clips are gone.
+
 All additive. Nothing the apps already use changed shape.
 - `TripState` gained `speed_kmh` (the speed the tick was scored with; < 5 = standing, no penalty) and `speed_source`
   (`mock` | `phone` | `telemetry`, null before the first tick). The backend **mocks the speed** by default (a Bezier drive per trip),
@@ -73,6 +75,8 @@ All additive. Nothing the apps already use changed shape.
 
 ## Accounts + trip report (2026-11-06, backend session; verified on real Postgres)
 
+> The report's `samples`/`events` became `sections`/`moments` (see below). Accounts are unchanged.
+
 Additive, except `TripCreate.driver_id` became optional. Clients that send it keep working unchanged.
 - **Login is optional.** `POST /auth/register` or `/auth/login` returns `AuthOut {token, token_type, expires_at, user}`. Send
   `Authorization: Bearer <token>` on REST calls. The token is opaque (not a JWT) and lasts 30 days. The dashboard template's
@@ -87,3 +91,25 @@ Additive, except `TripCreate.driver_id` became optional. Clients that send it ke
 - **`GET /trips/{id}/report`** is the report screen in one call: `trip` (TripSummary) + `user` + `samples` (raw per-second rows:
   `t`, `score`, `speed_kmh`, `behaviors`, model `categories`...) + `events` (with `thumbnail_url` / `video_url`). Charts are the app's
   job, computed from `samples`. `503` = recording down → hide the report.
+
+## Coordinator / server split (2026-11-06 evening, our session; verified with Postgres + RustFS in Docker)
+
+The backend is now two parts behind the same `http://<ip>:8000/api/v1` (`docs/ARCHITECTURE.md`): the **coordinator** answers the
+live routes (WS, `POST /trips`, `/end`, `GET /trips/{id}`, `/speed`, `/telemetry`, `/video/frames`) and the **server** the stored
+ones (`/auth/*`, `GET /trips`, `/summary`, `/report`, `/sections`, `/media`, `/analytics`). API.md §5 tags each route [K] / [S].
+What changed for the apps (both `src/api/types.ts` re-copied from §4 the same day):
+- **New WS message `section`** every 2 s of driving (and one when the trip ends): `TripSection` = what was seen in those 2 s
+  (`behaviors` in seconds, model `categories`, `alert`, `risk_max`), `score_start/end/min`, `danger` (`none` | `dangerous` |
+  `critical`), speed, car response. `image_url` is always null live; the report has it. Unknown message types must be ignored.
+- **`state` from the model path is throttled to ~2/s** (plus at once on any change of level, response, behaviours or model alert),
+  because the model scores 5–10 frames a second and the phone vibrates/beeps per message. `/telemetry` (simulator) is unchanged.
+- **`TripReport` = `{trip, user, section_s, sections, moments}`.** `samples`, `window_s`, `events`, `TripSample`, `RiskEvent`,
+  `TripTimeline`, `/timeline`, `/events` and the MP4 clips are gone. `GET /trips/{id}/sections?after_seq=N` returns new sections.
+- `DangerMoment` = back-to-back dangerous sections merged by the server: node at (`peak_t`, `peak_score`), `image_url` of the
+  riskiest frame, `behaviors` (seconds), `categories`, `score_drop`. Draw an image box above `critical` ones (the user's "ultra
+  dangerous" nodes). Both apps implement exactly that (`components/report.tsx`, `CarScreen/DriveReport.tsx`).
+- History/summary/report come only from Postgres now: `503` while it's down (the coordinator keeps sections and delivers them
+  later). The summary of a running trip lags at most one section (~2 s). `POST /trips/{id}/end` waits up to 3 s for delivery, so
+  the report opened right after "End" is complete.
+- `POST /trips` with a token is `503` if the server can't be asked about the token (the coordinator checks logins via `GET /auth/me`).
+- `GET /coordinator/status` (diagnostics, not part of the app contract): camera fps, model worker, video cache, server delivery.

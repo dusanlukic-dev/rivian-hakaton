@@ -3,7 +3,7 @@ from datetime import timedelta
 import pytest
 
 from app.domain.enums import SpeedSource
-from app.services.speed import (
+from app.coordinator.services.speed import (
     RANDOM_POOL,
     SCENARIOS,
     PhoneSpeedDisabled,

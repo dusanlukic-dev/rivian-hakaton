@@ -7,7 +7,7 @@ import pytest
 
 from app.domain.enums import Behavior
 from app.schemas.camera import ModelFrame
-from app.services.camera import CATEGORY_TO_BEHAVIOR, IGNORED_CATEGORIES, behaviors_from_frame
+from app.coordinator.services.camera import CATEGORY_TO_BEHAVIOR, IGNORED_CATEGORIES, behaviors_from_frame
 
 RISK_CONFIG = Path(__file__).resolve().parents[2] / "notebooks" / "risk_config.json"
 

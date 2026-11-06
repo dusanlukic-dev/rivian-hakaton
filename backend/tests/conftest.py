@@ -6,21 +6,28 @@ import imageio_ffmpeg
 import pytest
 from fastapi.testclient import TestClient
 
+from app.coordinator.repositories.trips import InMemoryTripRepository, get_trip_repository
+from app.coordinator.services.coordinator import Coordinator, get_coordinator
+from app.coordinator.services.live import LiveHub, get_live_hub
+from app.coordinator.services.outbox import ServerOutbox
+from app.coordinator.services.risk_engine import load_risk_config
+from app.coordinator.services.speed import SpeedService, get_speed_service
+from app.coordinator.services.video_cache import VideoCache
+from app.core.config import Settings
 from app.main import app
-from app.repositories.database import Database, get_database
-from app.repositories.media import MemoryMediaStore
-from app.repositories.recordings import RecordingRepository
-from app.repositories.trips import InMemoryTripRepository, get_trip_repository
-from app.repositories.users import UserRepository
-from app.services.auth import AuthService, get_auth_service
-from app.services.live import LiveHub, get_live_hub
-from app.services.recording import RecordingConfig, TripRecorder, get_recorder
-from app.services.speed import SpeedService, get_speed_service
+from app.server.repositories.database import Database, get_database
+from app.server.repositories.media import MemoryMediaStore
+from app.server.repositories.recordings import RecordingRepository
+from app.server.repositories.users import UserRepository
+from app.server.services.auth import AuthService, get_auth_service
+from app.server.services.storage import TripStore, get_trip_store
 
 API = "/api/v1"
 NIGHT = datetime(2026, 11, 6, 23, 0, 0, tzinfo=timezone(timedelta(hours=1)))
 DAY = datetime(2026, 11, 6, 14, 0, 0, tzinfo=timezone(timedelta(hours=1)))
 CONTACT = {"name": "Ana", "phone": "+381600000000"}
+SETTINGS = Settings(_env_file=None, video_cache="memory", section_s=2.0, server_url="")
+RISK_CONFIG = load_risk_config(SETTINGS.risk_config_file)
 
 # A record from the camera model's frames.jsonl, as the CV team writes it.
 MODEL_FRAME = {
@@ -71,8 +78,8 @@ def db():
 
 
 @pytest.fixture
-def recorder(db, media, clock):
-    return TripRecorder(RecordingRepository(db), media, RecordingConfig(), clock=clock)
+def store(db, media):
+    return TripStore(RecordingRepository(db), media)
 
 
 @pytest.fixture
@@ -80,20 +87,40 @@ def speed(clock):
     return SpeedService(scenario="city", clock=clock)
 
 
+def make_coordinator(clock, speed, settings: Settings = SETTINGS) -> Coordinator:
+    return Coordinator(
+        InMemoryTripRepository(),
+        LiveHub(),
+        speed,
+        settings,
+        clock=clock,
+        video=VideoCache(mode="memory", retention_s=300, max_fps=10, clock=clock),
+        outbox=ServerOutbox(interval_s=0.05),
+        risk_config=RISK_CONFIG,
+        housekeeping_s=0,  # tests call coordinator.housekeeping_once() themselves
+    )
+
+
+@pytest.fixture
+def coordinator(clock, speed):
+    return make_coordinator(clock, speed)
+
+
 @contextmanager
-def app_client(recorder: TripRecorder, speed: SpeedService, db: Database):
-    """A fresh app process: empty in-memory trips, the given database (closed when the app stops)."""
-    repo, hub, auth = InMemoryTripRepository(), LiveHub(), AuthService(UserRepository(db))
+def app_client(store: TripStore, coordinator: Coordinator, db: Database):
+    """A fresh backend process: the given coordinator (empty memory) and server storage (closed when it stops)."""
+    auth = AuthService(UserRepository(db))
     app.dependency_overrides.update({
-        get_trip_repository: lambda: repo,
-        get_live_hub: lambda: hub,
-        get_recorder: lambda: recorder,
-        get_speed_service: lambda: speed,
+        get_trip_repository: lambda: coordinator.repo,
+        get_live_hub: lambda: coordinator.hub,
+        get_speed_service: lambda: coordinator.speed,
+        get_coordinator: lambda: coordinator,
         get_database: lambda: db,
+        get_trip_store: lambda: store,
         get_auth_service: lambda: auth,
     })
     try:
-        # Context manager = one event loop shared by HTTP calls, WebSocket sessions and the recorder.
+        # Context manager = one event loop shared by HTTP calls, WebSocket sessions and the background tasks.
         with TestClient(app) as test_client:
             yield test_client
     finally:
@@ -101,8 +128,8 @@ def app_client(recorder: TripRecorder, speed: SpeedService, db: Database):
 
 
 @pytest.fixture
-def client(recorder, speed, db):
-    with app_client(recorder, speed, db) as test_client:
+def client(store, coordinator, db):
+    with app_client(store, coordinator, db) as test_client:
         yield test_client
 
 
@@ -154,3 +181,8 @@ def send_tick(client, ts, speed=None, behaviors=(), frame=None):
 def send_video(client, jpeg: bytes):
     res = client.post(f"{API}/video/frames", content=jpeg, headers={"Content-Type": "image/jpeg"})
     assert res.status_code == 204, res.text
+
+
+def flush(client, coordinator: Coordinator, timeout: float = 5.0) -> None:
+    """Wait until the coordinator delivered everything to the server (sections, summary)."""
+    assert client.portal.call(coordinator.outbox.flush, timeout), "outbox didn't drain"

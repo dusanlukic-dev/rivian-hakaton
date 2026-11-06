@@ -4,9 +4,9 @@ import pytest
 
 from app.domain.enums import Behavior, DashboardLight, SafetyLevel, SoundLevel
 from app.domain.trip import Trip
-from app.services.alerts import evaluate_response, level_for
-from app.services.scoring import DEFAULT_CONFIG, apply_tick
-from app.services.trips import TIPS
+from app.coordinator.services.alerts import evaluate_response, level_for
+from app.coordinator.services.scoring import DEFAULT_CONFIG, apply_tick
+from app.coordinator.services.trips import TIPS
 
 DAY = datetime(2026, 11, 6, 14, 0, 0)
 NIGHT = datetime(2026, 11, 6, 23, 0, 0)

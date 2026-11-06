@@ -51,13 +51,25 @@ def test_websocket_pushes_live_events(client):
 
         for i in range(1, 60):
             send_tick(client, NIGHT + timedelta(seconds=i), 130, ["looking_at_phone"])
-        types = [ws.receive_json()["type"] for _ in range(60)]  # 59 states + 1 emergency
-        assert types.count("emergency") == 1
-
         client.post(f"{API}/trips/{trip_id}/end")
-        ended = ws.receive_json()
-        assert ended["type"] == "trip_ended"
-        assert ended["data"]["final_score"] < 10
+
+        messages = []
+        while not messages or messages[-1]["type"] != "trip_ended":
+            messages.append(ws.receive_json())
+        types = [m["type"] for m in messages]
+        assert types.count("state") == 59  # one per telemetry tick (the simulator path isn't throttled)
+        assert types.count("emergency") == 1
+        assert types[types.index("emergency") - 1] == "state"  # right after the state of the same tick
+        # A section summary every 2 s of driving: 60 s -> 30 (the last one closes with the trip).
+        sections = [m["data"] for m in messages if m["type"] == "section"]
+        assert len(sections) == 30
+        assert [s["seq"] for s in sections] == list(range(30))
+        # Phone at 130 km/h: dangerous from the start (behavior while moving), critical once the loud alarm sounds.
+        dangers = [s["danger"] for s in sections]
+        assert dangers[0] == "dangerous" and dangers[-1] == "critical"
+        assert set(dangers) == {"dangerous", "critical"} and dangers == sorted(dangers, key=["dangerous", "critical"].index)
+        assert sections[-1]["behaviors"]["looking_at_phone"] > 0 and sections[-1]["image_url"] is None
+        assert messages[-1]["data"]["final_score"] < 10
 
 
 def test_websocket_sends_current_state_on_connect(client):

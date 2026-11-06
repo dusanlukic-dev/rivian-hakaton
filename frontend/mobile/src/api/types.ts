@@ -25,7 +25,45 @@ export interface EmergencyContact {
 }
 
 export interface TripCreate {
-  driver_id: string;
+  /** Obavezno bez prijave. Sa tokenom se koristi korisničko ime naloga, pa se može izostaviti. */
+  driver_id?: string | null;
+  /** Bez njega se koristi kontakt sačuvan u nalogu (ako je vozač prijavljen). */
+  emergency_contact?: EmergencyContact | null;
+}
+
+// ---------- Nalozi ----------
+export interface RegisterIn {
+  username: string;              // 3–32: a-z, 0-9, ".", "_", "-" (backend ga pretvara u mala slova). Jedinstveno
+  password: string;              // 6–128 znakova
+  display_name?: string | null;  // podrazumevano = username
+  emergency_contact?: EmergencyContact | null;
+}
+
+export interface LoginIn {
+  username: string;
+  password: string;
+}
+
+/** Nalog vozača. Lozinka se nikad ne vraća (u bazi je samo njen heš). */
+export interface User {
+  user_id: string;
+  username: string;              // ujedno `driver_id` njegovih vožnji
+  display_name: string;
+  emergency_contact: EmergencyContact | null;
+  created_at: string;            // ISO 8601 UTC
+}
+
+/** Odgovor na login i registraciju. `token` šalji kao `Authorization: Bearer <token>`. */
+export interface AuthOut {
+  token: string;
+  token_type: "bearer";
+  expires_at: string;            // ISO 8601 UTC, 30 dana od prijave
+  user: User;
+}
+
+/** PATCH /auth/me: menjaju se samo poslata polja. `emergency_contact: null` briše kontakt. */
+export interface UserUpdate {
+  display_name?: string;
   emergency_contact?: EmergencyContact | null;
 }
 
@@ -120,74 +158,81 @@ export interface AnalyticsOverview {
   behaviors: BehaviorBreakdown[];
 }
 
-// ---------- Izveštaj vožnje (iz Postgresa, radi i posle restarta backenda) ----------
-/** Jedna kategorija modela unutar jednog prozora. */
-export interface SampleCategory {
-  p: number | null;      // prosečna verovatnoća u prozoru
+// ---------- Izveštaj vožnje: sekcije od 2 s (koordinator ih šalje serveru, server ih čuva) ----------
+/** none = ništa rizično (ili kola stoje), dangerous = rizično ponašanje u vožnji, critical = "ultra opasno"
+ *  (crveni alarm modela, glasan alarm kola ili uzbuna). Odlučuje koordinator, aplikacija samo prikazuje. */
+export type DangerLevel = "none" | "dangerous" | "critical";
+
+/** Jedna kategorija modela unutar jedne sekcije. */
+export interface SectionCategory {
+  p: number | null;      // prosečna verovatnoća u sekciji
   p_max: number | null;
   active: boolean;       // model ju je bar jednom označio kao aktivnu
   r: number | null;      // najveći doprinos riziku modela
   run_s: number | null;  // najduže neprekidno trajanje (s)
 }
 
-/** Sve o vožnji, sabrano po prozoru od `TripTimeline.window_s` sekundi (1 s). */
-export interface TripSample {
-  t: number;              // sekundi od prvog ticka vožnje (x osa grafika)
-  ts: string;             // ISO 8601 UTC
-  ticks: number;          // broj tickova u prozoru
-  speed_kmh: number;      // prosečna brzina u prozoru
-  speed_max_kmh: number;
-  speed_source: SpeedSource;
-  score: number;          // score na kraju prozora
+/** Sekcija vožnje (`section_s` = 2 s): šta je viđeno i koliki je score. Jedna tačka na grafiku vožnje.
+ *  Stiže uživo kao WS `section` i u izveštaju (`TripReport.sections`). */
+export interface TripSection {
+  section_id: string;
+  trip_id: string;
+  seq: number;              // 0, 1, 2... sekcija n pokriva t od n*section_s do (n+1)*section_s
+  t_start: number;          // sekundi od prvog ticka vožnje (x osa grafika)
+  t_end: number;
+  started_at: string;       // ISO 8601 UTC
+  ended_at: string;
+  ticks: number;            // koliko je tickova (detekcija modela ili telemetrije) bodovano u sekciji
+  score_start: number;      // score neposredno pre sekcije
+  score_end: number;        // score na kraju sekcije (y tačke na grafiku)
   score_min: number;
-  level: SafetyLevel;     // nivo za `score`
-  behaviors: Behavior[];  // ponašanja viđena u prozoru (boduju se samo dok se kola kreću)
-  risk: number | null;    // prosečan rizik modela 0..1; null bez frejmova modela
+  level: SafetyLevel;       // nivo za score_end
+  danger: DangerLevel;
+  behaviors: Partial<Record<Behavior, number>>; // ponašanje → sekundi u sekciji (boduje se samo u vožnji)
+  speed_kmh: number;        // prosečna brzina
+  speed_max_kmh: number;
+  speed_source: SpeedSource | null;
+  risk: number | null;      // prosečan rizik modela 0..1; null bez detekcija modela
   risk_max: number | null;
-  alert: CameraAlert | null;            // najgori alarm modela u prozoru
+  alert: CameraAlert | null;            // najgori alarm modela u sekciji
   rules_triggered: string[];
-  categories: Record<string, SampleCategory>; // ključevi su imena kategorija modela
-  groups: Record<string, number | null>;      // najveći rizik po kanalu: visual, manual, fatigue
-  dashboard_light: DashboardLight;      // najozbiljnije svetlo u prozoru
+  categories: Record<string, SectionCategory>; // ključevi su imena kategorija modela
+  groups: Record<string, number | null>;       // najveći rizik po kanalu: visual, manual, fatigue
+  dashboard_light: DashboardLight;      // najozbiljnije svetlo u sekciji
   vibrate_seat: boolean;                // sedište je bar jednom vibriralo
-  sound: SoundLevel;                    // najglasniji zvuk u prozoru
+  sound: SoundLevel;                    // najglasniji zvuk u sekciji
+  emergency: boolean;                   // uzbuna je okinula u ovoj sekciji
+  image_t: number | null;               // kada (ista osa kao t_start) je snimljena slika sekcije
   lat: number | null;                   // samo sa GPS-om telefona
   lon: number | null;
+  has_image: boolean;                   // koordinator je priložio frejm najrizičnijeg trenutka
+  image_url: string | null;             // JPEG tog frejma (opasne sekcije sa videom). Uživo (WS) je uvek null
 }
 
-export interface TripTimeline {
-  trip_id: string;
-  window_s: number;
-  samples: TripSample[]; // od najstarijeg
-}
-
-/** Rizičan momenat: kola se kreću, a vidi se bodovano ponašanje ili je model dao crveni alarm.
- *  Detekcije razmaknute manje od 2 s su isti momenat. */
-export interface RiskEvent {
-  event_id: string;
-  trip_id: string;
-  started_at: string;     // ISO 8601 UTC
-  ended_at: string;
-  t_start: number;        // sekundi od prvog ticka (isto kao TripSample.t)
-  duration_s: number;     // rizične sekunde, računate kao BehaviorSummary.total_seconds
-  behaviors: Behavior[];  // najduže prvo; prazno ako je opalio samo alarm modela
-  behavior_seconds: Partial<Record<Behavior, number>>;
-  categories: Record<string, number>; // kategorije modela aktivne u momentu → najveće p
+/** Opasan momenat: uzastopne opasne sekcije spojene u jedan (jedna mirna sekcija u sredini se premošćuje).
+ *  Na grafiku: čvor na (`peak_t`, `peak_score`), a za `critical` i kućica sa slikom iznad čvora. */
+export interface DangerMoment {
+  moment_id: string;       // id prve sekcije momenta
+  t_start: number;
+  t_end: number;
+  duration_s: number;
+  danger: DangerLevel;     // najgora sekcija; critical = "ultra opasno"
+  peak_t: number;          // x čvora: vreme slike, inače sredina najgore sekcije
+  peak_score: number;      // y čvora
+  behaviors: Partial<Record<Behavior, number>>; // sekundi po ponašanju, najduže prvo
+  categories: Record<string, number>;           // kategorije modela aktivne u momentu → najveće p
   rules_triggered: string[];
-  alert: CameraAlert | null;          // najgori alarm modela u momentu
-  peak_risk: number | null;           // najveći rizik modela 0..1
-  score_start: number;    // score neposredno pre momenta
+  alert: CameraAlert | null;
+  peak_risk: number | null;
+  score_start: number;
   score_end: number;
   score_min: number;
-  score_drop: number;     // score_start - score_min: koliko je ovaj momenat koštao
-  level: SafetyLevel;     // najgori dostignut nivo
+  score_drop: number;      // score_start - score_min: koliko je momenat koštao
+  level: SafetyLevel;      // najgori dostignut nivo
   speed_avg_kmh: number;
   speed_max_kmh: number;
-  lat: number | null;
-  lon: number | null;
-  video_url: string | null;      // MP4 (H.264) oko momenta, apsolutni URL; null ako video nije strimovan
-  thumbnail_url: string | null;  // JPEG najrizičnijeg frejma
-  clip_duration_s: number | null;
+  image_url: string | null; // slika najrizičnijeg frejma momenta
+  section_ids: string[];
 }
 
 // ---------- Brzina ----------
@@ -200,11 +245,24 @@ export interface SpeedStatus {
   phone_age_s: number | null;  // sekundi od poslednjeg očitavanja telefona
 }
 
+// ---------- Izveštaj jedne vožnje ----------
+/** Sve o jednoj vožnji u jednom odgovoru (GET /trips/{id}/report). */
+export interface TripReport {
+  trip: TripSummary;        // rezime: final/prosek/min score, trajanje, ponašanja sa savetima
+  user: User | null;        // ko je vozio; null ako je vožnja pokrenuta bez prijave
+  section_s: number;        // sekundi po sekciji (2)
+  /** Vožnja sekcija po sekcija, od najstarije. Grafik pravi aplikacija. */
+  sections: TripSection[];
+  /** Opasni momenti sa slikom najrizičnijeg frejma, od najstarijeg. */
+  moments: DangerMoment[];
+}
+
 // ---------- WebSocket ----------
 export type LiveMessage =
   | { type: "trip_started"; data: TripState }
   | { type: "state"; data: TripState }
   | { type: "emergency"; data: TripState }
+  | { type: "section"; data: TripSection }
   | { type: "trip_ended"; data: TripSummary };
 
 // ---------- Greške ----------

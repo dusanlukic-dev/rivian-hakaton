@@ -1,0 +1,99 @@
+"""Live data path (coordinator).
+
+    camera ──WS /camera/ws (JPEG per message) or POST /video/frames──► video cache + model worker
+    model worker ◄──WS /model/ws──► coordinator (routes/model.py)
+    simulator / a model that scores by itself ──POST /telemetry──► score
+    phone, dashboard ◄──WS /ws── trip_started, state, emergency, section, trip_ended
+"""
+
+from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
+
+from app.coordinator.deps import CoordinatorDep, Hub, TripRepo
+from app.coordinator.services import trips as trip_service
+from app.coordinator.services.video import is_jpeg
+from app.domain.enums import LiveEvent
+from app.schemas.trip import TelemetryTick, TripState
+
+router = APIRouter(tags=["live (coordinator)"])
+
+MAX_FRAME_BYTES = 2_000_000
+NO_ACTIVE_TRIP = "No active trip - start one from the app first"
+
+
+@router.post("/telemetry")
+async def ingest_telemetry(tick: TelemetryTick, repo: TripRepo, coordinator: CoordinatorDep) -> TripState:
+    """Labels and/or a model frame record (~2/s), from the simulator or a model that scores by itself.
+
+    The camera + model worker path doesn't use this: the worker sends evidence over WS /model/ws.
+    """
+    trip = repo.active()
+    if trip is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, NO_ACTIVE_TRIP)
+    return await coordinator.on_tick(trip, tick)
+
+
+@router.post(
+    "/video/frames",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {"image/jpeg": {"schema": {"type": "string", "format": "binary"}}},
+        }
+    },
+)
+async def ingest_video_frame(request: Request, coordinator: CoordinatorDep) -> Response:
+    """One camera JPEG as the raw body (`Content-Type: image/jpeg`). WS /camera/ws is the faster way.
+
+    Frames go to the video cache (5 min) and to the model worker, if one is connected.
+    """
+    if request.headers.get("content-type", "").split(";")[0].strip().lower() != "image/jpeg":
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Send one JPEG frame as image/jpeg")
+    if int(request.headers.get("content-length") or 0) > MAX_FRAME_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"Frame larger than {MAX_FRAME_BYTES} bytes")
+    data = await request.body()
+    if len(data) > MAX_FRAME_BYTES:
+        raise HTTPException(status.HTTP_413_CONTENT_TOO_LARGE, f"Frame larger than {MAX_FRAME_BYTES} bytes")
+    if not is_jpeg(data):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Body is not a JPEG image")
+    if not coordinator.on_video_frame(data):
+        raise HTTPException(status.HTTP_409_CONFLICT, NO_ACTIVE_TRIP)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.websocket("/camera/ws")
+async def camera_stream(websocket: WebSocket, coordinator: CoordinatorDep) -> None:
+    """The camera's stream: one binary message per JPEG frame (`tools/camera_stream.py`).
+
+    Frames are dropped while no trip is active; the socket stays open. Text messages are ignored.
+    """
+    await websocket.accept()
+    coordinator.camera_connected(+1)
+    try:
+        while True:
+            message = await websocket.receive()
+            if message["type"] == "websocket.disconnect":
+                break
+            data = message.get("bytes")
+            if data and len(data) <= MAX_FRAME_BYTES and is_jpeg(data):
+                coordinator.on_video_frame(data)
+    except WebSocketDisconnect:
+        pass
+    finally:
+        coordinator.camera_connected(-1)
+
+
+@router.websocket("/ws")
+async def live_updates(websocket: WebSocket, repo: TripRepo, hub: Hub) -> None:
+    """The phone and the dashboard keep this open. Every message is {"type": LiveEvent, "data": ...}."""
+    await hub.connect(websocket)
+    try:
+        if (trip := repo.active()) is not None:
+            await hub.send(websocket, LiveEvent.STATE, trip_service.to_state(trip))
+        while True:
+            await websocket.receive_text()  # nothing expected from the app; keeps the socket open
+    except WebSocketDisconnect:
+        pass
+    finally:
+        hub.disconnect(websocket)

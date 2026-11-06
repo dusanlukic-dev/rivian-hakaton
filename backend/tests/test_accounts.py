@@ -2,12 +2,15 @@
 
 from datetime import timedelta
 
-from app.repositories.database import Database
-from app.repositories.media import MemoryMediaStore
-from app.repositories.recordings import RecordingRepository
-from app.services.auth import hash_password, verify_password
-from app.services.recording import TripRecorder
-from tests.conftest import API, CONTACT, DAY, MODEL_FRAME, app_client, bearer, register, send_tick, start_trip
+from app.server.repositories.database import Database
+from app.server.repositories.media import MemoryMediaStore
+from app.server.repositories.recordings import RecordingRepository
+from app.server.services.auth import hash_password, verify_password
+from app.server.services.storage import TripStore
+from tests.conftest import (
+    API, CONTACT, DAY, MODEL_FRAME, app_client, bearer, flush, make_coordinator, register, send_tick, send_video,
+    start_trip,
+)
 
 
 def end_trip(client, trip_id, headers=None):
@@ -82,7 +85,7 @@ def test_trip_belongs_to_the_logged_in_driver(client):
         assert client.get(f"{API}/trips/{trip_id}/summary", headers=headers).status_code == 404
         assert client.get(f"{API}/trips/{trip_id}", headers=headers).status_code == 404
         assert client.get(f"{API}/trips/{trip_id}/report", headers=headers).status_code == 404
-        assert client.get(f"{API}/trips/{trip_id}/events", headers=headers).status_code == 404
+        assert client.get(f"{API}/trips/{trip_id}/sections", headers=headers).status_code == 404
 
 
 def test_trip_without_login_still_needs_a_driver_id(client):
@@ -93,11 +96,11 @@ def test_trip_without_login_still_needs_a_driver_id(client):
     assert [t["driver_id"] for t in client.get(f"{API}/trips", params={"driver_id": "driver-1"}).json()] == ["driver-1"]
 
 
-def test_saved_emergency_contact_is_used(client, recorder):
+def test_saved_emergency_contact_is_used(client, store, coordinator):
     ana = register(client, "ana", emergency_contact=CONTACT)
     trip_id = start_trip(client, headers=bearer(ana))["trip_id"]
-    client.portal.call(recorder.flush)  # the live summary comes from memory, so write the queue out first
-    row = client.portal.call(recorder.repo.trip, trip_id)
+    flush(client, coordinator)  # the coordinator delivers the trip to the server in the background
+    row = client.portal.call(store.trip, trip_id)
     assert row["emergency_contact"] == CONTACT and row["user_id"] == ana["user"]["user_id"]
 
 
@@ -105,62 +108,70 @@ def test_report_has_everything_for_one_drive(client, clock, jpeg_frames):
     ana = register(client, "ana")
     trip_id = start_trip(client, headers=bearer(ana))["trip_id"]
     ts = DAY
-    for i in range(16):  # 8 s: 2 s clean, 3 s phone (model frame), 3 s clean; video at every tick
+    for i in range(16):  # 8 s: 2 s clean, 3 s phone (model frame, red alert), 3 s clean; video at every tick
         ts += timedelta(seconds=0.5)
         clock.advance(0.5)
-        client.post(f"{API}/video/frames", content=jpeg_frames[i % len(jpeg_frames)], headers={"Content-Type": "image/jpeg"})
+        send_video(client, jpeg_frames[i % len(jpeg_frames)])
         send_tick(client, ts, 50, frame=MODEL_FRAME if 4 <= i < 10 else None)
     end_trip(client, trip_id)
 
     report = client.get(f"{API}/trips/{trip_id}/report", headers=bearer(ana)).json()
     assert report["user"]["username"] == "ana"
     assert report["trip"]["trip_id"] == trip_id and report["trip"]["status"] == "ended"
-    assert report["window_s"] == 1.0
-    samples = report["samples"]
-    assert len(samples) == 8 and [s["t"] for s in samples] == list(range(8))
-    assert samples[0]["score"] == 100 and min(s["score_min"] for s in samples) == report["trip"]["min_score"]
-    assert any(s["categories"].get("phone_use", {}).get("active") for s in samples)
-    [event] = report["events"]
-    assert event["behaviors"] == ["eyes_off_road", "looking_at_phone"]
-    assert event["thumbnail_url"].endswith(".jpg") and event["video_url"].endswith(".mp4")
-    assert client.get(event["thumbnail_url"]).headers["content-type"] == "image/jpeg"
+    assert report["section_s"] == 2.0
+    sections = report["sections"]
+    assert [s["seq"] for s in sections] == [0, 1, 2, 3]
+    assert [s["danger"] for s in sections] == ["none", "critical", "critical", "none"]
+    assert sections[0]["score_start"] == 100 and sections[-1]["score_end"] == report["trip"]["final_score"]
+    assert sections[1]["categories"]["phone_use"]["active"] is True and sections[1]["alert"] == "red"
+    assert all(s["has_image"] and s["image_url"].endswith(".jpg") for s in sections[1:3])
+    assert all(s["image_url"] is None for s in (sections[0], sections[3]))
+    [moment] = report["moments"]
+    assert moment["danger"] == "critical" and moment["section_ids"] == [sections[1]["section_id"], sections[2]["section_id"]]
+    assert list(moment["behaviors"]) == ["eyes_off_road", "looking_at_phone"]
+    assert moment["image_url"] in (sections[1]["image_url"], sections[2]["image_url"])
+    assert 2.0 <= moment["peak_t"] <= 6.0 and moment["score_drop"] > 0
+    image = client.get(moment["image_url"])
+    assert image.headers["content-type"] == "image/jpeg" and image.content[:3] == bytes.fromhex("ffd8ff")
 
-    # The same data as the separate endpoints.
-    timeline = client.get(f"{API}/trips/{trip_id}/timeline", headers=bearer(ana)).json()
-    assert timeline["samples"] == samples
-    assert client.get(f"{API}/trips/{trip_id}/events", headers=bearer(ana)).json() == report["events"]
+    # The same sections as the separate endpoint.
+    assert client.get(f"{API}/trips/{trip_id}/sections", headers=bearer(ana)).json() == sections
+    later = client.get(f"{API}/trips/{trip_id}/sections", params={"after_seq": 1}, headers=bearer(ana)).json()
+    assert [s["seq"] for s in later] == [2, 3]
 
 
 def test_running_summary_and_restart(tmp_path, clock, speed):
-    """The trips row is updated while driving; a crash leaves a usable trip that the next start closes."""
+    """The server gets a running summary while driving; a crash leaves a usable trip that the next start closes."""
     url = f"sqlite+aiosqlite:///{(tmp_path / 'trips.db').as_posix()}"
 
     def fresh_process():
         db = Database(url)
-        return TripRecorder(RecordingRepository(db), MemoryMediaStore(), clock=clock), db
+        return TripStore(RecordingRepository(db), MemoryMediaStore()), make_coordinator(clock, speed), db
 
-    recorder, db = fresh_process()
-    with app_client(recorder, speed, db) as client:
+    store, coordinator, db = fresh_process()
+    with app_client(store, coordinator, db) as client:
         ana = register(client, "ana")
         trip_id = start_trip(client, headers=bearer(ana))["trip_id"]
         ts = DAY
-        for _ in range(24):  # 12 s of phone use; the running summary is written every 10 s
+        for _ in range(24):  # 12 s of phone use: a section (and the running summary) every 2 s
             ts += timedelta(seconds=0.5)
             clock.advance(0.5)
             send_tick(client, ts, 50, ["looking_at_phone"])
+        flush(client, coordinator)
         live = client.get(f"{API}/trips/{trip_id}/summary", headers=bearer(ana)).json()
-        assert live["status"] == "active"
-        client.portal.call(recorder.flush)
-        row = client.portal.call(recorder.repo.trip, trip_id)
-        assert row["ended_at"] is None and row["final_score"] < 100  # summary already in Postgres
-    # The app stops without ending the trip (a crash or a reload): memory is gone.
+        assert live["status"] == "active" and live["final_score"] < 100  # running summary, from the server
+        row = client.portal.call(store.trip, trip_id)
+        assert row["ended_at"] is None
+    # The process stops without ending the trip (a crash or a reload): the coordinator's memory is gone.
 
-    recorder, db = fresh_process()
-    with app_client(recorder, speed, db) as client:
+    store, coordinator, db = fresh_process()
+    with app_client(store, coordinator, db) as client:
+        flush(client, coordinator)  # the new coordinator asks the server to close what the last one left open
         headers = bearer(ana)  # sessions live in the database, so the token still works
         summary = client.get(f"{API}/trips/{trip_id}/summary", headers=headers).json()
         assert summary["status"] == "ended"  # closed at the last summary write
         assert summary["final_score"] < 100 and summary["behaviors"][0]["behavior"] == "looking_at_phone"
         assert [t["trip_id"] for t in client.get(f"{API}/trips", headers=headers).json()] == [trip_id]
         report = client.get(f"{API}/trips/{trip_id}/report", headers=headers).json()
-        assert len(report["samples"]) == 12 and report["events"][0]["behaviors"] == ["looking_at_phone"]
+        assert len(report["sections"]) == 6  # the open section was delivered when the first process stopped
+        assert report["moments"][0]["behaviors"] == {"looking_at_phone": 11.5}

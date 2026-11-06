@@ -47,10 +47,19 @@ class SpeedSource(StrEnum):
     TELEMETRY = "telemetry"  # sent in the tick itself (simulator, tests, a car that knows its speed)
 
 
+class DangerLevel(StrEnum):
+    """How dangerous one section (~2 s) of driving was. Decided by the coordinator, shown on the drive chart."""
+
+    NONE = "none"            # standing still, or nothing risky seen
+    DANGEROUS = "dangerous"  # moving + a scored behavior, the model's yellow alert, or the seat vibrated
+    CRITICAL = "critical"    # moving + the model's red alert, the loud alarm, or the emergency ("ultra dangerous")
+
+
 class LiveEvent(StrEnum):
     """Message types pushed to the mobile app over the WebSocket."""
 
     TRIP_STARTED = "trip_started"  # data: TripState
-    STATE = "state"                # data: TripState, after every telemetry tick
+    STATE = "state"                # data: TripState, after every tick (~2/s; model detections are throttled)
     EMERGENCY = "emergency"        # data: TripState, once per trip when the score drops below 10
+    SECTION = "section"            # data: TripSection, every section_s (2 s): what was detected + the score
     TRIP_ENDED = "trip_ended"      # data: TripSummary
