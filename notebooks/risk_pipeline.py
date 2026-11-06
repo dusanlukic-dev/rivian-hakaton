@@ -2,14 +2,18 @@
 risk_pipeline.py — procena rizika vozaca uzivo iz cabin kamere (samo vozac).
 
 Slojevi (svaki je zamenljiv):
-  1. Percepcija      MediaPipe Face/Hand Landmarker + YOLO (ONNX preko cv2.dnn) [+ opciono CLIP]
+  1. Percepcija       MediaPipe Face/Hand Landmarker + YOLO (ONNX preko cv2.dnn) [+ opciono CLIP]
   2. FeatureExtractor sirovi izlazi -> dokaz p_i(n) in [0,1] za svaku kategoriju rizika
-  3. RiskEngine      matematicki model (MATEMATICKI_MODEL.md): trajanje, grupe, agregacija, alarm
-  4. TripLogger      frames.jsonl (uzorkovano), events.jsonl, summary.json
+  3. RiskEngine       matematika po frejmu: zagladjivanje, trajanje, grupe, pravila, alarm
+  4. Izlaz            dev: frames.jsonl + prikaz;  prod: zapis frejma -> backend (POST /telemetry)
 
-Pokretanje:
-  python risk_pipeline.py --video snimak.mp4 --config risk_config.json --every 3 --show
-  python risk_pipeline.py --video 0          # zivi stream sa kamere
+Statistiku cele voznje (rezime, epizode ponasanja, alarmi) vise ne racuna pipeline, nego backend
+iz toka zapisa frejmova (backend/app/services/model_report.py -> GET /trips/{id}/report, polje "model").
+
+Modovi:
+  python risk_pipeline.py --video snimak.mp4                      # dev (podrazumevano): video + metrike
+  python risk_pipeline.py --video 0 --mode prod                   # prod: bez prozora, salje backendu
+  python risk_pipeline.py --video snimak.mp4 --mode prod --start-trip demo   # prod sa snimkom, bez telefona
 
 Ugradjeni sistem: preskoceni frejmovi se samo grab()-uju (bez dekodiranja slike),
 teski modeli rade redje (schedule u konfiguraciji), a sve vremenske velicine
@@ -54,16 +58,19 @@ def r3(x: float) -> float:
     return round(float(x), 3)
 
 
+
+
 # ----------------------------------------------------------------------------
-# 3. RISK ENGINE — cista matematika, bez zavisnosti od modela (lako za test)
+# 3. RISK ENGINE — cista matematika po frejmu, bez zavisnosti od modela (lako za test)
+#    Statistika cele voznje (rezime, epizode, alarmi) NIJE ovde: racuna je backend iz toka ovih
+#    zapisa (backend/app/services/model_report.py), pa ista logika vazi i uzivo i za izvestaj.
 # ----------------------------------------------------------------------------
 class _Cat:
-    __slots__ = ("name", "cfg", "p_hat", "active", "D", "run", "ev_start", "ev_end", "ev_peak_r", "ev_peak_p")
+    __slots__ = ("name", "cfg", "p_hat", "active", "D", "run")
 
     def __init__(self, name, cfg):
         self.name, self.cfg = name, cfg
         self.p_hat, self.active, self.D, self.run = 0.0, False, 0.0, 0.0
-        self.ev_start, self.ev_end, self.ev_peak_r, self.ev_peak_p = None, None, 0.0, 0.0
 
     def duration_factor(self) -> float:
         """h_i(D) = b + (1-b) * s(D), s = normalizovana logisticka kriva, s(0)=0, s(inf)=1."""
@@ -87,29 +94,15 @@ class RiskEngine:
         self.vats_buf: deque = deque()
         self.on_road_run = 0.0
         # alarm stanje
-        a = cfg["alerts"]
-        self.a = a
+        self.a = cfg["alerts"]
         self.level, self.level_since = 0, 0.0
         self.rise_t, self.fall_t = 0.0, 0.0
-        self.alert_ev = None
-        # rezime vozne
-        self.p = cfg["logging"].get("summary_power_p", 2.0)
-        self.ev_min = cfg["logging"].get("event_min_s", 0.5)
-        self.ev_gap = cfg["logging"].get("event_merge_gap_s", 0.5)
-        self.T_total = self.S1 = self.Sp = self.R_max = 0.0
-        self.hist = np.zeros(200)                     # vremenski tezinski histogram R
-        self.t_level = [0.0, 0.0, 0.0]
-        self.cat_stats = {n: {"active_s": 0.0, "events": 0, "max_event_s": 0.0} for n in self.cats}
-        self.alert_counts = {"yellow": 0, "red": 0}
-        self.rule_counts = {r["name"]: 0 for r in cfg["rules"]}
-        self._rules_prev: set = set()
 
     # ---------------------------------------------------------------- korak
-    def step(self, t: float, evidence: dict, speed_kmh: float | None = None) -> tuple[dict, list]:
-        """Jedan korak modela u trenutku t. Vraca (zapis_za_frejm, lista_dogadjaja)."""
+    def step(self, t: float, evidence: dict, speed_kmh: float | None = None) -> dict:
+        """Jedan korak modela u trenutku t. Vraca zapis frejma (red u frames.jsonl, isto ide backendu)."""
         dt = 0.0 if self.t_prev is None else max(0.0, t - self.t_prev)
         self.t_prev = t
-        events = []
 
         # (1) zagladjivanje dokaza, (2) histerezis, (3) akumulator trajanja, (4) doprinos r_i
         a_e = ema_alpha(dt, self.tau_e) if dt > 0 else 1.0
@@ -133,9 +126,6 @@ class RiskEngine:
             r[n] = cc["weight"] * c.p_hat * h
             cat_out[n] = {"p": r3(p), "p_hat": r3(c.p_hat), "active": c.active,
                           "run_s": r3(c.run), "D_s": r3(c.D), "h": r3(h), "r": r3(r[n])}
-            events += self._category_event(c, was, t, r[n])
-            if c.active:
-                self.cat_stats[n]["active_s"] += dt
 
         # (5) agregacija: max unutar grupe (korelisane kategorije), noisy-OR izmedju grupa
         R_g = {}
@@ -162,16 +152,10 @@ class RiskEngine:
         R = max(self.R_smooth, cf * floor)
 
         # (9) alarm sa histerezisom
-        events += self._alert(t, dt, R, fired, r)
-
-        # (10) statistika za kraj voznje
-        self._accumulate(dt, R)
-        for name in fired - self._rules_prev:
-            self.rule_counts[name] += 1
-        self._rules_prev = fired
+        self._alert(t, dt, R, fired)
 
         top = [n for n, v in sorted(r.items(), key=lambda kv: -kv[1]) if v > 0.05][:3]
-        rec = {
+        return {
             "t": r3(t), "dt": r3(dt),
             "categories": cat_out,
             "groups": {g: r3(v) for g, v in R_g.items()},
@@ -182,7 +166,6 @@ class RiskEngine:
             "alert": {"level": LEVELS[self.level], "code": self.level},
             "top_contributors": top,
         }
-        return rec, events
 
     # ---------------------------------------------------------------- pravila
     def _rules(self, dt):
@@ -213,14 +196,13 @@ class RiskEngine:
         return floor, fired, vats_cum
 
     # ---------------------------------------------------------------- alarm
-    def _alert(self, t, dt, R, fired, r):
-        rule_fired = bool(fired)
-        a, ev = self.a, []
+    def _alert(self, t, dt, R, fired):
+        a = self.a
         up = 2 if R >= a["red"]["on"] else 1 if R >= a["yellow"]["on"] else 0
         new = self.level
         if up > self.level:
             self.rise_t += dt
-            if self.rise_t >= a["rise_hold_s"] or rule_fired:
+            if self.rise_t >= a["rise_hold_s"] or fired:
                 new = up
             self.fall_t = 0.0
         else:
@@ -237,114 +219,8 @@ class RiskEngine:
             else:
                 self.fall_t = 0.0
         if new != self.level:
-            if new > self.level:
-                self.alert_counts[LEVELS[new]] += 1
-            if self.level == 0 and new > 0:
-                self.alert_ev = {"type": "alert", "start_t": r3(t), "max_level": new, "peak_risk": R,
-                                 "causes": set()}
-            if new == 0 and self.alert_ev:
-                e = self.alert_ev
-                ev.append({**e, "end_t": r3(t), "duration_s": r3(t - e["start_t"]),
-                           "max_level": LEVELS[e["max_level"]], "peak_risk": r3(e["peak_risk"]),
-                           "causes": sorted(e["causes"])})
-                self.alert_ev = None
-            ev.append({"type": "alert_change", "t": r3(t), "from": LEVELS[self.level], "to": LEVELS[new],
-                       "risk": r3(R)})
             self.level, self.level_since = new, t
             self.rise_t = self.fall_t = 0.0
-        if self.alert_ev:
-            e = self.alert_ev
-            e["max_level"] = max(e["max_level"], self.level)
-            e["peak_risk"] = max(e["peak_risk"], R)
-            e["causes"].update(n for n, v in r.items() if v > 0.15)
-            e["causes"].update(f"rule:{name}" for name in fired)
-        return ev
-
-    # ---------------------------------------------------------------- dogadjaji
-    def _category_event(self, c, was, t, r_i):
-        """Dogadjaj ponasanja: spaja prekide krace od event_merge_gap_s, odbacuje krace od event_min_s."""
-        out = []
-        if c.active:
-            if not was:
-                gap = c.cfg.get("event_merge_gap_s", self.ev_gap)
-                if c.ev_start is not None and c.ev_end is not None and t - c.ev_end <= gap:
-                    c.ev_end = None                       # nastavak istog dogadjaja
-                else:
-                    if c.ev_start is not None:
-                        out += self._close_event(c)
-                    c.ev_start, c.ev_end, c.ev_peak_r, c.ev_peak_p = t, None, r_i, c.p_hat
-            c.ev_peak_r, c.ev_peak_p = max(c.ev_peak_r, r_i), max(c.ev_peak_p, c.p_hat)
-        else:
-            if was:
-                c.ev_end = t
-            if c.ev_start is not None and c.ev_end is not None and t - c.ev_end > c.cfg.get("event_merge_gap_s", self.ev_gap):
-                out += self._close_event(c)
-        return out
-
-    def _close_event(self, c):
-        end = c.ev_end if c.ev_end is not None else self.t_prev
-        d = end - c.ev_start
-        out = []
-        if d >= self.ev_min:
-            st = self.cat_stats[c.name]
-            st["events"] += 1
-            st["max_event_s"] = max(st["max_event_s"], d)
-            out.append({"type": "behavior", "category": c.name, "start_t": r3(c.ev_start), "end_t": r3(end),
-                        "duration_s": r3(d), "peak_r": r3(c.ev_peak_r), "peak_p": r3(c.ev_peak_p)})
-        c.ev_start = c.ev_end = None
-        return out
-
-    def finish(self) -> list:
-        """Zatvara otvorene dogadjaje na kraju voznje."""
-        out = []
-        for c in self.cats.values():
-            if c.ev_start is not None:
-                out += self._close_event(c)
-        if self.alert_ev:
-            e, t = self.alert_ev, self.t_prev
-            out.append({**e, "end_t": r3(t), "duration_s": r3(t - e["start_t"]),
-                        "max_level": LEVELS[e["max_level"]], "peak_risk": r3(e["peak_risk"]),
-                        "causes": sorted(e["causes"]), "open_at_end": True})
-            self.alert_ev = None
-        return out
-
-    # ---------------------------------------------------------------- rezime
-    def _accumulate(self, dt, R):
-        if dt <= 0:
-            return
-        self.T_total += dt
-        self.S1 += R * dt
-        self.Sp += (R ** self.p) * dt
-        self.R_max = max(self.R_max, R)
-        self.hist[min(len(self.hist) - 1, int(R * len(self.hist)))] += dt
-        self.t_level[self.level] += dt
-
-    def _percentile(self, q):
-        if self.T_total <= 0:
-            return 0.0
-        cum = np.cumsum(self.hist) / self.T_total
-        return (int(np.searchsorted(cum, q)) + 0.5) / len(self.hist)
-
-    def summary(self) -> dict:
-        T = max(self.T_total, 1e-9)
-        mean = self.S1 / T
-        pmean = (self.Sp / T) ** (1.0 / self.p)
-        hours = T / 3600.0
-        return {
-            "duration_s": r3(self.T_total),
-            "risk_mean": r3(mean),
-            f"risk_power_mean_p{self.p:g}": r3(pmean),
-            "risk_p95": r3(self._percentile(0.95)),
-            "risk_max": r3(self.R_max),
-            "time_in_level_s": {LEVELS[i]: r3(v) for i, v in enumerate(self.t_level)},
-            "time_in_level_frac": {LEVELS[i]: r3(v / T) for i, v in enumerate(self.t_level)},
-            "alerts": dict(self.alert_counts),
-            "alerts_per_hour": {k: r3(v / hours) for k, v in self.alert_counts.items()},
-            "rules": dict(self.rule_counts),
-            "categories": {n: {"active_s": r3(s["active_s"]), "events": s["events"],
-                               "max_event_s": r3(s["max_event_s"])} for n, s in self.cat_stats.items()},
-            "safety_score_0_100": r3(100.0 * (1.0 - pmean)),
-        }
 
 
 # ----------------------------------------------------------------------------
@@ -591,9 +467,6 @@ class FacePerception:
                 "n_faces": len(cands), "others": [c[1] for c in cands if c[0] != i]}
 
 
-HAND_LINKS = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (5, 9), (9, 10), (10, 11), (11, 12),
-              (9, 13), (13, 14), (14, 15), (15, 16), (13, 17), (0, 17), (17, 18), (18, 19), (19, 20)]
-
 
 class HandPerception:
     def __init__(self, model_path, num_hands=4):
@@ -674,274 +547,425 @@ class ClipVerifier:
         return {k: p for k, p in zip(self.keys, probs) if not k.startswith("_")}
 
 
+
 # ----------------------------------------------------------------------------
-# 4. LOGOVANJE — JSON Lines (append-only, otporno na nestanak struje)
+# 4. IZLAZ — lokalni log (dev) i slanje backendu (prod)
 # ----------------------------------------------------------------------------
-class TripLogger:
-    def __init__(self, cfg, session_id, log_all=False):
+WIRE_CATEGORY_KEYS = ("p", "active", "run_s", "r")
+
+
+def wire_record(rec: dict) -> dict:
+    """Zapis frejma u obliku koji backend cita (ModelFrame u backend/app/schemas/camera.py), bez ostatka."""
+    return {
+        "t": rec["t"], "frame": rec.get("frame"),
+        "categories": {n: {k: c[k] for k in WIRE_CATEGORY_KEYS} for n, c in rec["categories"].items()},
+        "groups": rec["groups"],
+        "risk": {"final": rec["risk"]["final"]},
+        "rules_triggered": rec["rules_triggered"],
+        "alert": rec["alert"],
+    }
+
+
+class FrameLog:
+    """frames.jsonl (JSON Lines, append-only, otporno na nestanak struje) + run.json sa podacima o pokretanju.
+
+    frames.jsonl je ulaz za izvestaj na backendu (python -m app.services.model_report) i za
+    safety_client.py --replay. Upisuje se uzorkovano (frame_log_hz), plus svaka promena alarma.
+    """
+
+    def __init__(self, cfg, session_id, log_all=False, slim=False):
         lc = cfg["logging"]
         self.dir = Path(lc["out_dir"]) / session_id
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.f_frames = open(self.dir / "frames.jsonl", "a", buffering=1 << 16)
-        self.f_events = open(self.dir / "events.jsonl", "a", buffering=1 << 14)
-        self.period = 0.0 if log_all else 1.0 / lc["frame_log_hz"] if lc["frame_log_hz"] > 0 else 0.0
-        self.flush_every = lc["flush_every_s"]
-        self.t_log = -1e9; self.t_flush = 0.0; self.prev_level = 0
+        self.f = open(self.dir / "frames.jsonl", "a", buffering=1 << 16)
+        hz = lc.get("frame_log_hz", 5.0)
+        self.period = 0.0 if log_all or hz <= 0 else 1.0 / hz
+        self.flush_every = lc.get("flush_every_s", 1.0)
+        self.slim = slim
+        self.t_log, self.t_flush, self.prev_level = -1e9, 0.0, 0
         self.session_id = session_id
 
-    def write(self, rec, events, force=False):
+    def write(self, rec):
         t = rec["t"]
-        changed = rec["alert"]["code"] != self.prev_level
-        if force or changed or events or t - self.t_log >= self.period:
-            self.f_frames.write(json.dumps(rec, separators=(",", ":")) + "\n")
+        if rec["alert"]["code"] != self.prev_level or t - self.t_log >= self.period:
+            self.f.write(json.dumps(wire_record(rec) if self.slim else rec, separators=(",", ":")) + "\n")
             self.t_log = t
         self.prev_level = rec["alert"]["code"]
-        for e in events:
-            self.f_events.write(json.dumps(e, separators=(",", ":")) + "\n")
         if t - self.t_flush >= self.flush_every:
-            self.f_frames.flush(); self.f_events.flush(); self.t_flush = t
+            self.f.flush(); self.t_flush = t
 
-    def write_events(self, events):
-        for e in events:
-            self.f_events.write(json.dumps(e, separators=(",", ":")) + "\n")
-
-    def close(self, summary, meta):
-        self.f_frames.close(); self.f_events.close()
-        with open(self.dir / "summary.json", "w") as f:
-            json.dump({"session_id": self.session_id, **meta, "summary": summary}, f, indent=2)
+    def close(self, meta):
+        self.f.close()
+        with open(self.dir / "run.json", "w") as f:
+            json.dump({"session_id": self.session_id, **meta}, f, indent=2)
 
 
-def set_cabin_light(level: int):
-    """Mesto za integraciju: CAN poruka / GPIO za zutu (1) ili crvenu (2) lampicu."""
-    pass
+class BackendSink:
+    """Salje zapise frejmova (POST /telemetry) i JPEG video (POST /video/frames) backendu.
 
-
-# ----------------------------------------------------------------------------
-# 5. PRIKAZ — sve promenljive modela uz video (dijagnostika)
-# ----------------------------------------------------------------------------
-CAT_COLORS = {   # BGR
-    "phone_use": (255, 0, 255), "eyes_off_road": (0, 165, 255), "hands_off_wheel": (255, 255, 0),
-    "eating_drinking": (120, 255, 120), "drowsiness": (255, 140, 60), "eyes_closed": (180, 105, 255),
-}
-CAT_SHORT = {"phone_use": "phone", "eyes_off_road": "eyes off road", "hands_off_wheel": "hands off wheel",
-             "eating_drinking": "eat/drink", "drowsiness": "drowsy", "eyes_closed": "eyes closed"}
-LEVEL_BGR = [(0, 200, 0), (0, 220, 255), (0, 0, 255)]
-WHITE, GREY, DIM = (240, 240, 240), (150, 150, 150), (90, 90, 90)
-
-
-class Overlay:
-    """Levo: video sa ROI-jevima i svim detekcijama. Desno: panel sa svim promenljivim iz rec/perception.
-
-    Kako citati panel (vrednosti po kategoriji):
-      p     sirovi dokaz u ovom frejmu (izlaz FeatureExtractor-a)
-      p_hat zagladjen dokaz (EMA, evidence_tau_s); ON kad p_hat >= on, OFF kad p_hat < off (histerezis)
-            (bele crtice na traci p su pragovi on/off)
-      run   koliko sekundi je kategorija neprekidno aktivna;  D = akumulirano trajanje (opada kad nije aktivna)
-      h     faktor trajanja h(D) (base..1);   r = weight * p_hat * h  = doprinos riziku
+    Mreza radi u pozadinskim nitima sa malim redovima: spor ili ugasen backend nikad ne usporava
+    kameru, a kad red ne stigne da se isprazni, bacaju se najstariji. Zapis ide ~send_hz puta u
+    sekundi i odmah na svaku promenu alarma. Vreme ticka je trenutak snimanja, ne slanja.
     """
 
-    def __init__(self, cfg, panel_w=600, history_s=30.0):
-        import cv2
-        self.cv2, self.cfg, self.pw, self.hist_s = cv2, cfg, panel_w, history_s
-        self.hist: deque = deque()
-        self.cats = list(cfg["categories"])
+    def __init__(self, url, send_hz=2.0, video_fps=8.0, send_video=True):
+        import queue
+        import threading
+        from datetime import datetime
+        from safety_client import SafetyClient   # isti folder; samo standardna biblioteka (+ cv2 za JPEG)
+        self.queue, self.datetime = queue, datetime
+        self.client = SafetyClient(url, min_interval_s=0, video_fps=0)    # tempo odredjuje ova klasa
+        self.period = 1.0 / send_hz if send_hz > 0 else 0.0
+        self.video_period = 1.0 / video_fps if video_fps > 0 else 0.0
+        self.send_video = send_video
+        self.t_sent, self.t_video, self.prev_level = -1e9, -1e9, None
+        self.stats = {"sent": 0, "no_trip_or_down": 0, "errors": 0, "dropped": 0, "video": 0}
+        self.last_state = None
+        self._ticks = queue.Queue(maxsize=20)
+        self._video = queue.Queue(maxsize=3)
+        self._stop = threading.Event()
+        self._threads = [threading.Thread(target=self._loop, args=(self._ticks, self._post_tick), daemon=True),
+                         threading.Thread(target=self._loop, args=(self._video, self._post_video), daemon=True)]
+        for th in self._threads:
+            th.start()
 
-    # -- pomocne
-    def _t(self, img, x, y, s, col=WHITE, sc=0.45, th=1):
-        self.cv2.putText(img, s, (int(x), int(y)), self.cv2.FONT_HERSHEY_SIMPLEX, sc, col, th, self.cv2.LINE_AA)
-
-    def _bar(self, img, x, y, w, h, v, col, marks=()):
-        cv2 = self.cv2
-        cv2.rectangle(img, (x, y), (x + w, y + h), (55, 55, 55), -1)
-        cv2.rectangle(img, (x, y), (x + int(w * clip01(v)), y + h), col, -1)
-        for m, mc in marks:
-            mx = x + int(w * m)
-            cv2.line(img, (mx, y - 2), (mx, y + h + 2), mc, 1)
-
-    def _px(self, pt, W, H):
-        return int(pt[0] * W), int(pt[1] * H)
-
-    def _rect(self, img, box, col, label=None, th=1, bottom=False):
-        H, W = img.shape[:2]
-        p0, p1 = self._px(box[:2], W, H), self._px(box[2:], W, H)
-        self.cv2.rectangle(img, p0, p1, col, th)
-        if label:
-            self._t(img, p0[0] + 4, (p1[1] - 6) if bottom else (p0[1] + 16), label, col, 0.5)
-
-    # -- video deo
-    def draw_scene(self, img, rec, face, hands, objects):
-        cv2, vc = self.cv2, self.cfg["video"]
-        H, W = img.shape[:2]
-        self._rect(img, vc["driver_roi"], (200, 200, 0), "driver_roi (hands, phone)", bottom=True)
-        self._rect(img, vc["head_roi"], (255, 140, 60), "head_roi (face)")
-        self._rect(img, vc["steering_wheel_roi"], (0, 255, 255), "steering_wheel_roi")
-        if face is not None:
-            for o in face["others"]:
-                self._rect(img, o, GREY, "other face (ignored)")
-            for p in face["pts"]:
-                cv2.circle(img, self._px(p, W, H), 1, (120, 255, 120), -1)
-            act = rec["categories"].get("eyes_off_road", {}).get("active", False)
-            self._rect(img, face["box"], (0, 0, 255) if act else (0, 255, 0), "driver", 2)
-            n = self._px(face["center"], W, H)
-            fx, fy = face["fwd"]
-            cv2.arrowedLine(img, n, (int(n[0] + 90 * fx), int(n[1] - 90 * fy)), (0, 255, 255), 2, tipLength=0.25)
-        for h in (hands or []):
-            on = _in_box(h["center"], vc["steering_wheel_roi"])
-            col = (0, 255, 0) if on else (0, 140, 255)
-            pts = [self._px(p, W, H) for p in h["pts"]]
-            for a, b in HAND_LINKS:
-                cv2.line(img, pts[a], pts[b], col, 1)
-            c = self._px(h["center"], W, H)
-            cv2.circle(img, c, 5, col, -1)
-            self._t(img, c[0] + 6, c[1] - 6, "on wheel" if on else "off wheel", col, 0.45)
-        for o in (objects or []):
-            col = (255, 0, 255) if o["cls"] == PHONE_CLS else (120, 255, 120)
-            self._rect(img, o["box"], col, f"{COCO_NAMES.get(o['cls'], o['cls'])} {o['conf']:.2f}", 2)
-        cv2.rectangle(img, (0, 0), (W - 1, H - 1), LEVEL_BGR[rec["alert"]["code"]], 6)
-        return img
-
-    # -- panel
-    def draw_panel(self, H, rec, per, info):
-        cv2 = self.cv2
-        P = np.full((H, self.pw, 3), 28, np.uint8)
-        a, rk, cfg = rec["alert"], rec["risk"], self.cfg
-        lv = a["code"]
-        x, y, L = 10, 22, 19
-        self._t(P, x, y, f"t={rec['t']:6.2f}s  frame {rec['frame']}   proc {info['fps']:4.1f} fps  "
-                          f"{info['ms']:4.0f} ms/frame", GREY)
-        y += L + 6
-        cv2.circle(P, (x + 14, y - 6), 14, LEVEL_BGR[lv], -1)
-        self._t(P, x + 38, y, f"{a['level'].upper()}   RISK {rk['final']:.2f}", LEVEL_BGR[lv], 0.75, 2)
-        self._t(P, x + 330, y, f"(1-R)x100 = {100 * (1 - rk['final']):5.1f}", WHITE, 0.5)
-        y += 14
-        al = cfg["alerts"]
-        self._bar(P, x, y, self.pw - 20, 12, rk["final"], LEVEL_BGR[lv],
-                  [(al["yellow"]["on"], LEVEL_BGR[1]), (al["red"]["on"], LEVEL_BGR[2])])
-        y += 12 + L
-        self._t(P, x, y, f"raw {rk['raw']:.2f}  x ctx {rk['context_factor']:.1f}  -> smooth {rk['smoothed']:.2f}"
-                         f"   floor {rk['floor']:.2f}   final = max {rk['final']:.2f}", GREY)
-        y += L
-        gx = x
-        for g, v in rec["groups"].items():
-            self._t(P, gx, y + 4, f"{g} {v:.2f}", WHITE)
-            self._bar(P, gx + 105, y - 6, 75, 10, v, (200, 200, 200))
-            gx += 195
-        y += L + 4
-
-        # tabela kategorija
-        cols = [x, x + 135, x + 230, x + 285, x + 330, x + 385, x + 440, x + 485]
-        for cx, hdr in zip(cols, ["category", "p (raw)", "p_hat", "state", "run s", "D s", "h", "r (contrib)"]):
-            self._t(P, cx, y, hdr, GREY, 0.42)
-        y += 4
-        for n in self.cats:
-            c = rec["categories"][n]
-            cc = cfg["categories"][n]
-            y += L
-            col = CAT_COLORS.get(n, WHITE)
-            cv2.rectangle(P, (x, y - 10), (x + 8, y), col, -1)
-            self._t(P, x + 12, y, CAT_SHORT.get(n, n), WHITE if c["active"] else GREY, 0.45, 2 if c["active"] else 1)
-            self._bar(P, cols[1], y - 9, 80, 9, c["p"], col, [(cc["on"], WHITE), (cc["off"], DIM)])
-            self._t(P, cols[2], y, f"{c['p_hat']:.2f}", WHITE)
-            self._t(P, cols[3], y, "ON" if c["active"] else "off", (0, 0, 255) if c["active"] else DIM, 0.45,
-                    2 if c["active"] else 1)
-            self._t(P, cols[4], y, f"{c['run_s']:.1f}")
-            self._t(P, cols[5], y, f"{c['D_s']:.1f}")
-            self._t(P, cols[6], y, f"{c['h']:.2f}")
-            self._bar(P, cols[7], y - 9, self.pw - cols[7] - 45, 9, c["r"], col)
-            self._t(P, self.pw - 40, y, f"{c['r']:.2f}")
-        y += L + 2
-        rules = ", ".join(rec["rules_triggered"]) or "-"
-        self._t(P, x, y, f"rules: {rules}    VATS off-road in window: {rec['vats_cum_s']:.1f}s",
-                (0, 0, 255) if rec["rules_triggered"] else GREY)
-
-        # percepcija
-        y += L + 6
-        cv2.line(P, (x, y - 12), (self.pw - 10, y - 12), DIM, 1)
-        cal = cfg["calibration"]
-        if per.get("face_found"):
-            self._t(P, x, y, f"FACE yes ({per['n_faces']} in head_roi)   abs yaw {per['yaw_abs']:+6.1f}  "
-                             f"pitch {per['pitch_abs']:+6.1f}", (0, 255, 0))
-            y += L
-            self._t(P, x, y, f"vs road  dyaw {per['yaw']:+6.1f} (thr {cal['yaw_thr_deg']:.0f})  "
-                             f"dpitch {per['pitch']:+6.1f} (thr {cal['pitch_thr_deg']:.0f})",
-                    (0, 165, 255) if per["p_head"] > 0.5 else WHITE)
-            y += L
-            self._t(P, x, y, f"p_yaw {per['p_yaw']:.2f}  p_pitch {per['p_pitch']:.2f}  p_head {per['p_head']:.2f}"
-                             f"   p_gaze {per['p_gaze']:.2f}  -> eyes_off_road = max")
-            y += L
-            self._t(P, x, y, f"eyes closed {per['eye_closure']:.2f} (thr {cal['eye_closed_thr']:.2f})  "
-                             f"gaze down {per['gaze_down']:.2f} (thr {cal['gaze_down_thr']:.2f})  "
-                             f"jaw {per['jaw_open']:.2f}")
-        else:
-            self._t(P, x, y, f"FACE not found in head_roi -> eyes_off_road = {cal['face_missing_p']:.2f} (fallback)",
-                    (0, 0, 255))
-            y += 3 * L
-        y += L
-        b = per["baseline"]
-        self._t(P, x, y, f"road baseline yaw {b[0]:+.1f} pitch {b[1]:+.1f}  [{per['baseline_status']}]", GREY)
-        y += L
-        self._t(P, x, y, f"PERCLOS {per['perclos']:.2f} (window {per['perclos_window_s']:.0f}s, needs >20s)   "
-                         f"yawns {per['yawns_window']}", WHITE)
-        y += L
-        hcol = (0, 255, 0) if per["hands_on_wheel"] >= 2 else (0, 220, 255) if per["hands_on_wheel"] == 1 else (0, 140, 255)
-        hs = f"HANDS detected {per['hands_detected']}  on wheel {per['hands_on_wheel']}" if per["hands_detected"] \
-            else f"HANDS none detected -> hands_off_wheel = {cal['no_hands_detected_p']:.2f} (fallback)"
-        self._t(P, x, y, hs + ("" if per["hands_fresh"] else "  (stale)"), hcol)
-        y += L
-        ph = per.get("phone")
-        if ph:
-            self._t(P, x, y, f"PHONE yolo {ph['conf']:.2f}  near hand {ph['near_hand']:.2f}  near face "
-                             f"{ph['near_face']:.2f}  lap {ph['lap']:.2f} -> {ph['p']:.2f}", (255, 0, 255))
-        else:
-            self._t(P, x, y, f"PHONE not seen by YOLO   (memory {per['phone_held']:.2f})", GREY)
-        y += L
-        objs = ", ".join(f"{COCO_NAMES.get(k, k)} {v:.2f}" for k, v in per["objects"]) or "-"
-        self._t(P, x, y, f"objects: {objs}", GREY)
-
-        # vremenska linija
-        y += 14
-        self._timeline(P, x, y, self.pw - 20, H - y - 10, rec)
-        return P
-
-    def _timeline(self, P, x, y, w, h, rec):
-        cv2 = self.cv2
-        if h < 40:
+    # -- iz petlje kamere (nikad ne blokira)
+    def frame(self, rec):
+        now = time.monotonic()
+        level = rec["alert"]["code"]
+        if level == self.prev_level and now - self.t_sent < self.period:
             return
-        t = rec["t"]
-        self.hist.append((t, rec["risk"]["final"], rec["alert"]["code"], {n: rec["categories"][n]["r"] for n in self.cats}))
-        while self.hist and self.hist[0][0] < t - self.hist_s:
-            self.hist.popleft()
-        cv2.rectangle(P, (x, y), (x + w, y + h), (40, 40, 40), -1)
-        al = self.cfg["alerts"]
-        for v, col in ((al["yellow"]["on"], LEVEL_BGR[1]), (al["red"]["on"], LEVEL_BGR[2])):
-            yy = y + h - int(v * h)
-            cv2.line(P, (x, yy), (x + w, yy), col, 1)
-        def X(tt):
-            return x + int(w * (1 - (t - tt) / self.hist_s))
-        for n in self.cats:
-            pts = np.array([(X(tt), y + h - int(rr[n] * h)) for tt, _, _, rr in self.hist], np.int32)
-            if len(pts) > 1:
-                cv2.polylines(P, [pts], False, CAT_COLORS.get(n, WHITE), 1, cv2.LINE_AA)
-        pts = np.array([(X(tt), y + h - int(R * h)) for tt, R, _, _ in self.hist], np.int32)
-        if len(pts) > 1:
-            cv2.polylines(P, [pts], False, WHITE, 2, cv2.LINE_AA)
-        for tt, _, lv, _ in self.hist:
-            cv2.line(P, (X(tt), y + h - 4), (X(tt), y + h), LEVEL_BGR[lv], 1)
-        self._t(P, x + 4, y + 14, f"last {self.hist_s:.0f}s: white = RISK, colored = r per category", GREY, 0.42)
+        self.t_sent, self.prev_level = now, level
+        self._put(self._ticks, (wire_record(rec), self.datetime.now().astimezone()))
 
-    def render(self, frame, rec, per, face, hands, objects, info):
-        img = self.draw_scene(frame.copy(), rec, face, hands, objects)
-        return np.hstack([img, self.draw_panel(img.shape[0], rec, per, info)])
+    def video(self, image):
+        if not self.send_video:
+            return
+        now = time.monotonic()
+        if now - self.t_video < self.video_period:
+            return
+        self.t_video = now
+        self._put(self._video, image)
+
+    def _put(self, q, item):
+        while True:
+            try:
+                q.put_nowait(item)
+                return
+            except self.queue.Full:
+                try:
+                    q.get_nowait(); self.stats["dropped"] += 1
+                except self.queue.Empty:
+                    pass
+
+    # -- pozadinske niti
+    def _loop(self, q, post):
+        while not (self._stop.is_set() and q.empty()):
+            try:
+                item = q.get(timeout=0.2)
+            except self.queue.Empty:
+                continue
+            try:
+                post(item)
+            except Exception as e:                 # 422/500 sa backenda: zabelezi i nastavi
+                self.stats["errors"] += 1
+                if self.stats["errors"] <= 3:
+                    print(f"[backend] {type(e).__name__}: {e}", flush=True)
+
+    def _post_tick(self, item):
+        frame, ts = item
+        state = self.client.send_frame(frame, timestamp=ts)
+        if state is None:
+            self.stats["no_trip_or_down"] += 1     # 409 (aplikacija jos nije pokrenula voznju) ili nedostupan
+        else:
+            self.stats["sent"] += 1
+            self.last_state = state
+
+    def _post_video(self, image):
+        if self.client.send_video_frame(image):
+            self.stats["video"] += 1
+
+    def status(self):
+        s, st = self.stats, self.last_state
+        car = f"score {st['score']:.0f} {st['level']}" if st else "no trip state yet"
+        return (f"backend: {s['sent']} sent, {s['no_trip_or_down']} no trip/unreachable, {s['errors']} errors, "
+                f"{s['dropped']} dropped, {s['video']} video | {car}")
+
+    def close(self, timeout=5.0):
+        self._stop.set()
+        for th in self._threads:
+            th.join(timeout=timeout)
 
 
-def verbose_line(rec, per):
-    c = rec["categories"]
-    cats = " ".join(f"{CAT_SHORT.get(n, n).split()[0]}={v['p']:.2f}/{v['r']:.2f}{'*' if v['active'] else ''}"
-                    for n, v in c.items())
-    face = (f"face yaw{per['yaw']:+.0f} pitch{per['pitch']:+.0f} gd{per['gaze_down']:.2f} cl{per['eye_closure']:.2f}"
-            if per["face_found"] else "face --")
-    return (f"t={rec['t']:6.2f} R={rec['risk']['final']:.2f} {rec['alert']['level']:6s} | {cats} | {face} | "
-            f"hands {per['hands_detected']}/{per['hands_on_wheel']} | phone {per['phone_now']:.2f}")
+# ----------------------------------------------------------------------------
+# 5. PIPELINE — jedan frejm -> zapis (percepcija, dokaz, rizik). Isto za dev i prod.
+# ----------------------------------------------------------------------------
+class Pipeline:
+    def __init__(self, cfg):
+        vc, mc, sc = cfg["video"], cfg["models"], cfg["schedule"]
+        self.cfg, self.vc, self.sc = cfg, vc, sc
+        self.face = FacePerception(mc["face_landmarker"], mc.get("face_num", 2), mc.get("face_min_conf", 0.4),
+                                   vc.get("driver_side", "right"))
+        self.hands = HandPerception(mc["hand_landmarker"], mc.get("hands_num", 4))
+        self.objs = ObjectPerception(mc["yolo_onnx"], mc["yolo_input"], mc["yolo_conf"])
+        self.clip = ClipVerifier(mc.get("clip_model", "ViT-B-32"), mc.get("clip_pretrained", "laion2b_s34b_b79k")) \
+            if sc.get("clip_every_s", 0) > 0 else None
+        self.fx, self.engine = FeatureExtractor(cfg), RiskEngine(cfg)
+        self.k, self.last_ts = -1, -1
+        self.held = {"face": (None, -1e9), "hands": (None, -1e9), "objects": (None, -1e9), "clip": (None, -1e9)}
+
+    def process(self, src, t, frame_idx, speed_kmh=None):
+        """Vraca (zapis frejma, umanjen frejm, (lice, sake, objekti)) za frejm `src` u trenutku t (s)."""
+        import cv2
+        vc, sc, held = self.vc, self.sc, self.held
+        roi, head_roi = vc["driver_roi"], vc["head_roi"]
+        self.k += 1
+        k = self.k
+        h, w = src.shape[:2]
+        frame = cv2.resize(src, (vc["input_width"], int(h * vc["input_width"] / w)))
+        ts_ms = max(int(t * 1000), self.last_ts + 1)          # MediaPipe VIDEO trazi strogo rastuce vreme
+        self.last_ts = ts_ms
+
+        def rgb(img):
+            return np.ascontiguousarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+
+        if k % sc["face_every_n"] == 0:
+            held["face"] = (self.face(rgb(_crop(frame, head_roi)), ts_ms, head_roi), t)
+        if k % sc["hands_every_n"] == 0:
+            held["hands"] = (self.hands(rgb(_crop(frame, roi)), ts_ms, roi), t)
+        if k % sc["objects_every_n"] == 0:
+            # YOLO na isecku iz originalne rezolucije: telefon je mali, a downscale ga brise
+            yolo_src = src if vc.get("yolo_full_res", True) else frame
+            held["objects"] = (self.objs(_crop(yolo_src, roi), roi), t)
+
+        def get(key):
+            return held[key][0] if t - held[key][1] <= sc["max_result_age_s"] else None
+
+        results = get("face"), get("hands"), get("objects")
+        evidence, perception = self.fx.update(t, *results)
+        if self.clip is not None:
+            if t - held["clip"][1] >= sc["clip_every_s"]:
+                held["clip"] = (self.clip(rgb(_crop(frame, roi))), t)
+            if held["clip"][0] and t - held["clip"][1] <= 2 * sc["clip_every_s"]:
+                for cat, pc in held["clip"][0].items():          # fuzija: CLIP moze samo da podigne dokaz
+                    evidence[cat] = max(evidence.get(cat, 0.0), 0.8 * pc)
+                perception["clip"] = {kk: r3(v) for kk, v in held["clip"][0].items()}
+        rec = self.engine.step(t, evidence, speed_kmh=speed_kmh)   # speed: iz CAN-a ako postoji
+        rec = {"t": rec["t"], "frame": frame_idx, **rec, "perception": perception}
+        return rec, frame, results
+
+
+class FrameSource:
+    """Izvor frejmova: (indeks, t u sekundama, BGR slika) za svaki `every`-ti frejm.
+
+    Preskoceni frejmovi se samo grab()-uju (bez dekodiranja). Kamera (indeks) daje t po satu.
+    Fajl daje t po polozaju u snimku; sa realtime=True ide brzinom snimanja kao prava kamera:
+    ceka kad je obrada brza, a preskace frejmove kad kasni (tako vreme tickova i video za klipove
+    na backendu odgovaraju snimku).
+    """
+
+    def __init__(self, video, every, start_s=0.0, max_seconds=None, realtime=False):
+        import cv2
+        self.live = str(video).isdigit()
+        self.cap = cv2.VideoCapture(int(video) if self.live else video)
+        if not self.cap.isOpened():
+            raise SystemExit(f"cannot open video source {video!r}")
+        self.fps = self.cap.get(cv2.CAP_PROP_FPS) or 30.0
+        if start_s and not self.live:
+            self.cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
+        self.frame0 = 0 if self.live else int(round(start_s * self.fps))
+        self.every, self.max_seconds, self.realtime = every, max_seconds, realtime and not self.live
+
+    def __iter__(self):
+        cap, fps, frame0, every = self.cap, self.fps, self.frame0, self.every
+        idx, nxt, wall0 = frame0 - 1, frame0, time.monotonic()
+        try:
+            while True:
+                if self.realtime:
+                    ahead = (nxt - frame0) / fps - (time.monotonic() - wall0)
+                    if ahead > 0:
+                        time.sleep(ahead)
+                    else:                                  # kasnimo: skoci na frejm koji je "sada"
+                        now_idx = frame0 + int((time.monotonic() - wall0) * fps)
+                        nxt = max(nxt, frame0 + (now_idx - frame0) // every * every)
+                while idx + 1 < nxt:
+                    if not cap.grab():
+                        return
+                    idx += 1
+                ok, src = cap.read()
+                if not ok:
+                    return
+                idx += 1
+                t = (time.monotonic() - wall0) if self.live else (idx - frame0) / fps
+                if self.max_seconds and t > self.max_seconds:
+                    return
+                yield idx, t, src
+                nxt = idx + every
+        finally:
+            cap.release()
+
+
+def _session_name(cfg, video):
+    # jedinstven folder po pokretanju (dva pokretanja u istoj sekundi su ranije pisala u isti frames.jsonl)
+    stem = "cam" + str(video) if str(video).isdigit() else Path(str(video)).stem[:40]
+    session = f"{time.strftime('%Y%m%d_%H%M%S')}_{stem}"
+    n = 1
+    while (Path(cfg["logging"]["out_dir"]) / session).exists():
+        n += 1
+        session = f"{time.strftime('%Y%m%d_%H%M%S')}_{stem}_{n}"
+    return session
+
+
+def _run_meta(video, every, pipe, compute_ms, cfg):
+    return {"source": str(video), "process_every_n_frames": every,
+            "avg_compute_ms_per_processed_frame": r3(np.mean(compute_ms) if compute_ms else 0),
+            "road_baseline": [r3(v) for v in pipe.fx.baseline.value], "road_baseline_status": pipe.fx.baseline.status,
+            "config_version": cfg["version"]}
+
+
+def print_model_report(frames_jsonl):
+    """Izvestaj cele voznje racuna backend (app/services/model_report.py). Ovde se uvozi isti kod, bez servera."""
+    backend = Path(__file__).resolve().parent.parent / "backend"
+    try:
+        import sys
+        if str(backend) not in sys.path:
+            sys.path.insert(0, str(backend))
+        from app.services.model_report import format_report, report_from_records
+    except ImportError:
+        print(f"trip report: cd backend && python -m app.services.model_report {frames_jsonl}")
+        return
+    with open(frames_jsonl, encoding="utf-8") as f:
+        records = [json.loads(line) for line in f if line.strip()]
+    print("\n--- trip report (backend/app/services/model_report.py) ---")
+    print(format_report(report_from_records(records)))
+
+
+def _start_trip(sink, driver):
+    if sink is None or not driver:
+        return None
+    try:
+        trip = sink.client.start_trip(driver)
+        print(f"started trip {trip['trip_id']} for {driver}")
+        return trip["trip_id"]
+    except OSError as e:
+        print(f"could not start a trip ({e}); frames are sent to whatever trip the app starts")
+        return None
+
+
+def _end_trip(sink, trip_id):
+    if sink is None or trip_id is None:
+        return
+    try:
+        s = sink.client.end_trip(trip_id)
+        print(f"trip ended: final score {s['final_score']}, report: GET /trips/{trip_id}/report")
+    except OSError as e:
+        print(f"could not end trip {trip_id}: {e}")
+
+
+# ----------------------------------------------------------------------------
+# 6. MODOVI
+#    dev   prozor sa videom i metrikama, frames.jsonl sa svim promenljivim, izvestaj na kraju
+#    prod  bez prozora i bez prikaza: zapisi i video idu backendu, sve ostalo radi backend
+# ----------------------------------------------------------------------------
+def run_dev(video, cfg_path, every=None, show=True, max_seconds=None, save_video=None, verbose=False,
+            log_all=False, start_s=0.0, backend_url=None, start_trip=None, realtime=False):
+    import cv2
+    from dev_overlay import Overlay, verbose_line
+    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+    every = every or cfg["video"]["process_every_n_frames"]
+    pipe = Pipeline(cfg)
+    log = FrameLog(cfg, _session_name(cfg, video), log_all)
+    bc = cfg.get("backend", {})
+    sink = BackendSink(backend_url, bc.get("send_hz", 2.0), bc.get("video_fps", 8.0), bc.get("send_video", True)) \
+        if backend_url else None
+    trip_id = _start_trip(sink, start_trip)
+    overlay = Overlay(cfg) if (show or save_video) else None
+    source = FrameSource(video, every, start_s, max_seconds, realtime)
+    writer, compute_ms, paused = None, [], False
+    if show:
+        cv2.namedWindow("driver risk (dev)", cv2.WINDOW_NORMAL)
+    try:
+        for frame_idx, t, src in source:
+            tic = time.perf_counter()
+            rec, frame, (f_res, h_res, o_res) = pipe.process(src, t, frame_idx)
+            compute_ms.append((time.perf_counter() - tic) * 1000)
+            log.write(rec)
+            if sink is not None:
+                sink.frame(rec); sink.video(frame)
+            if verbose:
+                print(verbose_line(rec, rec["perception"]), flush=True)
+            if overlay is None:
+                continue
+            recent = compute_ms[-20:]
+            info = {"ms": float(np.mean(recent)), "fps": 1000.0 / max(1e-3, float(np.mean(recent)))}
+            vis = overlay.render(frame, rec, rec["perception"], f_res, h_res, o_res, info)
+            if save_video:
+                if writer is None:
+                    writer = cv2.VideoWriter(save_video, cv2.VideoWriter_fourcc(*"mp4v"), source.fps / every,
+                                             (vis.shape[1], vis.shape[0]))
+                writer.write(vis)
+            if show:
+                cv2.imshow("driver risk (dev)", vis)
+                key = cv2.waitKey(0 if paused else 1) & 0xFF
+                if key in (27, ord("q")):
+                    break
+                if key == ord(" "):
+                    paused = not paused
+                if key == ord("r"):
+                    overlay.show_roi = not overlay.show_roi
+                if key == ord("s"):
+                    p = log.dir / f"frame_{frame_idx}.png"
+                    cv2.imwrite(str(p), vis); print(f"saved {p}")
+    finally:
+        if writer is not None:
+            writer.release()
+        if show:
+            cv2.destroyAllWindows()
+        log.close(_run_meta(video, every, pipe, compute_ms, cfg))
+        if sink is not None:
+            sink.close()
+            print(sink.status())
+            _end_trip(sink, trip_id)
+    print_model_report(log.dir / "frames.jsonl")
+    print(f"logs: {log.dir}")
+
+
+def run_prod(video, cfg_path, backend_url, every=None, max_seconds=None, start_s=0.0, realtime=True,
+             send_video=None, log=False, start_trip=None, status_every_s=10.0):
+    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
+    every = every or cfg["video"]["process_every_n_frames"]
+    bc = cfg.get("backend", {})
+    sink = BackendSink(backend_url, bc.get("send_hz", 2.0), bc.get("video_fps", 8.0),
+                       bc.get("send_video", True) if send_video is None else send_video)
+    pipe = Pipeline(cfg)
+    flog = FrameLog(cfg, _session_name(cfg, video), slim=True) if log else None
+    trip_id = _start_trip(sink, start_trip)
+    print(f"production mode: {video} -> {backend_url} (every {every}. frame, {bc.get('send_hz', 2.0)} Hz, "
+          f"video {'on' if sink.send_video else 'off'}). Ctrl+C to stop.", flush=True)
+    compute_ms, t_status, n = [], time.monotonic(), 0
+    try:
+        for frame_idx, t, src in FrameSource(video, every, start_s, max_seconds, realtime):
+            tic = time.perf_counter()
+            rec, frame, _ = pipe.process(src, t, frame_idx)
+            compute_ms.append((time.perf_counter() - tic) * 1000)
+            n += 1
+            sink.frame(rec)
+            sink.video(frame)
+            if flog is not None:
+                flog.write(rec)
+            if time.monotonic() - t_status >= status_every_s:
+                t_status = time.monotonic()
+                ms = float(np.mean(compute_ms[-50:]))
+                print(f"t={t:7.1f}s {rec['alert']['level']:6s} risk {rec['risk']['final']:.2f} | {ms:4.0f} ms/frame | "
+                      f"{sink.status()}", flush=True)
+    except KeyboardInterrupt:
+        print("stopping")
+    finally:
+        sink.close()
+        if flog is not None:
+            flog.close(_run_meta(video, every, pipe, compute_ms, cfg))
+        print(f"{n} frames processed. {sink.status()}")
+        _end_trip(sink, trip_id)
 
 
 # ----------------------------------------------------------------------------
@@ -1046,151 +1070,52 @@ def calibrate(video, cfg_path, every=3, write=True):
 
 
 # ----------------------------------------------------------------------------
-# GLAVNA PETLJA
+# KOMANDNA LINIJA
 # ----------------------------------------------------------------------------
-def run(video, cfg_path, every=None, show=False, max_seconds=None, save_video=None, verbose=False, log_all=False,
-        start_s=0.0):
-    import cv2
-    cfg = json.loads(Path(cfg_path).read_text(encoding="utf-8"))
-    vc, sc, mc = cfg["video"], cfg["schedule"], cfg["models"]
-    every = every or vc["process_every_n_frames"]
-    roi, head_roi = vc["driver_roi"], vc["head_roi"]
-
-    face = FacePerception(mc["face_landmarker"], mc.get("face_num", 2), mc.get("face_min_conf", 0.4),
-                          vc.get("driver_side", "right"))
-    hands = HandPerception(mc["hand_landmarker"], mc.get("hands_num", 4))
-    objs = ObjectPerception(mc["yolo_onnx"], mc["yolo_input"], mc["yolo_conf"])
-    clip = ClipVerifier(mc.get("clip_model", "ViT-B-32"), mc.get("clip_pretrained", "laion2b_s34b_b79k")) \
-        if sc.get("clip_every_s", 0) > 0 else None
-    fx, engine = FeatureExtractor(cfg), RiskEngine(cfg)
-    # jedinstven folder po pokretanju (dva pokretanja u istoj sekundi su ranije pisala u isti frames.jsonl)
-    stem = "cam" + str(video) if str(video).isdigit() else Path(str(video)).stem[:40]
-    session = f"{time.strftime('%Y%m%d_%H%M%S')}_{stem}"
-    n = 1
-    while (Path(cfg["logging"]["out_dir"]) / session).exists():
-        n += 1
-        session = f"{time.strftime('%Y%m%d_%H%M%S')}_{stem}_{n}"
-    log = TripLogger(cfg, session, log_all)
-    overlay = Overlay(cfg) if (show or save_video) else None
-    writer = None
-
-    live = str(video).isdigit()
-    cap = cv2.VideoCapture(int(video) if live else video)
-    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    if start_s and not live:
-        cap.set(cv2.CAP_PROP_POS_MSEC, start_s * 1000)
-    frame0 = 0 if live else int(round(start_s * fps))
-    t0 = time.monotonic()
-    frame_idx, k, last_ts = frame0 - 1, -1, -1
-    held = {"face": (None, -1e9), "hands": (None, -1e9), "objects": (None, -1e9), "clip": (None, -1e9)}
-    compute_ms, paused = [], False
-    if show:
-        cv2.namedWindow("driver risk", cv2.WINDOW_NORMAL)
-
-    while True:
-        frame_idx += 1
-        if (frame_idx - frame0) % every:
-            if not cap.grab():            # preskoceni frejm: bez dekodiranja slike
-                break
-            continue
-        ok, src = cap.read()
-        if not ok:
-            break
-        k += 1
-        t = (time.monotonic() - t0) if live else (frame_idx - frame0) / fps
-        if max_seconds and t > max_seconds:
-            break
-        tic = time.perf_counter()
-
-        h, w = src.shape[:2]
-        frame = cv2.resize(src, (vc["input_width"], int(h * vc["input_width"] / w)))
-        ts_ms = max(int(t * 1000), last_ts + 1)          # MediaPipe VIDEO trazi strogo rastuce vreme
-        last_ts = ts_ms
-        rgb = lambda img: np.ascontiguousarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-
-        if k % sc["face_every_n"] == 0:
-            held["face"] = (face(rgb(_crop(frame, head_roi)), ts_ms, head_roi), t)
-        if k % sc["hands_every_n"] == 0:
-            held["hands"] = (hands(rgb(_crop(frame, roi)), ts_ms, roi), t)
-        if k % sc["objects_every_n"] == 0:
-            # YOLO na isecku iz originalne rezolucije: telefon je mali, a downscale ga brise
-            yolo_src = src if vc.get("yolo_full_res", True) else frame
-            held["objects"] = (objs(_crop(yolo_src, roi), roi), t)
-        get = lambda key: held[key][0] if t - held[key][1] <= sc["max_result_age_s"] else None
-
-        f_res, h_res, o_res = get("face"), get("hands"), get("objects")
-        evidence, perception = fx.update(t, f_res, h_res, o_res)
-        if clip is not None:
-            if t - held["clip"][1] >= sc["clip_every_s"]:
-                held["clip"] = (clip(rgb(_crop(frame, roi))), t)
-            if held["clip"][0] and t - held["clip"][1] <= 2 * sc["clip_every_s"]:
-                for cat, pc in held["clip"][0].items():          # fuzija: CLIP moze samo da podigne dokaz
-                    evidence[cat] = max(evidence.get(cat, 0.0), 0.8 * pc)
-                perception["clip"] = {kk: r3(v) for kk, v in held["clip"][0].items()}
-        rec, events = engine.step(t, evidence, speed_kmh=None)   # speed: iz CAN-a ako postoji
-        rec = {"t": rec["t"], "frame": frame_idx, **rec, "perception": perception}
-        log.write(rec, events)
-        set_cabin_light(rec["alert"]["code"])
-        compute_ms.append((time.perf_counter() - tic) * 1000)
-        if verbose:
-            print(verbose_line(rec, perception), flush=True)
-
-        if overlay is not None:
-            recent = compute_ms[-20:]
-            info = {"ms": float(np.mean(recent)), "fps": 1000.0 / max(1e-3, float(np.mean(recent)))}
-            vis = overlay.render(frame, rec, perception, f_res, h_res, o_res, info)
-            if save_video:
-                if writer is None:
-                    writer = cv2.VideoWriter(save_video, cv2.VideoWriter_fourcc(*"mp4v"), fps / every,
-                                             (vis.shape[1], vis.shape[0]))
-                writer.write(vis)
-            if show:
-                cv2.imshow("driver risk", vis)
-                key = cv2.waitKey(0 if paused else 1) & 0xFF
-                if key in (27, ord("q")):
-                    break
-                if key == ord(" "):
-                    paused = not paused
-                if key == ord("s"):
-                    p = log.dir / f"frame_{frame_idx}.png"
-                    cv2.imwrite(str(p), vis); print(f"saved {p}")
-
-    cap.release()
-    if writer is not None:
-        writer.release()
-    if show:
-        cv2.destroyAllWindows()
-    log.write_events(engine.finish())
-    meta = {"source": str(video), "process_every_n_frames": every, "fps_source": fps,
-            "avg_compute_ms_per_processed_frame": r3(np.mean(compute_ms) if compute_ms else 0),
-            "road_baseline": [r3(v) for v in fx.baseline.value], "road_baseline_status": fx.baseline.status,
-            "config_version": cfg["version"]}
-    summ = engine.summary()
-    log.close(summ, meta)
-    print(json.dumps(summ, indent=2))
-    print(f"logs: {log.dir}")
-
-
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Driver risk from a cabin camera. Keys in --show: SPACE pause, "
-                                             "S save screenshot, Q/ESC quit.")
+    ap = argparse.ArgumentParser(
+        description="Driver risk from a cabin camera. dev: window with video + key metrics "
+                    "(SPACE pause, R ROIs, S screenshot, Q/ESC quit). prod: headless, streams to the backend.")
     ap.add_argument("--video", required=True, help="putanja do snimka ili indeks kamere (npr. 0)")
     ap.add_argument("--config", default="risk_config.json")
+    ap.add_argument("--mode", choices=["dev", "prod"], default="dev",
+                    help="dev = prikaz + lokalni log (podrazumevano); prod = bez prikaza, zapisi idu backendu")
     ap.add_argument("--every", type=int, default=None, help="obradi svaki N-ti frejm")
-    ap.add_argument("--show", action="store_true", help="prozor sa videom i svim promenljivim")
-    ap.add_argument("--save-video", default=None, help="snimi prikaz (video + panel) u .mp4")
-    ap.add_argument("--verbose", action="store_true", help="jedan red po obradjenom frejmu u terminalu")
-    ap.add_argument("--log-all", action="store_true", help="frames.jsonl za svaki obradjeni frejm (ne 5 Hz)")
     ap.add_argument("--start", type=float, default=0.0, help="pocni od ove sekunde snimka")
     ap.add_argument("--max-seconds", type=float, default=None)
+    ap.add_argument("--backend", nargs="?", const="", default=None, metavar="URL",
+                    help="adresa backenda (podrazumevano backend.url iz configa). U dev modu ukljucuje slanje.")
+    ap.add_argument("--start-trip", metavar="DRIVER_ID", default=None,
+                    help="sam pokrene voznju na backendu (bez telefona) i zavrsi je na kraju")
+    # dev
+    ap.add_argument("--show", action="store_true", help="(dev) prozor sa videom; ukljucen je i bez ovoga")
+    ap.add_argument("--no-show", action="store_true", help="(dev) bez prozora, npr. samo --save-video")
+    ap.add_argument("--save-video", default=None, help="(dev) snimi prikaz (video + panel) u .mp4")
+    ap.add_argument("--verbose", action="store_true", help="(dev) jedan red po obradjenom frejmu u terminalu")
+    ap.add_argument("--log-all", action="store_true", help="(dev) frames.jsonl za svaki obradjeni frejm (ne 5 Hz)")
+    ap.add_argument("--realtime", action="store_true", help="(dev) snimak ide brzinom snimanja (u prod je ukljuceno)")
+    # prod
+    ap.add_argument("--no-realtime", action="store_true", help="(prod) snimak obradi najbrze sto moze")
+    ap.add_argument("--no-video", action="store_true", help="(prod) ne salji JPEG frejmove (bez klipova u izvestaju)")
+    ap.add_argument("--log", action="store_true", help="(prod) i lokalno logs/<sesija>/frames.jsonl (ono sto ide backendu)")
+    # podesavanje
     ap.add_argument("--pick-roi", action="store_true", help="misem oznaci driver/head/wheel ROI i upisi u config")
     ap.add_argument("--calibrate", action="store_true",
                     help="izmeri pozu glave 'gleda u put' na snimku normalne voznje i upisi u config")
     ap.add_argument("--at", type=float, default=5.0, help="sekunda snimka za --pick-roi")
     a = ap.parse_args()
+
     if a.pick_roi:
         pick_roi(a.video, a.config, a.at)
     elif a.calibrate:
         calibrate(a.video, a.config, a.every or 3)
     else:
-        run(a.video, a.config, a.every, a.show, a.max_seconds, a.save_video, a.verbose, a.log_all, a.start)
+        url = a.backend or json.loads(Path(a.config).read_text(encoding="utf-8")).get("backend", {}).get(
+            "url", "http://127.0.0.1:8000/api/v1")
+        if a.mode == "prod":
+            run_prod(a.video, a.config, url, a.every, a.max_seconds, a.start, realtime=not a.no_realtime,
+                     send_video=False if a.no_video else None, log=a.log, start_trip=a.start_trip)
+        else:
+            run_dev(a.video, a.config, a.every, not a.no_show, a.max_seconds, a.save_video, a.verbose, a.log_all,
+                    a.start, backend_url=url if a.backend is not None or a.start_trip else None,
+                    start_trip=a.start_trip, realtime=a.realtime)

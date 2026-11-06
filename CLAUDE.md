@@ -17,6 +17,7 @@ slike** (privatnost).
 | `backend/` | FastAPI: računa score, šalje događaje aplikaciji, snima vožnju za izveštaj. Detalji u `backend/CLAUDE.md` |
 | `backend/scripts/services.ps1` | Postgres + RustFS (S3) za snimanje vožnji, portabl (bez Dockera i admin prava). Sa Dockerom: `backend/docker-compose.yml` |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
+| `notebooks/risk_pipeline.py` | CV pipeline: `--mode dev` (video + metrike) ili `--mode prod` (šalje backendu). Uputstvo: `notebooks/pokretanje.txt` |
 | `notebooks/safety_client.py` | most modeli → backend, plus simulator cele vožnje |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
@@ -104,6 +105,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
 - (2026-11-06) Za izveštaj backend šalje **sirove podatke jedne vožnje** (`GET /trips/{id}/report`:
   rezime, korisnik, uzorci po sekundi, momenti sa slikama), a grafike računa aplikacija. Rezime vožnje
   se upisuje na ~10 s, pa pad servera ne briše vožnju.
+- (2026-11-06) **Izveštaj modela za celu vožnju računa backend**, ne pipeline: `services/model_report.py`
+  iz toka frejmova na `/telemetry` (vreme po boji alarma, pravila, epizode ponašanja i alarma), u
+  `GET /trips/{id}/report` kao `model`. Pipeline radi samo matematiku po frejmu i ima dva moda:
+  `--mode dev` (video sa sažetim metrikama, lokalni log) i `--mode prod` (bez prikaza, šalje backendu).
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
@@ -114,8 +119,8 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
    događaj `emergency`.
 3. **Produkcija:** odvojiti server za računanje (u kolima) od servera za izveštaje (dostupan i van
    kola)? Pristup klipovima (potpisani URL-ovi umesto javnog bucketa) i koliko dugo se čuvaju.
-4. **Model → backend uživo:** `risk_pipeline.py` još ne zove `SafetyClient.send_frame`. To je
-   jedna linija u petlji, ali je fajl CV tima.
+4. ~~**Model → backend uživo**~~ rešeno: `risk_pipeline.py --mode prod` šalje frejmove i video backendu.
+   Ostaje: na pravom autu proveriti da li CPU stiže ~10 obrađenih frejmova/s (na ovom laptopu ~110 ms po frejmu).
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 

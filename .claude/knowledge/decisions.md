@@ -102,3 +102,18 @@ it's the car's own network. 2026-11-06.
 (summary, user, samples, moments with images) in one call, so the backend never has to know what charts the app wants. "Raw" means the
 1 s rows of D20. If every tick (~2/s) is ever needed, set `sample_window_s = 0.5`. The `trips` row also gets a running summary every ~10 s,
 so a crash mid-trip still leaves a usable summary, and the next start closes such trips. 2026-11-06.
+
+**D25: The trip-level model report lives in the backend; the CV pipeline only does per-frame math.** The pipeline used to build
+`summary.json` / `events.jsonl` itself (`RiskEngine.summary`, `_category_event`, alert episodes). That code moved to
+`backend/app/services/model_report.py` and runs on the frame stream of `POST /telemetry` (stored in `trips.model_report`, returned as
+`TripReport.model`), so live trips, history and offline runs use one implementation. Alternatives: keep it in the pipeline and upload a
+summary at the end (lost if the pipeline crashes, and it doesn't know the speed), or recompute from `trip_samples` (1 s rows lose the
+model's on/off transitions). The module is stdlib-only, so the pipeline's dev mode imports it to print the same report locally. Checked
+against the old pipeline on 62 recorded runs: identical episodes and alert episodes; summary numbers equal up to rounding. Standing
+time (< 5 km/h) is excluded, like every other statistic. `peak_p` is the raw `p` (the app's `camera` view has no `p_hat`). 2026-11-06.
+
+**D26: `risk_pipeline.py --mode dev|prod`.** dev = window with a reduced overlay (`notebooks/dev_overlay.py`: alert + risk, rules,
+5 categories, 4 signals, 30 s risk line; ROIs behind the R key) and a full `frames.jsonl`. prod = headless, no overlay import, sends a
+slim frame record (only the `ModelFrame` fields) ~2/s plus every alert change, and JPEG video ~8/s, from two background threads with
+small drop-oldest queues, so a slow backend never stalls the camera. File sources run at recording speed in prod (sleep when ahead,
+skip frames when behind), so tick time and clip time stay aligned with the backend's clock. 2026-11-06.

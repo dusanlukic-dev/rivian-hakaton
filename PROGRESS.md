@@ -2,15 +2,15 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, accounts + trip report (Claude, for Matija Vujić).
+> Last updated: 2026-11-06, CV pipeline dev/prod modes + model report on the backend (Claude, for ttcpavle).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 68 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips. **Accounts** (`/auth/register`, `/login`, `/me`; Bearer token, optional) and **`GET /trips/{id}/report`** = summary + user + raw per-second samples + moments with images, all from Postgres (history and summary survive restarts). Schema and review: `docs/DATABASE.md`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
+| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 68 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips. **Accounts** (`/auth/register`, `/login`, `/me`; Bearer token, optional) and **`GET /trips/{id}/report`** = summary + user + raw per-second samples + moments with images + **`model`** (the camera model's own trip report: alert time, rules, behaviour/alert episodes, built from the frame stream by `services/model_report.py`), all from Postgres (history and summary survive restarts). Schema and review: `docs/DATABASE.md`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt` |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
 | **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
@@ -33,7 +33,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 1. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
    ("standing: no penalty" below 5 km/h), optionally the model's `camera.risk` / `alert` colour. Display only, `response` still drives alerts.
 2. **Login + trip report** (API.md §3–§5, §7 "Izveštaj"; re-copy §4 types: `TripCreate.driver_id` is now optional, new `User`,
-   `AuthOut`, `RegisterIn`, `LoginIn`, `UserUpdate`, `TripReport`). Login/register screen → store the token, send `Authorization: Bearer`
+   `AuthOut`, `RegisterIn`, `LoginIn`, `UserUpdate`, `TripReport`, and `ModelReport` / `ModelEpisode` / `ModelAlertEpisode` for the
+   new `report.model`, e.g. a "what the camera saw" section: time per alert colour, phone/eyes-off-road episodes on the chart). Login/register screen → store the token, send `Authorization: Bearer`
    on every REST call, on `401` drop it. The Profile screen syncs with `GET/PATCH /auth/me` (username = driverId, display_name = name,
    emergency_contact). Report screen = one `GET /trips/{id}/report`: charts from the raw `samples` (score/speed over `t`), "worst
    moments" with `thumbnail_url` + `video_url` (expo-video). History `GET /trips` with the token = my trips. Hide the report on `503`.
@@ -63,6 +64,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - In-app sounds use media volume (expo-audio has no alarm usage). Only the background notification uses the alarm stream (silent-mode safe).
 - Only the live state of the active trip is in backend memory. History, summaries, reports and logins are in Postgres (restart-safe).
   A trip interrupted by a backend crash keeps its summary up to the last ~10 s write and is closed on the next start.
+- **New column `trips.model_report` (2026-11-06):** an existing dev Postgres needs `backend/scripts/services.ps1 reset`, or without
+  losing data: `services.ps1 psql` → `ALTER TABLE trips ADD COLUMN model_report JSONB;`.
 - Schema changes have no migrations yet: after pulling a change to `backend/app/repositories/*.py`, run `backend/scripts/services.ps1 reset`
   (the backend log names the missing columns otherwise).
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
@@ -74,7 +77,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 ## Open questions
 
 - **CV:** the model has no `looking_behind` / `turning_around` output (only the simulator sends them). Will the CV team add one?
-  `risk_pipeline.py` doesn't call `SafetyClient.send_frame` yet, so the models don't run live against the backend.
+  The models now run live against the backend (`risk_pipeline.py --mode prod`). Open: is the in-car CPU fast enough
+  (~110 ms per processed frame on this laptop vs a 100 ms budget at every 3rd frame)?
 - **Production storage:** split the in-car compute server from a report server the driver can reach away from the car? Clip access
   (signed URLs instead of the demo's public bucket) and retention are still open.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
@@ -124,3 +128,10 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - 2026-11-06, session 3 (CV pipeline, for ttcpavle): `risk_pipeline.py` fixed to watch the driver (right side), head_roi face crop,
   calibration clamped to a measured prior, look-down/eyes-closed retune, yolo11s/640, hands evidence, unique log folders, `--show` diagnostic
   panel + `--save-video/--verbose/--log-all/--pick-roi/--calibrate`. Category names unchanged (backend mapping still valid). Run on all 56 clips.
+- 2026-11-06, session 4 (CV pipeline for deployment, for ttcpavle): the trip-level part of the pipeline (summary, behaviour episodes,
+  alert episodes) moved to `backend/app/services/model_report.py`, fed by the `/telemetry` frame stream, stored in `trips.model_report`
+  and returned as `TripReport.model` (API.md, DATABASE.md updated). `risk_pipeline.py` keeps per-frame math only and got `--mode dev`
+  (reduced overlay in `dev_overlay.py`) and `--mode prod` (headless `BackendSink`, real-time pacing for files, `--start-trip`).
+  Verified: 76 backend tests; new engine identical to the old on 18 020 steps; backend report equals the old summary/events on 62
+  recorded runs (up to rounding); dev run on a clip + screenshot; prod run on a clip against a live backend (SQLite) → report with
+  `model` (35 ticks, 0 errors).
