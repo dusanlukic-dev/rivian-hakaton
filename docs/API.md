@@ -11,12 +11,14 @@ promeni, menja se i ovaj fajl.
 ## 1. Šta aplikacija radi
 
 1. Povezuje se na backend (laptop) preko hotspota telefona.
-2. Vozač pokreće vožnju (unosi svoj ID i kontakt za hitne slučajeve).
+2. Vozač se registruje ili prijavi (korisničko ime + lozinka), pa pokreće vožnju. Bez prijave i dalje
+   može, sa svojim ID-jem i kontaktom za hitne slučajeve, kao ranije.
 3. Tokom vožnje uživo prikazuje dashboard: svetlo, score, trenutna rizična ponašanja, poruku.
    Simulira vibraciju sedišta i zvučni signal.
 4. Kad score padne ispod 10, prikazuje uzbunu za hitan slučaj.
 5. Vozač završava vožnju i vidi statistiku sa savetima.
-6. Izveštaj vožnje: grafik (score, brzina, rizik modela kroz vreme) i najgori momenti sa video klipom.
+6. Izveštaj vožnje (`GET /trips/{id}/report`, sve u jednom pozivu): rezime, ko je vozio, sirovi zapis
+   vožnje po sekundi za grafike (score, brzina, rizik modela...) i najgori momenti sa slikom i video klipom.
 7. Istorija vožnji.
 8. Opciono (podrazumevano isključeno): telefon šalje svoju GPS brzinu backendu (`POST /speed`).
 
@@ -26,7 +28,7 @@ promeni, menja se i ovaj fajl.
 |---|---|
 | REST base URL | `http://<IP>:8000/api/v1` |
 | WebSocket | `ws://<IP>:8000/api/v1/ws` |
-| Autentifikacija | nema |
+| Autentifikacija | opciona: `Authorization: Bearer <token>` (token iz `POST /auth/login` ili `/auth/register`, važi 30 dana) |
 | Format | JSON, UTF-8 |
 | Swagger (samo REST) | `http://<IP>:8000/docs`, šema na `/openapi.json` |
 
@@ -45,15 +47,20 @@ promeni, menja se i ovaj fajl.
 
 ```
 Podešavanja (IP + GET /health)
-   → Početak vožnje (forma) ── POST /trips ──► Dashboard (WebSocket, uživo)
+   → Prijava / registracija ── POST /auth/login | /auth/register ──► čuva token (AsyncStorage)
+   → Početak vožnje ── POST /trips (sa tokenom) ──► Dashboard (WebSocket, uživo)
                                                   │ dugme "Završi" ── POST /trips/{id}/end
                                                   ▼
                                                Statistika (TripSummary)
                                                   │ "Izveštaj"
                                                   ▼
-                       Izveštaj ── GET /trips/{id}/timeline (grafik) + GET /trips/{id}/events?order=worst (momenti + klipovi)
-Istorija ── GET /trips?driver_id=... ──► Statistika pojedinačne vožnje
+                       Izveštaj ── GET /trips/{id}/report (rezime + korisnik + uzorci za grafike + momenti sa slikama)
+Istorija ── GET /trips (sa tokenom: moje vožnje) ──► Statistika / Izveštaj pojedinačne vožnje
+Profil ── GET /auth/me, PATCH /auth/me (ime, kontakt za hitne slučajeve), POST /auth/logout
 ```
+
+Prijava nije obavezna: bez tokena sve radi kao ranije (`driver_id` u `POST /trips`). Sa tokenom je
+vožnja vezana za nalog i vide je samo vlasnikovi zahtevi.
 
 WebSocket treba otvoriti čim je adresa poznata i držati ga otvorenim (sekcija 6).
 
@@ -84,7 +91,45 @@ export interface EmergencyContact {
 }
 
 export interface TripCreate {
-  driver_id: string;
+  /** Obavezno bez prijave. Sa tokenom se koristi korisničko ime naloga, pa se može izostaviti. */
+  driver_id?: string | null;
+  /** Bez njega se koristi kontakt sačuvan u nalogu (ako je vozač prijavljen). */
+  emergency_contact?: EmergencyContact | null;
+}
+
+// ---------- Nalozi ----------
+export interface RegisterIn {
+  username: string;              // 3–32: a-z, 0-9, ".", "_", "-" (backend ga pretvara u mala slova). Jedinstveno
+  password: string;              // 6–128 znakova
+  display_name?: string | null;  // podrazumevano = username
+  emergency_contact?: EmergencyContact | null;
+}
+
+export interface LoginIn {
+  username: string;
+  password: string;
+}
+
+/** Nalog vozača. Lozinka se nikad ne vraća (u bazi je samo njen heš). */
+export interface User {
+  user_id: string;
+  username: string;              // ujedno `driver_id` njegovih vožnji
+  display_name: string;
+  emergency_contact: EmergencyContact | null;
+  created_at: string;            // ISO 8601 UTC
+}
+
+/** Odgovor na login i registraciju. `token` šalji kao `Authorization: Bearer <token>`. */
+export interface AuthOut {
+  token: string;
+  token_type: "bearer";
+  expires_at: string;            // ISO 8601 UTC, 30 dana od prijave
+  user: User;
+}
+
+/** PATCH /auth/me: menjaju se samo poslata polja. `emergency_contact: null` briše kontakt. */
+export interface UserUpdate {
+  display_name?: string;
   emergency_contact?: EmergencyContact | null;
 }
 
@@ -259,6 +304,18 @@ export interface SpeedStatus {
   phone_age_s: number | null;  // sekundi od poslednjeg očitavanja telefona
 }
 
+// ---------- Izveštaj jedne vožnje ----------
+/** Sve o jednoj vožnji u jednom odgovoru (GET /trips/{id}/report). */
+export interface TripReport {
+  trip: TripSummary;        // rezime: final/prosek/min score, trajanje, ponašanja sa savetima
+  user: User | null;        // ko je vozio; null ako je vožnja pokrenuta bez prijave
+  window_s: number;         // sekundi po uzorku (1)
+  /** Sirovi zapis vožnje, jedan red po sekundi, od najstarijeg. Grafike pravi aplikacija. */
+  samples: TripSample[];
+  /** Rizični momenti sa slikom (`thumbnail_url`) i klipom (`video_url`), od najstarijeg. */
+  events: RiskEvent[];
+}
+
 // ---------- WebSocket ----------
 export type LiveMessage =
   | { type: "trip_started"; data: TripState }
@@ -315,7 +372,9 @@ Odgovor `201`, `TripState`:
 - U jednom trenutku postoji samo **jedna aktivna vožnja** (jedan auto). Ako je neka i dalje aktivna,
   backend je prvo završi. Preko WebSocket-a tada stižu `trip_ended` (stara), pa `trip_started` (nova).
 - `trip_id` treba sačuvati, jer je potreban za završetak vožnje.
-- Greške: `422` ako fali `driver_id`.
+- **Sa tokenom** (`Authorization: Bearer ...`) vožnja pripada nalogu: `driver_id` = korisničko ime, a
+  kontakt za hitne slučajeve je iz naloga ako ga telo ne pošalje. Telo može biti i prazno `{}`.
+- Greške: `422` ako fali `driver_id`, a vozač nije prijavljen. `401` ako je token pogrešan ili istekao.
 
 ### `POST /trips/{trip_id}/end`: kraj vožnje
 Bez tela. Odgovor `200`, `TripSummary`:
@@ -346,26 +405,75 @@ Bez tela. Odgovor `200`, `TripSummary`:
 - Greške: `404` ako vožnja ne postoji (npr. backend je restartovan).
 
 ### `GET /trips/{trip_id}`: trenutno stanje
-Odgovor `200`, `TripState`. Uglavnom nije potreban, jer stanje stiže preko WebSocket-a.
-Greške: `404`.
+Odgovor `200`, `TripState`. Samo za vožnju koja upravo traje (iz memorije). Uglavnom nije potreban,
+jer stanje stiže preko WebSocket-a. Greške: `404`.
 
 ### `GET /trips/{trip_id}/summary`: statistika
-Odgovor `200`, `TripSummary`. Radi i za aktivnu vožnju (`ended_at: null`). Greške: `404`.
+Odgovor `200`, `TripSummary`. Radi za aktivnu vožnju (`ended_at: null`) i, iz Postgresa, za svaku
+raniju, **i posle restarta backenda**. Greške: `404`.
 
-### `GET /trips?driver_id=driver-1`: istorija
-Odgovor `200`, `TripSummary[]`, od najstarije ka najnovijoj, uključujući i aktivnu vožnju.
-Bez `driver_id` vraća sve vožnje.
+### `GET /trips`: istorija
+Odgovor `200`, `TripSummary[]`, od najstarije ka najnovijoj, uključujući i aktivnu vožnju. Čita se
+iz Postgresa, pa preživi restart.
+- **Sa tokenom:** vožnje tog naloga (`driver_id` se ignoriše).
+- **Bez tokena:** vožnje pokrenute bez prijave. `?driver_id=driver-1` sužava na jednog vozača.
+
+**Ko šta vidi:** vožnju pokrenutu sa tokenom vide samo zahtevi sa tokenom istog naloga. Svi ostali
+dobijaju `404`, kao da ne postoji (`/summary`, `/report`, `/timeline`, `/events`, `GET /trips/{id}`).
+Vožnje bez prijave vidi svako, kao ranije. Živi kanal (WebSocket, `POST /trips/{id}/end`) ostaje
+otvoren, jer je to mreža samih kola.
+
+### `POST /auth/register`: novi nalog
+Telo `RegisterIn`:
+```json
+{ "username": "ana", "password": "tajna-123", "display_name": "Ana Anić",
+  "emergency_contact": { "name": "Marko", "phone": "+381601234567" } }
+```
+Odgovor `201`, `AuthOut` (vozač je odmah prijavljen):
+```json
+{
+  "token": "Jx3...b9Q",
+  "token_type": "bearer",
+  "expires_at": "2026-12-06T17:23:40.971406Z",
+  "user": {
+    "user_id": "fd0f4be4e5b14d4b99ce0fb0710c820f",
+    "username": "ana",
+    "display_name": "Ana Anić",
+    "emergency_contact": { "name": "Marko", "phone": "+381601234567" },
+    "created_at": "2026-11-06T17:23:40.971406Z"
+  }
+}
+```
+Greške: `409` ako je korisničko ime zauzeto, `422` za loše ime ili lozinku kraću od 6 znakova.
+
+### `POST /auth/login`: prijava
+Telo `LoginIn` `{ "username": "ana", "password": "tajna-123" }`. Odgovor `200`, `AuthOut`.
+Greška: `401` `{"detail": "Wrong username or password"}` (isto i za nepostojeće ime).
+Token treba sačuvati (AsyncStorage) i slati u svakom zahtevu kao `Authorization: Bearer <token>`.
+Na `401` za sačuvani token aplikacija treba da obriše token i ponovo traži prijavu.
+
+### `GET /auth/me`, `PATCH /auth/me`, `POST /auth/logout`
+- `GET /auth/me` → `User` (ko je prijavljen). Za ekran profila.
+- `PATCH /auth/me` sa `UserUpdate` → `User`. Menja ime ili kontakt za hitne slučajeve.
+- `POST /auth/logout` → `204`. Briše samo ovaj token (drugi uređaji ostaju prijavljeni).
+- Svi traže token, inače `401`.
 
 ### `GET /analytics/overview`: za kompaniju
 Odgovor `200`, `AnalyticsOverview`. Sadrži samo agregate, bez slika i bez podataka po vozaču.
 Nije potreban u aplikaciji vozača.
 
-### `GET /trips/{trip_id}/timeline`: grafik vožnje
-Odgovor `200`, `TripTimeline`: jedan `TripSample` po sekundi vožnje (score, brzina, ponašanja,
-brojevi modela, reakcija kola). Za grafike: x osa je `t`, a y je `score`, `speed_kmh`, `risk_max`
-ili `categories[ime].p_max`. Čita se iz Postgresa, pa radi i za staru vožnju posle restarta
-backenda, ali i za aktivnu (poslednja sekunda još nije upisana).
-Greške: `404` ako vožnja nikad nije snimljena, `503` ako je snimanje isključeno ili Postgres nije dostupan.
+### `GET /trips/{trip_id}/report`: sve o jednoj vožnji
+Odgovor `200`, `TripReport`: `trip` (rezime kao `TripSummary`), `user` (ko je vozio), `samples`
+(sirovi zapis vožnje po sekundi) i `events` (rizični momenti sa slikama i klipovima). **Jedan poziv
+za ekran izveštaja.** Grafike računa aplikacija iz `samples`, kako god hoće. Npr. x osa `t`, a y
+`score` (score kroz vožnju), `speed_kmh`, `risk_max` ili `categories["phone_use"].p_max`. Momente
+može da označi na grafiku po `events[].t_start`. Čita se iz Postgresa, pa radi i posle restarta
+backenda, a i za aktivnu vožnju (poslednja sekunda još nije upisana).
+Greške: `404` ako vožnja ne postoji, nije snimljena ili pripada drugom nalogu. `503` ako je
+snimanje isključeno ili Postgres nije dostupan.
+
+### `GET /trips/{trip_id}/timeline`: samo uzorci
+Odgovor `200`, `TripTimeline`: isti `samples` kao u izveštaju, bez ostatka. Greške kao za `report`.
 
 ### `GET /trips/{trip_id}/events?order=worst`: najgori momenti
 Odgovor `200`, `RiskEvent[]`. `order=time` (podrazumevano) ide hronološki, a `order=worst` stavlja
@@ -539,21 +647,24 @@ Nazivi ponašanja za prikaz:
 `final_score` (finalni koeficijent), pored njega `average_score` i `min_score`, a zatim
 `behaviors` kao listu sa `tip` savetima. Prazan `behaviors` znači da je vožnja bila bez grešaka.
 
-**Izveštaj (predlog):** sa ekrana statistike dugme "Izveštaj":
-- grafik `score` kroz vreme (`timeline.samples[].t` / `.score`), ispod njega brzina (`speed_kmh`).
-  Pozadinu možeš obojiti po `level`;
+**Izveštaj (predlog):** sa ekrana statistike dugme "Izveštaj", koje radi jedan `GET /trips/{id}/report`:
+- zaglavlje iz `report.trip` (kao statistika) i `report.user.display_name`;
+- grafik `score` kroz vreme (`samples[].t` / `.score`), ispod njega brzina (`speed_kmh`).
+  Pozadinu možeš obojiti po `level`. Podaci su sirovi, pa je oblik grafika na aplikaciji;
 - na grafiku oznake za `events[].t_start`;
-- lista "Najgori momenti" (`events?order=worst`, prva 3–5): thumbnail, ponašanja, trajanje,
-  `-score_drop` poena, brzina u tom trenutku, a tap pušta `video_url`.
+- lista "Najgori momenti" (`events` sortiraj po `score_drop`, prva 3–5): thumbnail, ponašanja,
+  trajanje, `-score_drop` poena, brzina u tom trenutku, a tap pušta `video_url`.
 
-Momenti bez videa (`video_url: null`) se prikazuju bez slike. Ako `timeline` / `events` vrate
-`503`, snimanje ne radi (Postgres ili S3 su dole), pa sakrij dugme umesto da prikažeš grešku.
+Momenti bez videa (`video_url: null`) se prikazuju bez slike. Ako `report` vrati `503`, snimanje ne
+radi (Postgres ili S3 su dole), pa sakrij dugme umesto da prikažeš grešku.
 
 ## 8. Greške
 
 | Status | Kada | Telo |
 |---|---|---|
-| `404` | nepoznat `trip_id` (npr. backend je restartovan, jer se aktivne vožnje čuvaju u memoriji) | `{"detail": "Trip <id> not found"}` |
+| `401` | pogrešan ili istekao token, pogrešna lozinka, `/auth/me` bez tokena | `{"detail": "Invalid or expired token - log in again"}` |
+| `404` | nepoznat `trip_id`, ili vožnja drugog naloga | `{"detail": "Trip <id> not found"}` |
+| `409` | `POST /auth/register` sa zauzetim imenom | `{"detail": "Username ana is taken"}` |
 | `409` | `/telemetry` ili `/video/frames` bez aktivne vožnje | `{"detail": "No active trip - start one from the app first"}` |
 | `409` | `POST /speed` dok je GPS telefona isključen na backendu | `{"detail": "Phone speed is disabled (PHONE_SPEED_ENABLED=false); ..."}` |
 | `503` | `/timeline`, `/events`, `/media`: snimanje je isključeno ili Postgres / S3 nisu dostupni | `{"detail": "Postgres is unreachable; ..."}` |
@@ -580,8 +691,11 @@ Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventu
 
 ## 10. Ograničenja
 
-- Aktivna vožnja, `GET /trips`, `/trips/{id}` i `/summary` rade iz memorije, pa ih restart backenda
-  briše. Izveštaj (`/timeline`, `/events`, klipovi) je u Postgresu i S3, pa ostaje.
+- Samo stanje aktivne vožnje (`GET /trips/{id}`, WebSocket) je u memoriji. Istorija, statistika i
+  izveštaj su u Postgresu (klipovi u S3) i preživljavaju restart. Ako backend padne usred vožnje,
+  ta vožnja ostaje sa rezimeom do poslednjeg upisa (najviše ~10 s ranije) i na sledećem startu se
+  označi kao završena.
+- Nalozi: nema reseta ni promene lozinke, potvrde emaila ni uloga. Token važi 30 dana.
 - `started_at` / `ended_at` su u UTC (`Z`). Za prikaz ih pretvori u lokalno vreme.
 - `duration_s` se računa iz vremena tickova sa kamere, a ne iz `started_at` / `ended_at`.
 - Brzinu daje backend (mock vožnja). GPS telefona (`POST /speed`) postoji, ali je podrazumevano

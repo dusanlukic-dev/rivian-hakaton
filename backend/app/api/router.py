@@ -1,9 +1,10 @@
 from fastapi import APIRouter
 
-from app.api.routes import analytics, health, live, recording, speed, trips
+from app.api.routes import analytics, auth, health, live, recording, speed, trips
 
 api_router = APIRouter()
 api_router.include_router(health.router)
+api_router.include_router(auth.router)
 api_router.include_router(live.router)
 api_router.include_router(trips.router)
 api_router.include_router(recording.router)

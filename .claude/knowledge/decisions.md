@@ -90,3 +90,15 @@ already allowed through the Windows firewall and follows the hotspot IP. A direc
 host that changes per session. The bucket is still public-read for the demo, as asked. Docker isn't installed on the demo laptop, so
 `backend/scripts/services.ps1` runs Postgres 18.6 + RustFS from `%LOCALAPPDATA%` without admin rights (outside OneDrive, so the database
 files never sync). `docker-compose.yml` mirrors it for teammates. Postgres uses 5433 because a system Postgres holds 5432. 2026-11-06.
+
+**D23: Accounts use opaque DB-backed tokens and scrypt, and login stays optional.** Each token is 32 random bytes; Postgres stores only its
+SHA-256, with a 30-day expiry. Compared with JWT this needs no signing secret, and logout really ends the session. Passwords use
+`hashlib.scrypt` from the stdlib (no new dependency), run in a worker thread so they never stall live scoring. A trip started with a token
+is private to that account: others get 404, so its existence isn't leaked. Trips without a token stay public, so the simulator,
+`tools/sim.py`, the dashboard and the not-yet-updated app keep working. The live path (WS, telemetry, ending a trip) stays open because
+it's the car's own network. 2026-11-06.
+
+**D24: The report sends raw per-second samples, and the app draws the charts.** `GET /trips/{id}/report` returns the whole session
+(summary, user, samples, moments with images) in one call, so the backend never has to know what charts the app wants. "Raw" means the
+1 s rows of D20. If every tick (~2/s) is ever needed, set `sample_window_s = 0.5`. The `trips` row also gets a running summary every ~10 s,
+so a crash mid-trip still leaves a usable summary, and the next start closes such trips. 2026-11-06.

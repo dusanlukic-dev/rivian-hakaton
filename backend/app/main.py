@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router
 from app.core.config import get_settings
+from app.repositories.database import get_database
 from app.services.recording import get_recorder
 from app.services.speed import get_speed_service
 
@@ -25,19 +26,24 @@ def _configure_logging() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Resolved like the routes' dependencies, so tests can swap them via app.dependency_overrides.
-    app.dependency_overrides.get(get_speed_service, get_speed_service)()  # fails fast on a bad SPEED_SCENARIO
-    recorder = app.dependency_overrides.get(get_recorder, get_recorder)()
+    def resolve(dependency):
+        return app.dependency_overrides.get(dependency, dependency)()
+
+    resolve(get_speed_service)  # fails fast on a bad SPEED_SCENARIO
+    database = resolve(get_database)  # accounts + recording; doesn't connect until first used
+    recorder = resolve(get_recorder)
     await recorder.start()
     try:
         yield
     finally:
         await recorder.stop()
+        await database.close()
 
 
 def create_app() -> FastAPI:
     _configure_logging()
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

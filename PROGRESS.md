@@ -2,13 +2,13 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, alignment after the frontend pull (Claude, for Matija Vujić).
+> Last updated: 2026-11-06, accounts + trip report (Claude, for Matija Vujić).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 59 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips → `GET /trips/{id}/timeline`, `/events`, `/media/...`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
+| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 68 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips. **Accounts** (`/auth/register`, `/login`, `/me`; Bearer token, optional) and **`GET /trips/{id}/report`** = summary + user + raw per-second samples + moments with images, all from Postgres (history and summary survive restarts). Schema and review: `docs/DATABASE.md`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
@@ -32,8 +32,11 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 1. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
    ("standing: no penalty" below 5 km/h), optionally the model's `camera.risk` / `alert` colour. Display only, `response` still drives alerts.
-2. **Trip report screen** (API.md §5 + §7 "Izveštaj"): score/speed chart from `GET /trips/{id}/timeline`, "worst moments" from
-   `GET /trips/{id}/events?order=worst` with thumbnail + `video_url` playback (expo-video). Hide the button on `503` (recording down).
+2. **Login + trip report** (API.md §3–§5, §7 "Izveštaj"; re-copy §4 types: `TripCreate.driver_id` is now optional, new `User`,
+   `AuthOut`, `RegisterIn`, `LoginIn`, `UserUpdate`, `TripReport`). Login/register screen → store the token, send `Authorization: Bearer`
+   on every REST call, on `401` drop it. The Profile screen syncs with `GET/PATCH /auth/me` (username = driverId, display_name = name,
+   emergency_contact). Report screen = one `GET /trips/{id}/report`: charts from the raw `samples` (score/speed over `t`), "worst
+   moments" with `thumbnail_url` + `video_url` (expo-video). History `GET /trips` with the token = my trips. Hide the report on `503`.
 3. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
    the socket alive with the screen off, that the full-screen intent wakes the A54 on `emergency`, and the alarm-channel sound in vibrate mode.
    Log the results in `android-alerting.md` → To verify.
@@ -58,8 +61,10 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - **Windows long paths:** the SDK CMake Ninja was swapped to 1.13.2 (D18). **Android Studio's setup may reinstall CMake**, so re-check
   `cmake/*/bin/ninja.exe --version` afterwards (loop in `environment.md`).
 - In-app sounds use media volume (expo-audio has no alarm usage). Only the background notification uses the alarm stream (silent-mode safe).
-- Active trips and `GET /trips` / `/summary` still live in backend memory: after a restart, old trip ids give 404 there. The report
-  (`/timeline`, `/events`, clips) is in Postgres + S3 and survives.
+- Only the live state of the active trip is in backend memory. History, summaries, reports and logins are in Postgres (restart-safe).
+  A trip interrupted by a backend crash keeps its summary up to the last ~10 s write and is closed on the next start.
+- Schema changes have no migrations yet: after pulling a change to `backend/app/repositories/*.py`, run `backend/scripts/services.ps1 reset`
+  (the backend log names the missing columns otherwise).
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
   (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
 
@@ -72,7 +77,7 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   (signed URLs instead of the demo's public bucket) and retention are still open.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
-- **DB work:** will trips get user accounts (real login), or stay keyed by `driver_id`? (Profile is a local stand-in.)
+- **Accounts:** login is optional for now (trips without a token still work). Should the app require it? No password reset/change yet.
 
 ## Manual steps only a human can do
 
@@ -107,3 +112,10 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   typecheck + lint, dashboard `tsc -b` + lint + vite build.
 - 2026-11-06, Claude (for Matija Vujić): Node on the backend laptop upgraded 22.11 → 26.13.0 LTS (winget), same as the frontend
   laptop. Clean `npm ci` in both apps, dashboard build, mobile typecheck + lint all pass there now.
+- 2026-11-06, Claude (accounts + trip report, for Matija Vujić): reviewed the frontend (summary/history/profile: no login, history from
+  backend memory) and the storage. Added `users` + `user_sessions` (scrypt password hash, random 30-day bearer tokens, only their SHA-256
+  stored), `/auth/register|login|logout|me`, trips owned by the logged-in account (others get 404), history and summary from Postgres
+  (restart-safe), a running trip summary every ~10 s plus closing trips left open by a crash, and `GET /trips/{id}/report` (summary + user +
+  raw per-second samples + moments with images/clips) so the app computes its own charts. New `docs/DATABASE.md` (schema, what the front
+  gets, review). Verified: 68 tests (25× repeat), real Postgres + RustFS: register → owned trip with video → report → backend restart
+  (token, history, report intact) → hard kill mid-trip (trip closed on restart with its last summary).

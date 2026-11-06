@@ -13,8 +13,13 @@ class EmergencyContactIn(BaseModel):
 
 
 class TripCreate(BaseModel):
-    driver_id: str
-    emergency_contact: EmergencyContactIn | None = None
+    driver_id: str | None = Field(
+        default=None,
+        description="Required without login. With a login token the account's username is used instead.",
+    )
+    emergency_contact: EmergencyContactIn | None = Field(
+        default=None, description="Without it, a logged-in driver's saved contact is used."
+    )
 
 
 class TelemetryTick(BaseModel):

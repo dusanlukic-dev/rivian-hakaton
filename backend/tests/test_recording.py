@@ -2,8 +2,9 @@
 
 from datetime import timedelta
 
+from app.repositories.database import Database
 from app.repositories.media import MemoryMediaStore
-from app.repositories.recordings import RecordingDatabase
+from app.repositories.recordings import RecordingRepository
 from app.services.recording import TripRecorder
 from tests.conftest import API, DAY, MODEL_FRAME, app_client, send_tick, send_video, start_trip
 
@@ -59,7 +60,7 @@ def test_samples_aggregate_ticks_per_second(client, clock, recorder):
     assert risky["vibrate_seat"] is True and risky["sound"] == "high"
     assert risky["score"] < clean["score"] == 100
 
-    trip = client.portal.call(recorder.db.trip, trip_id)
+    trip = client.portal.call(recorder.repo.trip, trip_id)
     assert trip["ended_at"] is not None and trip["final_score"] == round(risky["score"], 1)
     assert trip["behaviors"][0]["behavior"] in ("looking_at_phone", "eyes_off_road")
     assert trip["speed_scenario"] == "city"
@@ -147,9 +148,9 @@ def test_unknown_trip_and_media(client):
 
 
 def test_dead_database_never_blocks_the_drive(tmp_path, clock, speed):
-    dead = RecordingDatabase(f"sqlite+aiosqlite:///{(tmp_path / 'missing' / 'trips.db').as_posix()}")
-    recorder = TripRecorder(dead, MemoryMediaStore(), clock=clock)
-    with app_client(recorder, speed) as client:
+    dead = Database(f"sqlite+aiosqlite:///{(tmp_path / 'missing' / 'trips.db').as_posix()}")
+    recorder = TripRecorder(RecordingRepository(dead), MemoryMediaStore(), clock=clock)
+    with app_client(recorder, speed, dead) as client:
         trip_id = start_trip(client)["trip_id"]
         assert send_tick(client, DAY, 60, PHONE)["score"] < 100  # the live score doesn't care
         end_trip(client, trip_id)
@@ -158,8 +159,8 @@ def test_dead_database_never_blocks_the_drive(tmp_path, clock, speed):
         assert recorder._pending  # kept for when the database is back
 
 
-def test_recording_off(clock, speed):
-    with app_client(TripRecorder(None, None), speed) as client:
+def test_recording_off(clock, speed, db):
+    with app_client(TripRecorder(None, None), speed, db) as client:
         trip_id = start_trip(client)["trip_id"]
         assert send_tick(client, DAY, 60, PHONE)["score"] < 100
         assert client.get(f"{API}/trips/{trip_id}/events").status_code == 503

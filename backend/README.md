@@ -30,21 +30,26 @@ Usput snima vožnju za izveštaj vozaču: grafik po sekundama i video klipove ri
 - **Brzinu daje backend**, jer je kamera ne zna: mock vožnja (scenario po vožnji), ili GPS telefona
   ako je uključen (`PHONE_SPEED_ENABLED=true`). Modeli ne šalju brzinu.
 
-## Snimanje vožnje (Postgres + RustFS)
+## Snimanje vožnje i nalozi (Postgres + RustFS)
 
+Cela struktura baze, šta se šalje frontu i review su u **[docs/DATABASE.md](../docs/DATABASE.md)**.
 Dok vožnja traje, backend u pozadini upisuje:
 
 | Tabela / bucket | Šta | Za izveštaj |
 |---|---|---|
-| `trips` | početak, pa na kraju rezime (final/prosek/min score, ponašanja) | istorija |
+| `users`, `user_sessions` | nalog (korisničko ime, scrypt heš lozinke, ime, kontakt) i prijave (samo SHA-256 tokena) | ko je vozio |
+| `trips` | početak, rezime na ~10 s i konačan na kraju (final/prosek/min score, ponašanja) | istorija, statistika |
 | `trip_samples` | **jedan red po sekundi**: brzina, score, nivo, ponašanja, svi brojevi modela (`p`, `p_max`, `r`, `run_s` po kategoriji, `risk`, `alert`, grupe), reakcija kola, GPS | grafici |
 | `risk_events` | jedan red po **rizičnom momentu**: ponašanja i koliko su trajala, pad score-a, najveći rizik, brzina, ključevi klipa | "najgore što je uradio" |
 | S3 `safety-media/clips/<trip>/<moment>.mp4` + `.jpg` | H.264 klip (3 s pre, 2 s posle) i najrizičniji frejm | video i slika |
 
 - Rizičan momenat: kola se kreću, a vidi se bodovano ponašanje ili je model dao crveni alarm.
   Detekcije razmaknute < 2 s su isti momenat. Klip se pravi za momente od ≥ 1 s (ili sa crvenim alarmom).
-- Čitanje: `GET /trips/{id}/timeline`, `GET /trips/{id}/events?order=worst`, klip preko `GET /media/...`
-  (sve u [docs/API.md](../docs/API.md)). Radi i posle restarta backenda.
+- Čitanje: **`GET /trips/{id}/report`** vraća sve o jednoj vožnji (rezime, korisnik, sirovi uzorci za
+  grafike, momenti sa slikama i klipovima). Postoje i `/timeline`, `/events`, istorija `GET /trips` i
+  klip preko `GET /media/...` (sve u [docs/API.md](../docs/API.md)). Radi i posle restarta backenda.
+- Nalozi: `POST /auth/register`, `POST /auth/login` → token (`Authorization: Bearer ...`). Vožnja
+  pokrenuta sa tokenom pripada nalogu i vidi je samo on. Bez prijave sve radi kao ranije (`driver_id`).
 - Ako Postgres ili S3 nisu podignuti, **score i reakcije kola rade normalno**. Redovi čekaju u memoriji,
   a klipovi se preskaču, uz upozorenje u konzoli.
 - Bucket je za demo **javan** (`http://127.0.0.1:9000/safety-media/...`). Kompanija (`/analytics`) slike nikad ne dobija.

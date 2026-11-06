@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from app.domain.enums import Behavior, SafetyLevel, SpeedSource
 from app.domain.trip import EmergencyContact, Trip
 from app.repositories.trips import InMemoryTripRepository
+from app.schemas.auth import User
 from app.schemas.trip import BehaviorSummary, TelemetryTick, TripCreate, TripState, TripSummary
 from app.services.alerts import evaluate_response, level_for
 from app.services.camera import behaviors_from_frame, to_view
@@ -20,18 +21,32 @@ TIPS: dict[Behavior, str] = {
 }
 
 
-def start_trip(repo: InMemoryTripRepository, data: TripCreate) -> tuple[Trip, Trip | None]:
-    """Start a new trip. A trip still in progress is ended first and returned as the second item."""
+class MissingDriver(ValueError):
+    """No login and no driver_id: nobody to put the trip on."""
+
+
+def start_trip(
+    repo: InMemoryTripRepository, data: TripCreate, user: User | None = None
+) -> tuple[Trip, Trip | None]:
+    """Start a new trip. A trip still in progress is ended first and returned as the second item.
+
+    With a logged-in `user` the trip belongs to that account: its username becomes the driver_id
+    and its saved emergency contact is used unless the request brings one.
+    """
+    driver_id = user.username if user else data.driver_id
+    if not driver_id:
+        raise MissingDriver
     previous = repo.active()
     if previous is not None:
         end_trip(previous)
 
-    contact = data.emergency_contact
+    contact = data.emergency_contact or (user.emergency_contact if user else None)
     trip = Trip(
         id=uuid.uuid4().hex,
-        driver_id=data.driver_id,
+        driver_id=driver_id,
         started_at=datetime.now(timezone.utc),
         emergency_contact=EmergencyContact(contact.name, contact.phone) if contact else None,
+        user_id=user.user_id if user else None,
     )
     trip.response = evaluate_response(trip, speed_kmh=0.0)
     repo.add(trip)
@@ -83,7 +98,8 @@ def to_state(trip: Trip) -> TripState:
 
 
 def to_summary(trip: Trip) -> TripSummary:
-    behaviors = sorted(trip.stats.items(), key=lambda item: item[1].total_seconds, reverse=True)
+    # Worst first; ties by name, so the order is the same on every run.
+    behaviors = sorted(trip.stats.items(), key=lambda item: (-item[1].total_seconds, item[0]))
     return TripSummary(
         trip_id=trip.id,
         driver_id=trip.driver_id,

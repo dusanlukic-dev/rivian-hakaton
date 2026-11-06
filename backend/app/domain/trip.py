@@ -59,6 +59,7 @@ class Trip:
     driver_id: str
     started_at: datetime
     emergency_contact: EmergencyContact | None = None
+    user_id: str | None = None  # the logged-in account that started it; None = started without login
     ended_at: datetime | None = None
 
     score: float = MAX_SCORE

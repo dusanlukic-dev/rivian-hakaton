@@ -21,6 +21,7 @@ slike** (privatnost).
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
 | `docs/API.md` | **ugovor backend ↔ aplikacija, izvor istine.** Pročitaj ga pre bilo kakvog rada na frontendu |
+| `docs/DATABASE.md` | struktura baze (nalozi, vožnje, uzorci, momenti, klipovi), šta se šalje frontu, review |
 | `PROGRESS.md` | stanje projekta, bagovi, sledeći koraci. Pročitaj na početku, ažuriraj na kraju |
 | `.claude/` | pravila, skillovi i knowledge za agente (frontend, alati, mreža, Android). Indeks: `.claude/CLAUDE.md` |
 
@@ -29,9 +30,9 @@ slike** (privatnost).
 ```
 laptop: notebooks (modeli) ──POST 127.0.0.1:8000/api/v1/telemetry (~2/s, frejm modela ili labele)──► backend
                            ──POST 127.0.0.1:8000/api/v1/video/frames (~8/s, JPEG)──────────────────► backend
-        backend ──► Postgres 127.0.0.1:5433 (uzorci po 1 s, rizični momenti) + RustFS S3 127.0.0.1:9000 (klipovi)
+        backend ──► Postgres 127.0.0.1:5433 (nalozi, vožnje, uzorci po 1 s, rizični momenti) + RustFS S3 127.0.0.1:9000 (klipovi)
 telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backend
-                                    ──REST /trips (start, kraj, istorija, izveštaj, klipovi)──►
+                                    ──REST /auth (login), /trips (start, kraj, istorija, izveštaj, klipovi)──►
 ```
 
 - Za demo **nema servera ni DNS-a**. Laptop pokreće backend i modele, telefon pravi hotspot, a laptop
@@ -96,6 +97,13 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   izbačeno). `microsleep`, `long_distraction`, `phone_sustained` i `vats` su pravila
   (`rules_triggered`), a ne kategorije. Model nema izlaz za `looking_behind` ni `turning_around`, pa
   njih šalje samo simulator. `backend/tests/test_camera_mapping.py` pada ako model doda nepoznatu kategoriju.
+- (2026-11-06) **Nalozi:** korisničko ime + lozinka (scrypt), nasumični token od 30 dana (u bazi samo
+  SHA-256). Login nije obavezan: vožnja sa tokenom pripada nalogu i vidi je samo vlasnik (ostali dobijaju 404),
+  a vožnja bez tokena radi kao ranije (`driver_id`) i vidi je svako. Živi kanal (WS, telemetrija,
+  kraj vožnje) ostaje otvoren, jer je to mreža kola. Detalji i review: `docs/DATABASE.md`.
+- (2026-11-06) Za izveštaj backend šalje **sirove podatke jedne vožnje** (`GET /trips/{id}/report`:
+  rezime, korisnik, uzorci po sekundi, momenti sa slikama), a grafike računa aplikacija. Rezime vožnje
+  se upisuje na ~10 s, pa pad servera ne briše vožnju.
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
@@ -120,5 +128,6 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
 - Nova kategorija u `notebooks/risk_config.json` → `CATEGORY_TO_BEHAVIOR` ili `IGNORED_CATEGORIES`
   u `services/camera.py`.
 - Frontend ne izmišlja endpointe ni polja. Ako nešto fali, to je izmena backenda.
-- Promena tabela (`backend/app/repositories/recordings.py`): migracija još nema, pa u dev-u
-  `.\scripts\services.ps1 reset` (prazna baza), pa restart backenda, koji napravi tabele.
+- Promena tabela (`backend/app/repositories/recordings.py`, `users.py`): migracija još nema, pa u dev-u
+  `.\scripts\services.ps1 reset` (prazna baza), pa restart backenda, koji napravi tabele. Backend u
+  logu kaže koje kolone fale. Opis tabela drži ažurnim u `docs/DATABASE.md`.

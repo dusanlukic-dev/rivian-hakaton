@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from app.domain.enums import Behavior, DashboardLight, SafetyLevel, SoundLevel, SpeedSource
+from app.schemas.auth import User
+from app.schemas.trip import TripSummary
 
 Alert = Literal["green", "yellow", "red"]
 
@@ -82,3 +84,17 @@ class RiskEvent(BaseModel):
     video_url: str | None = Field(description="MP4 clip around the moment (H.264); null if no video was streamed.")
     thumbnail_url: str | None = Field(description="JPEG of the riskiest frame.")
     clip_duration_s: float | None
+
+
+class TripReport(BaseModel):
+    """Everything about one drive in one response, for the summary screen and the charts.
+
+    `samples` is the raw recording of the drive, one row per second, oldest first. The app builds its own
+    charts from it (score, speed, the model's risk, per-category probabilities...).
+    """
+
+    trip: TripSummary
+    user: User | None = Field(description="The driver's account; null if the trip was started without login.")
+    window_s: float = Field(description="Seconds per sample.")
+    samples: list[TripSample]
+    events: list[RiskEvent] = Field(description="Risky moments with their images and clips, oldest first.")

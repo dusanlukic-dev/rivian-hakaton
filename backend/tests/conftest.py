@@ -7,9 +7,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.repositories.database import Database, get_database
 from app.repositories.media import MemoryMediaStore
-from app.repositories.recordings import RecordingDatabase
+from app.repositories.recordings import RecordingRepository
 from app.repositories.trips import InMemoryTripRepository, get_trip_repository
+from app.repositories.users import UserRepository
+from app.services.auth import AuthService, get_auth_service
 from app.services.live import LiveHub, get_live_hub
 from app.services.recording import RecordingConfig, TripRecorder, get_recorder
 from app.services.speed import SpeedService, get_speed_service
@@ -62,9 +65,14 @@ def media():
 
 
 @pytest.fixture
-def recorder(media, clock):
+def db():
     # In-memory SQLite stands in for Postgres; same tables, same queries.
-    return TripRecorder(RecordingDatabase("sqlite+aiosqlite://"), media, RecordingConfig(), clock=clock)
+    return Database("sqlite+aiosqlite://")
+
+
+@pytest.fixture
+def recorder(db, media, clock):
+    return TripRecorder(RecordingRepository(db), media, RecordingConfig(), clock=clock)
 
 
 @pytest.fixture
@@ -73,13 +81,16 @@ def speed(clock):
 
 
 @contextmanager
-def app_client(recorder: TripRecorder, speed: SpeedService):
-    repo, hub = InMemoryTripRepository(), LiveHub()
+def app_client(recorder: TripRecorder, speed: SpeedService, db: Database):
+    """A fresh app process: empty in-memory trips, the given database (closed when the app stops)."""
+    repo, hub, auth = InMemoryTripRepository(), LiveHub(), AuthService(UserRepository(db))
     app.dependency_overrides.update({
         get_trip_repository: lambda: repo,
         get_live_hub: lambda: hub,
         get_recorder: lambda: recorder,
         get_speed_service: lambda: speed,
+        get_database: lambda: db,
+        get_auth_service: lambda: auth,
     })
     try:
         # Context manager = one event loop shared by HTTP calls, WebSocket sessions and the recorder.
@@ -90,8 +101,8 @@ def app_client(recorder: TripRecorder, speed: SpeedService):
 
 
 @pytest.fixture
-def client(recorder, speed):
-    with app_client(recorder, speed) as test_client:
+def client(recorder, speed, db):
+    with app_client(recorder, speed, db) as test_client:
         yield test_client
 
 
@@ -111,10 +122,22 @@ def jpeg_frames(tmp_path_factory) -> list[bytes]:
     return [path.read_bytes() for path in sorted(out.glob("*.jpg"))]
 
 
-def start_trip(client, **body):
-    res = client.post(f"{API}/trips", json={"driver_id": "driver-1", **body})
+def start_trip(client, headers=None, **body):
+    res = client.post(f"{API}/trips", json={"driver_id": "driver-1", **body}, headers=headers)
     assert res.status_code == 201, res.text
     return res.json()
+
+
+def register(client, username="ana", password="secret-123", **extra) -> dict:
+    """New account; returns the AuthOut body (token + user)."""
+    res = client.post(f"{API}/auth/register", json={"username": username, "password": password, **extra})
+    assert res.status_code == 201, res.text
+    return res.json()
+
+
+def bearer(auth: dict | str) -> dict:
+    token = auth if isinstance(auth, str) else auth["token"]
+    return {"Authorization": f"Bearer {token}"}
 
 
 def send_tick(client, ts, speed=None, behaviors=(), frame=None):

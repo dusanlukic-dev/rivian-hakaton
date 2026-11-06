@@ -70,3 +70,20 @@ All additive. Nothing the apps already use changed shape.
   faststart, and the endpoint supports `Range`, so `expo-video` / `<video>` can stream and seek it.
 - Phone GPS: `GET /speed` → `phone_enabled`. Only if true, `POST /speed {speed_kmh, lat?, lon?}` ~1/s (Android gives m/s, ×3.6).
   Otherwise the backend answers `409`. Off by default (`PHONE_SPEED_ENABLED`).
+
+## Accounts + trip report (2026-11-06, backend session; verified on real Postgres)
+
+Additive, except `TripCreate.driver_id` became optional. Clients that send it keep working unchanged.
+- **Login is optional.** `POST /auth/register` or `/auth/login` returns `AuthOut {token, token_type, expires_at, user}`. Send
+  `Authorization: Bearer <token>` on REST calls. The token is opaque (not a JWT) and lasts 30 days. The dashboard template's
+  AuthProvider still works, it just can't decode claims. On any `401`, drop the token and show login.
+- With a token, `POST /trips` may send `{}`. The trip gets `driver_id` = username and the account's saved emergency contact.
+  The trip is then **private**: the summary, report and history work only with that token, and everyone else gets `404`.
+  Trips started without a token behave as before.
+- `GET /trips` with a token = my trips, from Postgres, so they survive backend restarts. Without a token = trips without login,
+  optionally filtered by `driver_id`. `GET /trips/{id}/summary` also survives restarts now.
+- Profile ↔ account mapping: local `driverId` = `user.username`, `name` = `display_name`, contact = `emergency_contact`. Edit with
+  `PATCH /auth/me`.
+- **`GET /trips/{id}/report`** is the report screen in one call: `trip` (TripSummary) + `user` + `samples` (raw per-second rows:
+  `t`, `score`, `speed_kmh`, `behaviors`, model `categories`...) + `events` (with `thumbnail_url` / `video_url`). Charts are the app's
+  job, computed from `samples`. `503` = recording down → hide the report.

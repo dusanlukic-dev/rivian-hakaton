@@ -1,5 +1,6 @@
 """Records every trip in the background, next to the live path, for the driver's report.
 
+    trip start / every ~10 s / end ───────────────────────────────► trips (running summary)
     telemetry tick ─┬─► sample window (1 s) ──────────────────────► trip_samples
                     └─► risky moment ─────────────────────────────► risk_events
     JPEG frame ─────► frame buffer (a few s) ─► clip per moment ──► S3 clips/<trip>/<event>.mp4 + .jpg
@@ -20,7 +21,7 @@ import math
 import time
 import uuid
 from collections import deque
-from collections.abc import Awaitable, Callable, Coroutine
+from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -31,7 +32,8 @@ from app.core.config import Settings, get_settings
 from app.domain.enums import Behavior, DashboardLight, SoundLevel, SpeedSource
 from app.domain.trip import CameraCategory, Trip
 from app.repositories.media import MediaStore, S3MediaStore
-from app.repositories.recordings import EVENT, SAMPLE, TRIP_END, TRIP_START, RecordingDatabase
+from app.repositories.database import Database, get_database
+from app.repositories.recordings import EVENT, SAMPLE, TRIP_START, TRIP_UPDATE, RecordingRepository
 from app.services.alerts import level_for
 from app.services.scoring import DEFAULT_CONFIG as SCORING
 from app.services.speed import SpeedReading
@@ -57,6 +59,7 @@ class RecordingConfig:
     clip_min_event_s: float = 1.0  # shorter moments get a row but no clip, unless the model alert was red
     max_clips_per_trip: int = 50
     max_buffered_frames: int = 600  # hard cap on frames held in memory (~1 min at 10 fps)
+    summary_interval_s: float = 10.0  # running trip summary, so a crash mid-trip still leaves one
 
 
 class RecordingUnavailable(Exception):
@@ -250,8 +253,9 @@ class _Event:
         self.speed_max = max(self.speed_max, speed.speed_kmh)
 
     def row(self, trip_id: str) -> dict[str, Any]:
-        by_time = sorted(self.behavior_seconds.items(), key=lambda item: item[1], reverse=True)
-        by_p = sorted(self.categories.items(), key=lambda item: item[1], reverse=True)
+        # Longest / likeliest first; ties by name, so the order is the same on every run.
+        by_time = sorted(self.behavior_seconds.items(), key=lambda item: (-item[1], item[0]))
+        by_p = sorted(self.categories.items(), key=lambda item: (-item[1], item[0]))
         return {
             "id": self.id,
             "trip_id": trip_id,
@@ -290,18 +294,28 @@ class _TripRecording:
     window: _Window | None = None
     event: _Event | None = None
     clips: int = 0
+    wall_last_summary: float = 0.0
+
+
+@dataclass
+class StoredTrip:
+    """One recorded trip as read back from Postgres."""
+
+    trip: dict[str, Any]
+    samples: list[dict[str, Any]]
+    events: list[dict[str, Any]]
 
 
 class TripRecorder:
     def __init__(
         self,
-        db: RecordingDatabase | None,
+        repo: RecordingRepository | None,
         media: MediaStore | None,
         cfg: RecordingConfig | None = None,
         clock: Callable[[], float] = time.monotonic,
         encoder: Callable[[list[bytes], float], bytes] = encode_mp4,
     ) -> None:
-        self.db, self.media = db, media
+        self.repo, self.media = repo, media
         self.cfg = cfg or RecordingConfig()
         self._clock = clock
         self._encoder = encoder
@@ -309,56 +323,53 @@ class TripRecorder:
         self._frames: deque[tuple[float, bytes]] = deque()
         self._pending: list[tuple[str, dict[str, Any]]] = []
         self._tasks: set[asyncio.Task] = set()
-        # One database user at a time: no CREATE TABLE races between the startup check and the first
-        # request, and the tests' in-memory SQLite (a single shared connection) stays consistent.
-        self._db_lock = asyncio.Lock()
+        self._flush_lock = asyncio.Lock()  # batches reach Postgres one at a time, in order
         self._bucket_lock = asyncio.Lock()
         self._wake = asyncio.Event()
         self._runner: asyncio.Task | None = None
-        self._schema_ready = False
         self._bucket_ready = False
+        self._interrupted_closed = False
         self._db_down = False
         self._overflowing = False
 
     @property
     def enabled(self) -> bool:
-        return self.db is not None
+        return self.repo is not None
 
     # ---- lifecycle (FastAPI lifespan) ----
 
     async def start(self) -> None:
-        if self.db is None:
+        if self.repo is None:
             logger.info("Trip recording is off (RECORDING_ENABLED=false)")
             return
         self._runner = asyncio.create_task(self._run(), name="trip-recorder")
 
     async def stop(self) -> None:
-        if self.db is None:
+        """Write out what was recorded (also on a uvicorn reload). The database itself is closed by the app."""
+        if self.repo is None:
             return
         if self._runner is not None:
             self._runner.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._runner
             self._runner = None
-        # Keep what was recorded so far (also on a uvicorn reload). The trip rows stay without
-        # `ended_at`: those trips were interrupted, not ended.
         for rec in self._trips.values():
-            self._close_open(rec)
+            self._close_open(rec)  # these trips stay open in Postgres; the next start closes them
         self._trips.clear()
         await self._wait_for_clips(timeout=30)
         await self.flush()
-        await self.db.close()
 
     # ---- hooks for the live path: memory only, never await storage ----
 
     def trip_started(self, trip: Trip, speed_scenario: str | None = None) -> None:
-        if self.db is None:
+        if self.repo is None:
             return
-        self._trips[trip.id] = _TripRecording(trip.id, last_score=trip.score)
+        self._trips[trip.id] = _TripRecording(trip.id, last_score=trip.score, wall_last_summary=self._clock())
         self._frames.clear()  # video from before this trip doesn't belong to it
         contact = trip.emergency_contact
         self._enqueue(TRIP_START, {
             "id": trip.id,
+            "user_id": trip.user_id,
             "driver_id": trip.driver_id,
             "started_at": _to_utc(trip.started_at),
             "emergency_contact": {"name": contact.name, "phone": contact.phone} if contact else None,
@@ -367,7 +378,7 @@ class TripRecorder:
 
     def on_tick(self, trip: Trip, timestamp: datetime, speed: SpeedReading) -> None:
         """Call after the tick was scored, so trip.score / active / camera / response are current."""
-        if self.db is None:
+        if self.repo is None:
             return
         rec = self._trips.get(trip.id)
         if rec is None:  # the trip started before this recorder did
@@ -388,10 +399,13 @@ class TripRecorder:
         self._add_to_window(rec, trip, t, speed)
         self._track_event(rec, trip, ts, t, now, dt, speed)
         rec.last_score = trip.score
+        if now - rec.wall_last_summary >= self.cfg.summary_interval_s:
+            rec.wall_last_summary = now
+            self._enqueue(TRIP_UPDATE, self._summary_row(trip))
 
     def on_video_frame(self, jpeg: bytes) -> None:
         """One camera frame. Only a few seconds are kept, unless a risky moment is in progress."""
-        if self.db is None or self.media is None:
+        if self.repo is None or self.media is None:
             return
         now = self._clock()
         self._frames.append((now, jpeg))
@@ -404,38 +418,39 @@ class TripRecorder:
             frames.popleft()
 
     def trip_ended(self, trip: Trip) -> None:
-        if self.db is None:
+        if self.repo is None:
             return
         rec = self._trips.pop(trip.id, None)
         if rec is not None:
             self._close_open(rec)
         self._frames.clear()
-        stats = sorted(trip.stats.items(), key=lambda item: item[1].total_seconds, reverse=True)
-        self._enqueue(TRIP_END, {
-            "id": trip.id,
-            "ended_at": _to_utc(trip.ended_at) if trip.ended_at else None,
-            "duration_s": round(trip.elapsed_s, 1),
-            "final_score": round(trip.score, 1),
-            "average_score": round(trip.average_score, 1),
-            "min_score": round(trip.min_score, 1),
-            "level": level_for(trip.score).value,
-            "emergency_alert_sent": trip.emergency_alert_sent,
-            "behaviors": [
-                {"behavior": b.value, "occurrences": s.occurrences, "total_seconds": round(s.total_seconds, 1)}
-                for b, s in stats
-            ],
-        })
+        self._enqueue(TRIP_UPDATE, self._summary_row(trip))
         self._wake.set()
 
-    # ---- reads for the report endpoints ----
+    # ---- reads for the report endpoints (they see everything recorded up to now) ----
 
-    async def timeline(self, trip_id: str) -> list[dict[str, Any]] | None:
-        """Sample rows, oldest first. None if the trip was never recorded."""
-        return await self._read(trip_id, RecordingDatabase.samples)
+    async def read_trip(self, trip_id: str, samples: bool = True, events: bool = True) -> StoredTrip | None:
+        """The trip row plus, if asked, its samples and risky moments. None if it was never recorded."""
+        repo = await self._ready_for_read(wait_for_clips=events)
+        try:
+            trip = await repo.trip(trip_id)
+            if trip is None:
+                return None
+            return StoredTrip(
+                trip=trip,
+                samples=await repo.samples(trip_id) if samples else [],
+                events=await repo.events(trip_id) if events else [],
+            )
+        except Exception as e:
+            raise self._read_failed(e) from e
 
-    async def events(self, trip_id: str) -> list[dict[str, Any]] | None:
-        """Risky-moment rows, oldest first. None if the trip was never recorded."""
-        return await self._read(trip_id, RecordingDatabase.events)
+    async def trip_rows(self, user_id: str | None = None, driver_id: str | None = None) -> list[dict[str, Any]]:
+        """Trip rows, oldest first: one account's trips, or (no user) the trips started without login."""
+        repo = await self._ready_for_read(wait_for_clips=False)
+        try:
+            return await repo.trips(user_id, driver_id)
+        except Exception as e:
+            raise self._read_failed(e) from e
 
     async def media_object(self, key: str) -> tuple[bytes, str] | None:
         if self.media is None:
@@ -449,36 +464,43 @@ class TripRecorder:
 
     async def flush(self) -> bool:
         """Write everything queued so far. Returns False if Postgres is unreachable (rows stay queued)."""
-        if self.db is None:
+        if self.repo is None:
             return False
-        async with self._db_lock:
-            if not self._pending:
-                return True
-            batch, self._pending = self._pending, []
+        async with self._flush_lock:
+            if self._pending:
+                batch, self._pending = self._pending, []
+                try:
+                    await self.repo.write(batch)
+                except _REFUSED as e:
+                    await self._write_one_by_one(batch, e)
+                except Exception as e:
+                    self._requeue(batch)
+                    self._went_down(e)
+                    return False
+                if self._db_down:
+                    self._db_down = False
+                    logger.info("Postgres is back: the recording was written")
+        if not self._interrupted_closed:
             try:
-                await self._ensure_schema()
-                await self.db.write(batch)
-            except _REFUSED as e:
-                await self._write_one_by_one(batch, e)
+                await self._close_interrupted()
             except Exception as e:
-                self._requeue(batch)
-                if not self._db_down:
-                    self._db_down = True
-                    logger.warning(
-                        "Postgres %s unreachable (%s): the recording waits in memory until it is back",
-                        self.db.description, _reason(e),
-                    )
+                self._went_down(e)
                 return False
-            if self._db_down:
-                self._db_down = False
-                logger.info("Postgres is back: the recording was written")
-            return True
+        return True
+
+    def _went_down(self, error: Exception) -> None:
+        if not self._db_down:
+            self._db_down = True
+            logger.warning(
+                "Postgres %s unreachable (%s): the recording waits in memory until it is back",
+                self.repo.description, _reason(error),
+            )
 
     async def _write_one_by_one(self, batch: list[tuple[str, dict[str, Any]]], error: Exception) -> None:
         logger.warning("Postgres refused part of the recording (%s); writing row by row", _reason(error))
         for i, op in enumerate(batch):
             try:
-                await self.db.write([op])
+                await self.repo.write([op])
             except _REFUSED as e:
                 logger.warning("Dropped a %s row: %s", op[0], _reason(e))
             except Exception:
@@ -503,6 +525,27 @@ class TripRecorder:
             self._overflowing = True
             logger.warning("Postgres has been down too long: dropping the oldest recorded rows")
 
+    def _summary_row(self, trip: Trip) -> dict[str, Any]:
+        """The trip's running summary (TripSummary numbers); with `ended_at` once the trip is over."""
+        stats = sorted(trip.stats.items(), key=lambda item: (-item[1].total_seconds, item[0]))
+        row = {
+            "id": trip.id,
+            "updated_at": datetime.now(timezone.utc),
+            "duration_s": round(trip.elapsed_s, 1),
+            "final_score": round(trip.score, 1),
+            "average_score": round(trip.average_score, 1),
+            "min_score": round(trip.min_score, 1),
+            "level": level_for(trip.score).value,
+            "emergency_alert_sent": trip.emergency_alert_sent,
+            "behaviors": [
+                {"behavior": b.value, "occurrences": s.occurrences, "total_seconds": round(s.total_seconds, 1)}
+                for b, s in stats
+            ],
+        }
+        if trip.ended_at is not None:
+            row["ended_at"] = _to_utc(trip.ended_at)
+        return row
+
     async def _run(self) -> None:
         await self._check_storage()
         while True:
@@ -520,14 +563,14 @@ class TripRecorder:
     async def _check_storage(self) -> None:
         """Say in the server log right away whether Postgres and S3 are up."""
         try:
-            async with self._db_lock:
-                await self._ensure_schema()
-            logger.info("Recording trips to Postgres %s", self.db.description)
+            await self.repo.db.ensure_schema()
+            logger.info("Recording trips to Postgres %s", self.repo.description)
+            await self._close_interrupted()
         except Exception as e:
             self._db_down = True
             logger.warning(
                 "Postgres %s unreachable (%s): the recording waits in memory until it is up",
-                self.db.description, _reason(e),
+                self.repo.description, _reason(e),
             )
         if self.media is None:
             return
@@ -540,11 +583,12 @@ class TripRecorder:
                 self.media.description, _reason(e),
             )
 
-    async def _ensure_schema(self) -> None:
-        """Create the tables once. The caller holds `_db_lock`."""
-        if not self._schema_ready:
-            await self.db.create_schema()
-            self._schema_ready = True
+    async def _close_interrupted(self) -> None:
+        """Trips a crash or restart left open (not driving in this process) end at their last summary."""
+        closed = await self.repo.close_interrupted(keep=set(self._trips))
+        self._interrupted_closed = True
+        if closed:
+            logger.info("Closed %d trip(s) interrupted by the last shutdown", closed)
 
     async def _ensure_bucket(self) -> None:
         async with self._bucket_lock:  # clips finishing together must not all create the bucket
@@ -552,22 +596,14 @@ class TripRecorder:
                 await asyncio.to_thread(self.media.ensure_bucket)
                 self._bucket_ready = True
 
-    async def _read(
-        self, trip_id: str, query: Callable[[RecordingDatabase, str], Awaitable[list[dict[str, Any]]]]
-    ) -> list[dict[str, Any]] | None:
-        if self.db is None:
+    async def _ready_for_read(self, wait_for_clips: bool) -> RecordingRepository:
+        if self.repo is None:
             raise RecordingUnavailable("Trip recording is off (RECORDING_ENABLED=false)")
-        await self._wait_for_clips(timeout=20)  # read your own writes: finished moments, then...
+        if wait_for_clips:
+            await self._wait_for_clips(timeout=20)  # read your own writes: finished moments, then...
         if not await self.flush():  # ...everything queued so far
             raise RecordingUnavailable("Postgres is unreachable; the recording waits in memory")
-        async with self._db_lock:
-            try:
-                await self._ensure_schema()
-                if await self.db.trip(trip_id) is None:
-                    return None
-                return await query(self.db, trip_id)
-            except Exception as e:
-                raise self._read_failed(e) from e
+        return self.repo
 
     def _read_failed(self, error: Exception) -> RecordingUnavailable:
         logger.warning("Reading the recording failed", exc_info=error)
@@ -666,10 +702,9 @@ class TripRecorder:
             await asyncio.wait(set(self._tasks), timeout=timeout)
 
 
-def build_recorder(settings: Settings) -> TripRecorder:
+def build_recorder(settings: Settings, db: Database) -> TripRecorder:
     if not settings.recording_enabled:
-        return TripRecorder(db=None, media=None)
-    db = RecordingDatabase(settings.database_url)
+        return TripRecorder(repo=None, media=None)
     media = S3MediaStore(
         settings.s3_endpoint_url,
         settings.s3_access_key,
@@ -678,7 +713,7 @@ def build_recorder(settings: Settings) -> TripRecorder:
         settings.s3_region,
         public_read=settings.s3_public_read,
     )
-    return TripRecorder(db, media)
+    return TripRecorder(RecordingRepository(db), media)
 
 
 _recorder: TripRecorder | None = None
@@ -687,5 +722,5 @@ _recorder: TripRecorder | None = None
 def get_recorder() -> TripRecorder:
     global _recorder
     if _recorder is None:
-        _recorder = build_recorder(get_settings())
+        _recorder = build_recorder(get_settings(), get_database())
     return _recorder
