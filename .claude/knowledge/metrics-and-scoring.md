@@ -47,7 +47,7 @@ Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#F
 | `vibrate_seat: true` | `Vibration.vibrate(300)` per message | same (the foreground service keeps JS alive) | seat-vibration icon pulses |
 | `sound: "low"` | `chime` per message | `chime` notification channel | `chime.wav` |
 | `sound: "high"` | `alarm_warning` per message + red pulse overlay (≤ 2 Hz) | alarm-stream notification; full-screen intent if locked | `alarm_warning.wav` + red pulse |
-| `emergency` event | full-screen red + `alarm_critical` loop + vibration + TTS + "Send SMS to <contact>" (proposal) | full-screen intent wakes the phone, insistent alarm | full red pulse + `alarm_critical` |
+| `emergency` event | full-screen red + `alarm_siren` loop + vibration + TTS + max brightness + Text/Call contact | full-screen intent wakes the phone, insistent `alarm_critical` (alarm channel) | full red pulse + `alarm_siren` loop until Dismiss |
 | `active_behaviors` | chips: icon + label + seconds | notification body | icon row, lit while active |
 | `trip_ended` | summary screen (final/avg/min score + tips) | notification "Trip ended" | summary card |
 
