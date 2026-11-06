@@ -1,0 +1,4 @@
+# cmd misreads labels (call :label, goto) in LF-only .bat files; bash fails on CRLF scripts.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.sh  text eol=lf

@@ -30,9 +30,13 @@ backend\.venv\Scripts\python.exe model\worker.py --fake
 ```powershell
 py -3.12 -m venv model\.venv                 # ili 3.13, ako postoji mediapipe wheel za tu verziju
 model\.venv\Scripts\python.exe -m pip install -r model\requirements.txt
-cd notebooks; .\setup_models.bat; cd ..      # face/hand .task + YOLO ONNX u notebooks\models (vidi napomenu)
+notebooks\setup_models.bat                   # modeli u notebooks\models (vidi ispod)
 model\.venv\Scripts\python.exe model\worker.py
 ```
+- `setup_models.bat` (Linux: `bash notebooks/setup_models.sh`) skine `face_landmarker.task` i
+  `hand_landmarker.task` (treba samo curl) i jednom izveze `yolo11s_640.onnx`. Za izvoz treba Python sa
+  `ultralytics` i `onnx` (CV okruženje: `python -m pip install -r notebooks\requirements.txt`), a ne venv
+  workera: worker YOLO pokreće preko `cv2.dnn` i ne treba mu ultralytics.
 - Bez YOLO modela (`notebooks/models/yolo11s_640.onnx`) worker radi, ali telefon vidi samo preko pogleda u krilo.
 - Druga mašina (npr. laptop sa GPU-om): `--coordinator ws://<IP koordinatora>:8000/api/v1/model/ws`
   (port 8000 je već otvoren na firewall-u, nov port ne treba).
@@ -40,7 +44,3 @@ model\.venv\Scripts\python.exe model\worker.py
 
 Koordinator pokazuje stanje workera na `GET /api/v1/coordinator/status` (`model`: povezan, frejmova u
 sekundi, kašnjenje, izgubljeni frejmovi). Worker na 10 s ispiše koliko frejmova obrađuje i za koliko ms.
-
-**Napomena (2026-11-06):** `notebooks/setup_models.bat` i `.sh` u poslednjem commitu CV tima imaju
-nerazrešene merge konflikte (`<<<<<<< HEAD`), pa ne rade dok ih CV tim ne popravi. Do tada: face i hand
-modele skinuti ručno (URL-ovi su u skripti), a YOLO izvesti sa `ultralytics` kao u skripti.
