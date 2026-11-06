@@ -1,0 +1,120 @@
+{
+  "version": "1.0",
+  "description": "Konfiguracija modela rizika vozaca (cabin kamera, samo vozac). Sve formule: MATEMATICKI_MODEL.md",
+
+  "video": {
+    "process_every_n_frames": 3,
+    "input_width": 640,
+    "driver_roi": [0.0, 0.0, 0.65, 1.0],
+    "steering_wheel_roi": [0.05, 0.55, 0.60, 1.0]
+  },
+
+  "schedule": {
+    "face_every_n": 1,
+    "hands_every_n": 2,
+    "objects_every_n": 3,
+    "clip_every_s": 0.0,
+    "max_result_age_s": 0.6
+  },
+
+  "models": {
+    "face_landmarker": "models/face_landmarker.task",
+    "hand_landmarker": "models/hand_landmarker.task",
+    "yolo_onnx": "models/yolo11n_320.onnx",
+    "yolo_input": 320,
+    "yolo_conf": 0.30,
+    "clip_model": "ViT-B-32",
+    "clip_pretrained": "laion2b_s34b_b79k"
+  },
+
+  "calibration": {
+    "duration_s": 20.0,
+    "yaw_thr_deg": 25.0,
+    "pitch_thr_deg": 18.0,
+    "angle_softness_deg": 4.0,
+    "gaze_down_thr": 0.55,
+    "eye_closed_thr": 0.60,
+    "face_missing_p": 0.60,
+    "no_hands_detected_p": 0.50
+  },
+
+  "drowsiness": {
+    "perclos_window_s": 60.0,
+    "perclos_normal": 0.08,
+    "perclos_high": 0.25,
+    "yawn_jaw_thr": 0.55,
+    "yawn_min_s": 1.5,
+    "yawn_window_s": 300.0,
+    "yawns_high": 3
+  },
+
+  "smoothing": {
+    "evidence_tau_s": 0.30,
+    "risk_tau_s": 0.50
+  },
+
+  "groups": ["visual", "manual", "fatigue"],
+
+  "categories": {
+    "phone_use": {
+      "weight": 0.95, "base": 0.25, "T_crit_s": 1.5, "k": 2.5, "decay": 1.0,
+      "on": 0.55, "off": 0.35,
+      "membership": {"visual": 1.0, "manual": 0.7}
+    },
+    "eyes_off_road": {
+      "weight": 0.85, "base": 0.05, "T_crit_s": 2.0, "k": 2.5, "decay": 2.0,
+      "on": 0.55, "off": 0.35,
+      "membership": {"visual": 1.0}
+    },
+    "hands_off_wheel": {
+      "weight": 0.60, "base": 0.20, "T_crit_s": 3.0, "k": 1.2, "decay": 1.5,
+      "on": 0.50, "off": 0.30,
+      "membership": {"manual": 1.0}
+    },
+    "eating_drinking": {
+      "weight": 0.45, "base": 0.20, "T_crit_s": 4.0, "k": 1.0, "decay": 1.0,
+      "on": 0.50, "off": 0.30,
+      "membership": {"manual": 0.8, "visual": 0.3}
+    },
+    "drowsiness": {
+      "weight": 0.65, "base": 0.40, "T_crit_s": 10.0, "k": 0.4, "decay": 0.5,
+      "on": 0.45, "off": 0.30,
+      "membership": {"fatigue": 1.0}
+    },
+    "eyes_closed": {
+      "weight": 1.00, "base": 0.00, "T_crit_s": 0.9, "k": 7.0, "decay": 6.0,
+      "on": 0.60, "off": 0.40, "event_merge_gap_s": 0.1,
+      "membership": {"fatigue": 1.0}
+    }
+  },
+
+  "rules": [
+    {"name": "microsleep",       "type": "duration",  "category": "eyes_closed",   "min_s": 1.5, "floor": 0.75},
+    {"name": "long_distraction", "type": "duration",  "category": "eyes_off_road", "min_s": 3.0, "floor": 0.50},
+    {"name": "phone_sustained",  "type": "duration",  "category": "phone_use",     "min_s": 2.0, "floor": 0.50},
+    {"name": "vats",             "type": "vats", "window_s": 30.0, "cum_s": 10.0, "reset_on_road_s": 2.0, "floor": 0.50}
+  ],
+
+  "context": {
+    "use_speed": false,
+    "speed_min_kmh": 10.0,
+    "stationary_factor": 0.2
+  },
+
+  "alerts": {
+    "yellow": {"on": 0.40, "off": 0.30},
+    "red":    {"on": 0.70, "off": 0.55},
+    "rise_hold_s": 0.3,
+    "fall_hold_s": 1.0,
+    "min_display_s": 2.0
+  },
+
+  "logging": {
+    "out_dir": "logs",
+    "frame_log_hz": 5.0,
+    "flush_every_s": 1.0,
+    "event_min_s": 0.5,
+    "event_merge_gap_s": 0.5,
+    "summary_power_p": 2.0
+  }
+}
