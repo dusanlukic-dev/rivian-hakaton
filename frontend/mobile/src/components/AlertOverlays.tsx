@@ -15,7 +15,7 @@ import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { formatScore } from '@/lib/format';
 import { ackEmergency, useLive } from '@/state/live';
-import { useProfile } from '@/state/profile';
+import { useAuth } from '@/state/auth';
 import { useSettings } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
@@ -59,9 +59,10 @@ function FlashOverlay() {
 /** Score < 10: full-screen red emergency mode until the driver taps "I'm OK". */
 function EmergencyOverlay() {
   const emergency = useLive((s) => s.emergency);
-  const contactName = useProfile((p) => p.contactName);
-  const contactPhone = useProfile((p) => p.contactPhone);
-  const driver = useProfile((p) => p.name || p.driverId);
+  // The account's emergency contact (Profile tab, PATCH /auth/me).
+  const contactName = useAuth((a) => a.user?.emergency_contact?.name ?? '');
+  const contactPhone = useAuth((a) => a.user?.emergency_contact?.phone ?? '');
+  const driver = useAuth((a) => a.user?.display_name ?? '');
   const insets = useSafeAreaInsets();
   const t = useSharedValue(0);
 

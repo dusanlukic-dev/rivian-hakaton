@@ -15,8 +15,9 @@ https://docs.expo.dev/versions/v58.0.0/ and https://docs.expo.dev/llms.txt inste
 - **`android/` is generated** (CNG, gitignored). Never hand-edit it. Change `app.json` or a config plugin in `plugins/`, and run
   `npm run prebuild:clean` if the native project looks stale.
 - **Contract = `docs/API.md`.** Copy its §4 types verbatim into `src/api/types.ts`. Use only its routes and fields, and **never compute
-  levels or decide on warnings**: execute `response` (+ the `emergency` event). Screens follow API.md §3: Settings (address + Test
-  via `GET /health`) → Start trip (`POST /trips`) → Drive (WS) → End (`POST /trips/{id}/end`) → Summary, and History (`GET /trips?driver_id=`).
+  levels or decide on warnings**: execute `response` (+ the `emergency` event). Screens follow API.md §3: Login / register (`app/login.tsx`,
+  with the address + Test) → Start trip (`POST /trips` with the token) → Drive (WS) → End (`POST /trips/{id}/end`) → Summary, History
+  (`GET /trips` = my trips), Profile (`/auth/me`, logout). The token lives in `state/auth.ts`; `api/client.ts` sends it and logs out on 401.
 - **Routing:** expo-router. Only screens and `_layout.tsx` go in `src/app/`. Everything else lives in `src/` (`api/`, `alerts/`, `settings/`,
   `components/`, `hooks/`). The import alias `@/` maps to `src/`.
 - **React Compiler is on:** don't hand-write `useMemo`/`useCallback`. Follow the Rules of React (no mutation during render, no

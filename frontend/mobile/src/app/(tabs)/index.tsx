@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ensureNotificationPermission } from '@/alerts/notifications';
-import { api } from '@/api/client';
+import { ApiError, api } from '@/api/client';
 import type { TripState, TripSummary } from '@/api/types';
 import { BehaviorGrid, Indicators, Lamp, LevelBar, ScoreBadge, StatusPill } from '@/components/dashboard';
 import { RecentSections } from '@/components/report';
@@ -12,8 +12,8 @@ import { Banner, Button, Card, Screen, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { errorText, formatDuration } from '@/lib/format';
-import { setActiveTrip, setEndedTrip, useLive } from '@/state/live';
-import { useProfile } from '@/state/profile';
+import { dropTrip, setActiveTrip, setEndedTrip, useLive } from '@/state/live';
+import { useAuth } from '@/state/auth';
 import { useSettings } from '@/state/settings';
 import { colors, lampColors, withAlpha } from '@/theme/colors';
 
@@ -27,10 +27,7 @@ export default function DriveScreen() {
   const summary = useLive((s) => s.summary);
   const address = useSettings((s) => s.address);
   const keepAwake = useSettings((s) => s.keepAwake);
-  const driverId = useProfile((p) => p.driverId);
-  const driverName = useProfile((p) => p.name);
-  const contactName = useProfile((p) => p.contactName);
-  const contactPhone = useProfile((p) => p.contactPhone);
+  const driverName = useAuth((a) => a.user?.display_name ?? '');
   const now = useNow(1000);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,20 +44,12 @@ export default function DriveScreen() {
   }, [tripActive, keepAwake]);
 
   async function startTrip() {
-    if (!driverId) {
-      router.push('/profile');
-      return;
-    }
     setBusy(true);
     setError(null);
     try {
       await ensureNotificationPermission();
-      const state = await api.startTrip(address, {
-        driver_id: driverId,
-        emergency_contact: contactPhone
-          ? { name: contactName || strings.profile.contactFallback, phone: contactPhone }
-          : null,
-      });
+      // Logged in: the trip belongs to the account, and the account's emergency contact is used.
+      const state = await api.startTrip(address);
       setActiveTrip(state);
     } catch (e) {
       setError(errorText(e));
@@ -77,6 +66,12 @@ export default function DriveScreen() {
       setEndedTrip(ended);
       router.push(`/trip/${tripId}`);
     } catch (e) {
+      if (e instanceof ApiError && e.status === 404) {
+        // The car no longer runs it (backend restarted); the server closed it, so show what it stored.
+        dropTrip(tripId);
+        router.push(`/trip/${tripId}`);
+        return;
+      }
       setError(errorText(e));
     } finally {
       setBusy(false);
@@ -106,7 +101,6 @@ export default function DriveScreen() {
         />
       ) : status === 'open' ? (
         <Ready
-          driverId={driverId}
           driverName={driverName}
           summary={summary}
           busy={busy}
@@ -152,13 +146,11 @@ function ActiveTrip({ trip, stale, busy, onEnd }: { trip: TripState; stale: bool
 }
 
 function Ready({
-  driverId,
   driverName,
   summary,
   busy,
   onStart,
 }: {
-  driverId: string;
   driverName: string;
   summary: TripSummary | null;
   busy: boolean;
@@ -170,19 +162,13 @@ function Ready({
         <Txt size="lg" weight="800">
           {strings.drive.readyTitle}
         </Txt>
-        <Txt tone="muted">{driverId ? strings.drive.readyBody : strings.drive.noProfile}</Txt>
-        {driverId ? (
+        <Txt tone="muted">{strings.drive.readyBody}</Txt>
+        {driverName ? (
           <Txt size="sm" tone="subtle">
-            {strings.drive.driver}: {driverName || driverId} ({driverId})
+            {strings.drive.drivingAs(driverName)}
           </Txt>
         ) : null}
-        <Button
-          big
-          label={driverId ? strings.drive.startTrip : strings.drive.goToProfile}
-          icon={driverId ? 'play-circle' : 'account-circle'}
-          loading={busy}
-          onPress={onStart}
-        />
+        <Button big label={strings.drive.startTrip} icon="play-circle" loading={busy} onPress={onStart} />
       </Card>
       {summary ? (
         <Card>
@@ -190,11 +176,11 @@ function Ready({
             {strings.drive.lastTrip.toUpperCase()}
           </Txt>
           <View style={styles.row}>
-            <ScoreBadge score={summary.final_score} level={summary.level} />
+            <ScoreBadge score={summary.average_score} level={summary.level} />
             <View style={styles.flex}>
               <Txt weight="700">{strings.levels[summary.level]}</Txt>
               <Txt size="sm" tone="muted">
-                {formatDuration(summary.duration_s)} · {summary.driver_id}
+                {formatDuration(summary.duration_s)} · {strings.summary.headline.toLowerCase()}
               </Txt>
             </View>
           </View>

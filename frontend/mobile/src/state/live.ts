@@ -1,5 +1,6 @@
 import { AppState } from 'react-native';
 
+import { ApiError, api } from '@/api/client';
 import { connectLive, type LiveConnection, type LiveStatus } from '@/api/live';
 import type { LiveMessage, SafetyLevel, TripSection, TripState, TripSummary } from '@/api/types';
 import { createStore, useStore } from '@/lib/store';
@@ -95,7 +96,33 @@ let started = false;
 function connect(address: string) {
   connection?.stop();
   connectedAddress = address;
-  connection = connectLive(address, { onMessage, onStatus: (status) => liveStore.set({ status }) });
+  connection = connectLive(address, {
+    onMessage,
+    onStatus: (status) => {
+      liveStore.set({ status });
+      if (status === 'open') void checkTripStillRuns(address);
+    },
+  });
+}
+
+/**
+ * After a (re)connect the car only sends `state` if a trip runs. If ours is gone (the backend restarted: the
+ * server closed it at its last section) nothing would ever say so, and the Drive screen would show it forever.
+ */
+async function checkTripStillRuns(address: string) {
+  const trip = liveStore.get().trip;
+  if (!trip || trip.trip_id === TEST_TRIP_ID) return;
+  try {
+    const state = await api.getTrip(address, trip.trip_id);
+    if (state.status !== 'active') dropTrip(trip.trip_id);
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) dropTrip(trip.trip_id);
+  }
+}
+
+/** The active trip ended without a `trip_ended` (backend restart): forget it, keep its id for the summary. */
+export function dropTrip(tripId: string) {
+  liveStore.set((s) => (s.trip?.trip_id === tripId ? { trip: null, emergency: null, sections: [] } : {}));
 }
 
 /** Opens the socket to the configured address and follows address changes / app foregrounding. */

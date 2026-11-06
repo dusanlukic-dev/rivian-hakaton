@@ -5,28 +5,23 @@ import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import { api } from '@/api/client';
 import type { TripSummary } from '@/api/types';
 import { ScoreBadge } from '@/components/dashboard';
-import { Banner, Button, Card, Icon, Pill, Screen, ScreenHeader, Txt } from '@/components/ui';
+import { Banner, Card, Icon, Pill, Screen, ScreenHeader, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { errorText, formatDateTime, formatDuration } from '@/lib/format';
-import { useProfile } from '@/state/profile';
 import { useSettings } from '@/state/settings';
 import { colors, radius } from '@/theme/colors';
 
-type Scope = 'mine' | 'all';
-
+/** My trips (GET /trips with the login token), newest first. The badge is the average score while driving. */
 export default function HistoryScreen() {
   const address = useSettings((s) => s.address);
-  const driverId = useProfile((p) => p.driverId);
-  const [scope, setScope] = useState<Scope>('mine');
   const [trips, setTrips] = useState<TripSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const effectiveScope: Scope = driverId ? scope : 'all';
 
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
-      const list = await api.listTrips(address, effectiveScope === 'mine' ? driverId : undefined);
+      const list = await api.listTrips(address);
       setTrips([...list].reverse()); // backend returns oldest → newest
       setError(null);
     } catch (e) {
@@ -34,7 +29,7 @@ export default function HistoryScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [address, driverId, effectiveScope]);
+  }, [address]);
 
   useFocusEffect(
     useCallback(() => {
@@ -48,19 +43,6 @@ export default function HistoryScreen() {
         <RefreshControl refreshing={refreshing} onRefresh={() => void load()} tintColor={colors.foreground} colors={[colors.primaryForeground]} progressBackgroundColor={colors.primary} />
       }>
       <ScreenHeader title={strings.history.title} subtitle={strings.history.subtitle} />
-      {driverId ? (
-        <View style={styles.segmented}>
-          {(['mine', 'all'] as const).map((s) => (
-            <Button
-              key={s}
-              label={strings.history[s]}
-              variant={effectiveScope === s ? 'primary' : 'secondary'}
-              onPress={() => setScope(s)}
-              style={styles.flex}
-            />
-          ))}
-        </View>
-      ) : null}
       {error ? <Banner icon="lan-disconnect" text={error} color={colors.destructive} /> : null}
       {trips && trips.length === 0 ? (
         <Card>
@@ -73,13 +55,12 @@ export default function HistoryScreen() {
           onPress={() => router.push(`/trip/${trip.trip_id}`)}
           android_ripple={{ color: 'rgba(255,255,255,0.08)' }}
           style={styles.row}>
-          <ScoreBadge score={trip.final_score} level={trip.level} />
+          <ScoreBadge score={trip.average_score} level={trip.level} />
           <View style={styles.flex}>
             <Txt weight="700">{formatDateTime(trip.started_at)}</Txt>
             <Txt size="sm" tone="muted">
               {formatDuration(trip.duration_s)} ·{' '}
               {trip.behaviors.length ? strings.history.issues(trip.behaviors.length) : strings.history.clean}
-              {effectiveScope === 'all' ? ` · ${trip.driver_id}` : ''}
             </Txt>
           </View>
           {trip.status === 'active' ? (
@@ -95,7 +76,6 @@ export default function HistoryScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1 },
-  segmented: { flexDirection: 'row', gap: 8 },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

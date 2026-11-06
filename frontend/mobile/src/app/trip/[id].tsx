@@ -73,17 +73,16 @@ export default function TripSummaryScreen() {
   return (
     <Screen refreshControl={refreshControl}>
       <View style={styles.hero}>
-        <ScoreBadge score={summary.final_score} level={summary.level} size={132} />
+        <ScoreBadge score={summary.average_score} level={summary.level} size={132} />
         <Txt size="lg" weight="800" style={{ color }}>
           {strings.levels[summary.level]}
         </Txt>
         <Txt size="sm" tone="muted">
-          {strings.summary.final} · {summary.driver_id}
+          {strings.summary.headline}
         </Txt>
       </View>
 
       <View style={styles.stats}>
-        <Stat label={strings.summary.average} value={formatScore(summary.average_score)} />
         <Stat label={strings.summary.minimum} value={formatScore(summary.min_score)} />
         <Stat label={strings.summary.duration} value={formatDuration(summary.duration_s)} />
       </View>

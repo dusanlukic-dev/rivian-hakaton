@@ -1,5 +1,5 @@
 import Constants from 'expo-constants';
-import { router, useFocusEffect } from 'expo-router';
+import { useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
@@ -10,15 +10,13 @@ import {
   openDndSettings,
   openFullScreenSettings,
 } from '@/alerts/notifications';
-import { normalizeAddress } from '@/api/address';
-import { api } from '@/api/client';
+import { ConnectionCard } from '@/components/connection';
 import { StatusPill } from '@/components/dashboard';
-import { Button, Card, Icon, Screen, ScreenHeader, SectionLabel, TextField, ToggleRow, Txt, type IconName } from '@/components/ui';
+import { Button, Card, Icon, Screen, ScreenHeader, SectionLabel, ToggleRow, Txt, type IconName } from '@/components/ui';
 import { strings } from '@/config/strings';
-import { errorText } from '@/lib/format';
 import { runTestAlert, stopTestAlert, useLive } from '@/state/live';
 import { refreshPermissions, usePermissions, watchPermissions } from '@/state/permissions';
-import { DEFAULT_ADDRESS, settingsStore, useSettings, type Settings } from '@/state/settings';
+import { settingsStore, useSettings, type Settings } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
 export default function SettingsScreen() {
@@ -75,78 +73,6 @@ export default function SettingsScreen() {
         </Txt>
       </Card>
     </Screen>
-  );
-}
-
-function ConnectionCard({ saved }: { saved: string }) {
-  const [draft, setDraft] = useState(saved);
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
-  const [testing, setTesting] = useState(false);
-
-  function save(value = draft) {
-    const address = normalizeAddress(value);
-    if (!address) {
-      setResult({ ok: false, text: strings.settings.invalid });
-      return null;
-    }
-    settingsStore.set({ address });
-    return address;
-  }
-
-  async function test() {
-    const address = normalizeAddress(draft);
-    if (!address) {
-      setResult({ ok: false, text: strings.settings.invalid });
-      return;
-    }
-    setTesting(true);
-    const started = Date.now();
-    try {
-      await api.health(address);
-      setResult({ ok: true, text: strings.settings.testOk(Date.now() - started) });
-    } catch (e) {
-      setResult({ ok: false, text: errorText(e) });
-    } finally {
-      setTesting(false);
-    }
-  }
-
-  return (
-    <>
-      <SectionLabel>{strings.settings.connection}</SectionLabel>
-      <Card>
-        <TextField
-          label={strings.settings.address}
-          hint={strings.settings.addressHint}
-          value={draft}
-          onChangeText={(text) => {
-            setDraft(text);
-            setResult(null);
-          }}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          placeholder="10.190.62.27:8000"
-          onSubmitEditing={() => save()}
-        />
-        {result ? (
-          <View style={styles.row}>
-            <Icon name={result.ok ? 'check-circle' : 'alert-circle-outline'} size={18} color={result.ok ? colors.ok : colors.destructive} />
-            <Txt size="sm" style={[styles.flex, { color: result.ok ? colors.ok : colors.destructive }]}>
-              {result.text}
-            </Txt>
-          </View>
-        ) : null}
-        <View style={styles.row}>
-          <Button label={strings.settings.save} icon="content-save" disabled={draft.trim() === saved} onPress={() => save()} style={styles.flex} />
-          <Button label={strings.settings.test} icon="lan-connect" variant="secondary" loading={testing} onPress={() => void test()} style={styles.flex} />
-        </View>
-        <View style={styles.row}>
-          <Button label={strings.settings.usb} icon="usb" variant="ghost" onPress={() => save(DEFAULT_ADDRESS)} style={styles.flex} />
-          <Button label={strings.settings.scan} icon="qrcode-scan" variant="ghost" onPress={() => router.push('/scan')} style={styles.flex} />
-        </View>
-      </Card>
-    </>
   );
 }
 

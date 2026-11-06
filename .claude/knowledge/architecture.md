@@ -47,17 +47,21 @@ The backend split (coordinator / server / model) is explained in full in **`docs
 ```
 index.js                 entry: registers notify-kit foreground-service runner + background "I'm OK" action, then expo-router
 app.config.ts            reads repo-root config/brand.json → app name + extra.brand (single source of the name)
-src/api/                 types.ts (verbatim API.md §4) · client.ts (REST incl. getReport) · live.ts (WS, reconnect, kick) · address.ts
+src/api/                 types.ts (verbatim API.md §4) · client.ts (REST + auth; Bearer token on every call, 401 → logout)
+                         · live.ts (WS, reconnect, kick) · address.ts
 src/lib/                 store.ts (createStore/useStore on useSyncExternalStore) · persist.ts (AsyncStorage) · format.ts
-src/state/               settings.ts · profile.ts · live.ts (socket status, active trip, tick, emergency, last summary,
-                         `preview` = local test alert, `sections` = last 30 WS sections) · permissions.ts (re-check on foreground)
+src/state/               settings.ts · auth.ts (token + user, AsyncStorage `auth.v1`) · live.ts (socket status, active trip, tick,
+                         emergency, last summary, `preview` = local test alert, `sections` = last 30 WS sections; on reconnect it
+                         drops a trip the car no longer runs) · permissions.ts (re-check on foreground)
 src/alerts/              engine.ts executes `response` per message (vibration, sounds, voice, background notifications, emergency)
                          · sounds.ts (expo-audio) · notifications.ts (channels, foreground service, app-specific settings intents)
-src/components/          ui.tsx · dashboard.tsx (Lamp, LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge)
+src/components/          ui.tsx · connection.tsx (car-computer address card: Settings + login) · dashboard.tsx (Lamp, LevelBar,
+                         BehaviorGrid, Indicators, StatusPill, ScoreBadge)
                          · AlertOverlays.tsx (2 Hz red flash only while state is fresh, emergency screen)
                          · report.tsx (DriveChart on react-native-svg, ChartLegend, MomentList, MomentSheet, RecentSections)
 src/config/              strings.ts (ALL UI copy) · brand.ts · behaviors.ts (label → icon)
-src/app/                 (tabs)/index (Drive) · history · profile · settings · trip/[id] (summary + drive chart) · scan (QR)
+src/app/                 _layout (Stack.Protected: token → app, none → login) · login (log in / create account + address)
+                         · (tabs)/index (Drive) · history (my trips) · profile (account, logout) · settings · trip/[id] · scan (QR)
 ```
 
 **Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels and unknown WS message types. The
