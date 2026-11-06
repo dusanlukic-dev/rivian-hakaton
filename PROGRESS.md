@@ -10,7 +10,7 @@
 |---|---|
 | Backend (FastAPI) | ✅ working (teammate Matija Vujić). Teammate is adding Postgres + MinIO (Docker expected) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | manual / not integrated |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). It computes per-behaviour **probabilities** but doesn't post to the backend yet, and the backend wants **labels**: the threshold mapping + `SafetyClient.send` call is the missing link |
 | **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
 | Brand / copy | app name only in `config/brand.json` (both apps). Mobile UI copy in `frontend/mobile/src/config/strings.ts` |
