@@ -3,7 +3,8 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 from app.domain.enums import Behavior, SafetyLevel, TripStatus
-from app.domain.trip import CarResponse
+from app.domain.trip import CameraView, CarResponse
+from app.schemas.camera import ModelFrame
 
 
 class EmergencyContactIn(BaseModel):
@@ -26,6 +27,11 @@ class TelemetryTick(BaseModel):
     behaviors: set[Behavior] = Field(
         default_factory=set, description="Risky behaviors visible in this sample."
     )
+    frame: ModelFrame | None = Field(
+        default=None,
+        description="One record of the camera model's frames.jsonl, sent unchanged. Its active "
+        "categories are added to `behaviors`; risk, alert and categories are forwarded to the app.",
+    )
 
 
 class TripState(BaseModel):
@@ -38,6 +44,10 @@ class TripState(BaseModel):
         description="Currently visible behaviors and how many seconds each has lasted."
     )
     response: CarResponse
+    camera: CameraView | None = Field(
+        default=None,
+        description="The camera model's own view from the latest tick; null if it sent no model frame.",
+    )
     emergency_alert_sent: bool
 
 

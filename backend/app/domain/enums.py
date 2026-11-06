@@ -9,6 +9,7 @@ class Behavior(StrEnum):
     TURNING_AROUND = "turning_around"      # okreće se (telom)
     HANDS_OFF_WHEEL = "hands_off_wheel"    # ruke van volana
     DROWSY = "drowsy"                      # pospan
+    EYES_OFF_ROAD = "eyes_off_road"        # pogled van puta
 
 
 class SafetyLevel(StrEnum):

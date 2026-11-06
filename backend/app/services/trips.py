@@ -6,6 +6,7 @@ from app.domain.trip import EmergencyContact, Trip
 from app.repositories.trips import InMemoryTripRepository
 from app.schemas.trip import BehaviorSummary, TelemetryTick, TripCreate, TripState, TripSummary
 from app.services.alerts import evaluate_response, level_for
+from app.services.camera import behaviors_from_frame, to_view
 from app.services.notifications import notify_emergency_contact
 from app.services.scoring import apply_tick
 
@@ -15,6 +16,7 @@ TIPS: dict[Behavior, str] = {
     Behavior.TURNING_AROUND: "Stay facing the road - turning in your seat takes your eyes and hands away from driving.",
     Behavior.HANDS_OFF_WHEEL: "Keep both hands on the wheel - it's your fastest way to react.",
     Behavior.DROWSY: "You showed signs of drowsiness - take a break at least every 2 hours and don't drive tired.",
+    Behavior.EYES_OFF_ROAD: "Keep your eyes on the road - a glance away should never last longer than 2 seconds.",
 }
 
 
@@ -38,7 +40,12 @@ def start_trip(repo: InMemoryTripRepository, data: TripCreate) -> tuple[Trip, Tr
 
 def process_tick(trip: Trip, tick: TelemetryTick) -> bool:
     """Apply one telemetry tick. Returns True if this tick triggered the emergency alert."""
-    apply_tick(trip, tick.timestamp, tick.speed_kmh, tick.behaviors)
+    behaviors = set(tick.behaviors)
+    trip.camera = None
+    if tick.frame is not None:
+        behaviors |= behaviors_from_frame(tick.frame)
+        trip.camera = to_view(tick.frame)
+    apply_tick(trip, tick.timestamp, tick.speed_kmh, behaviors)
     trip.response = evaluate_response(trip, tick.speed_kmh)
     if level_for(trip.score) is SafetyLevel.EMERGENCY and not trip.emergency_alert_sent:
         notify_emergency_contact(trip)
@@ -64,6 +71,7 @@ def to_state(trip: Trip) -> TripState:
         level=level_for(trip.score),
         active_behaviors={b: round(s, 1) for b, s in trip.active.items()},
         response=trip.response,
+        camera=trip.camera,
         emergency_alert_sent=trip.emergency_alert_sent,
     )
 

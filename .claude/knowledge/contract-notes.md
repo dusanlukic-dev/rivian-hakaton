@@ -19,7 +19,7 @@
 ## Wire-format cheat sheet (details and TS types in docs/API.md §4–6)
 
 - WS `ws://<ip>:8000/api/v1/ws`. Server → client only: `{"type": "trip_started" | "state" | "emergency" | "trip_ended", "data": TripState | TripSummary}`.
-  - `state` arrives after every camera tick (~1/s; the simulator can go faster) and **immediately on connect** if a trip is active.
+  - `state` arrives after every camera tick (~2/s from the models, 1/s from the simulator; `--interval` goes faster) and **immediately on connect** if a trip is active.
   - **Nothing arrives while no trip is active.** There's no heartbeat, so silence isn't proof of a dead socket. During an active trip,
     > 3 s without `state` means the camera/model side stalled, so show "no data".
   - The server reads client messages but **ignores** them.

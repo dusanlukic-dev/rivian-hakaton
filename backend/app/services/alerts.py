@@ -55,6 +55,9 @@ POLICIES: dict[SafetyLevel, LevelPolicy] = {
 }
 
 
+CAMERA_ALARM_MESSAGE = "Danger detected - eyes on the road now."
+
+
 def level_for(score: float) -> SafetyLevel:
     for lower, level in LEVEL_BANDS:
         if score >= lower:
@@ -65,13 +68,24 @@ def level_for(score: float) -> SafetyLevel:
 def evaluate_response(
     trip: Trip, speed_kmh: float, cfg: ScoringConfig = DEFAULT_CONFIG
 ) -> CarResponse:
-    policy = POLICIES[level_for(trip.score)]
+    level = level_for(trip.score)
+    policy = POLICIES[level]
     moving = speed_kmh >= cfg.stationary_speed_kmh
     flagged = (
         moving
         and policy.risk_threshold_s is not None
         and any(seconds >= policy.risk_threshold_s for seconds in trip.active.values())
     )
+    # The camera model's red alert (microsleep, long look away...) raises the alarm on its own, so
+    # the first dangerous moment isn't silent just because the trip score is still high.
+    camera_alarm = moving and trip.camera is not None and trip.camera.alarm
+    if camera_alarm:
+        return CarResponse(
+            dashboard_light=policy.light,
+            vibrate_seat=True,
+            sound=SoundLevel.HIGH,
+            message=CAMERA_ALARM_MESSAGE if level is SafetyLevel.SAFE else policy.message,
+        )
     return CarResponse(
         dashboard_light=policy.light,
         vibrate_seat=flagged and policy.vibrate,

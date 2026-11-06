@@ -8,9 +8,10 @@
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). Teammate is adding Postgres + MinIO (Docker expected) |
-| Simulators | ✅ `notebooks/safety_client.py` (full demo drive) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). It computes per-behaviour **probabilities** but doesn't post to the backend yet, and the backend wants **labels**: the threshold mapping + `SafetyClient.send` call is the missing link |
+| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 32 tests pass. **Accepts the CV model's frame records** and forwards them to the app as `TripState.camera` (docs/API.md §4–7). Postgres + MinIO in progress (Docker expected) |
+| Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`) + `tools/sim.py` (exact states, see skill `backend-local`) |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame` (the backend maps categories → labels). Not yet called live from the pipeline |
+| Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
 | **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
 | Brand / copy | app name only in `config/brand.json` (both apps). Mobile UI copy in `frontend/mobile/src/config/strings.ts` |
@@ -28,15 +29,17 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
+1. **Re-copy API.md §4 types into both apps** (2026-11-06 backend change): new label `eyes_off_road` + `TripState.camera` (model risk,
+   colour, categories). Add `eyes_off_road` to the behaviour tables/icons/strings, optionally show the model's risk colour.
+2. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
    the socket alive with the screen off, that the full-screen intent wakes the A54 on `emergency`, and the alarm-channel sound in vibrate mode.
    Log the results in `android-alerting.md` → To verify.
-2. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
-3. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
-4. **Team alignment:** proposals in `contract-notes.md`: phone GPS speed → backend, dashboard sim panel posting `/telemetry`, SMS on emergency.
+3. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
+4. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
+5. **Team alignment:** proposals in `contract-notes.md`: phone GPS speed → backend, dashboard sim panel posting `/telemetry`, SMS on emergency.
    Check what the Postgres/MinIO work changes in `docs/API.md` (trips may survive restarts; images in MinIO?).
-5. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level, a trip timeline/score chart on the summary.
-6. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+6. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level, a trip timeline/score chart on the summary.
+7. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
 
 ## In progress
 
@@ -56,9 +59,11 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 ## Open questions
 
-- **Speed:** proposal: phone GPS through the backend (`expo-location` is ready). Needs a backend endpoint/message.
-- **CV:** are `looking_behind` / `turning_around` separate outputs? Does `hands_off_wheel` mean both hands or at least one?
-- **Emergency contact:** the app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
+- **Speed:** the camera doesn't know it. The models currently send a fixed value. Proposal: phone GPS through the backend (`expo-location` is ready). Needs a backend endpoint/message.
+- **CV:** confirm the model's category names. Only `phone_use` and `eyes_off_road` have been seen. `turned_around`, `hands_off`,
+  `drowsiness`, `microsleep` are guesses in `CATEGORY_TO_BEHAVIOR` (`backend/app/services/camera.py`). Is there a separate `looking_behind`?
+  Does `hands_off_wheel` mean both hands or at least one? Do the models run live, or only offline into `frames.jsonl`?
+- **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
 - **DB work:** will trips get user accounts (real login), or stay keyed by `driver_id`? (Profile is a local stand-in.)
 
@@ -78,3 +83,7 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - 2026-11-06, session 2: mobile app core (API client, stores, alert engine, overlays, 6 screens) verified on the A54 with the real
   backend via `tools/sim.py`: warning flash + beeps, emergency siren screen, I'm OK, trip end → summary. Web car-screen dashboard
   built by a sub-agent (verified in Chrome on its own backend). `config/brand.json` is the single app-name source.
+- 2026-11-06, Claude (backend, for Matija Vujić): `POST /telemetry` accepts the CV model's frame record (`frame`, `perception` dropped).
+  Active categories are mapped to labels and scored, and risk/alert/categories go to the app as `TripState.camera`. The model's red alert
+  forces vibration + loud sound at any level while moving. New label `eyes_off_road` (weight 1.0). `safety_client.py`: `send_frame`,
+  `--replay frames.jsonl`. Verified: 32 tests, plus a synthetic replay → WS (40/42 messages carried `camera`, no `perception`). docs/API.md updated.

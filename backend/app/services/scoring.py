@@ -30,6 +30,8 @@ def _default_weights() -> dict[Behavior, float]:
         # Usually reported together with LOOKING_BEHIND, so the two add up.
         Behavior.TURNING_AROUND: 1.0,
         Behavior.HANDS_OFF_WHEEL: 1.0,
+        # Low: the model often reports it together with LOOKING_AT_PHONE, so the two add up.
+        Behavior.EYES_OFF_ROAD: 1.0,
     }
 
 

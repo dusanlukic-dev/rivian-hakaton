@@ -9,16 +9,17 @@ aplikaciji kako kola treba da reaguju (svetlo na dashboardu, vibracija sedišta,
  laptop                                                         telefon (hotspot)
 ┌─────────────────────────────────────────────────────────┐    ┌──────────────────┐
 │ notebooks/  YOLO · MediaPipe · OpenCV                   │    │ React Native app │
-│     │  safety_client.send(behaviors, speed_kmh)         │    │                  │
-│     ▼  POST 127.0.0.1:8000/api/v1/telemetry  (~1/s)     │    │                  │
+│     │  safety_client.send_frame(record, speed_kmh)      │    │                  │
+│     ▼  POST 127.0.0.1:8000/api/v1/telemetry  (~2/s)     │    │                  │
 │ backend/  FastAPI ── računa score ── WS /api/v1/ws ─────┼───►│ live dashboard   │
 │                     ◄── POST /trips, /trips/{id}/end ───┼────│ start / kraj     │
 └─────────────────────────────────────────────────────────┘    └──────────────────┘
 ```
 
 - Modeli i backend rade na **istom laptopu**, pa modeli gađaju `127.0.0.1`.
-- Modeli šalju samo **labele** ponašanja (nikad slike). Mapiranje detekcija u labele
-  (npr. MediaPipe glava oborena + YOLO "cell phone" → `looking_at_phone`) radi se na strani modela.
+- Modeli šalju svoj **zapis frejma** (isti kao red u `frames.jsonl`), bez `perception` i nikad
+  slike. Backend preslikava aktivne kategorije na labele i iz njih računa score. Rizik i kategorije
+  modela prosleđuje aplikaciji u polju `camera`, a crveni alarm modela odmah pali vibraciju i zvuk.
 - U jednom trenutku je aktivna **jedna vožnja** (jedan auto). Aplikacija je pokreće i završava,
   a telemetrija modela automatski ide u aktivnu vožnju.
 
@@ -62,15 +63,30 @@ from safety_client import SafetyClient
 
 client = SafetyClient()  # http://127.0.0.1:8000/api/v1
 while True:
-    frame = ...
-    behaviors = set()            # popuni iz YOLO / MediaPipe rezultata
-    client.send(behaviors, speed_kmh=60)  # sme svaki frejm, sam se ograniči na ~2/s
+    record = ...                 # isti dict koji upisujete u frames.jsonl
+    client.send_frame(record, speed_kmh=60)  # sme svaki frejm, sam se ograniči na ~2/s
 ```
 
-- `send` ne ruši petlju za kameru ako backend nije podignut ili vožnja još nije počela (vraća `None`).
-- Za nepoznatu labelu odmah baca `ValueError`, da se greška u kucanju vidi odmah.
+- `send_frame` šalje zapis neizmenjen, samo izbaci `perception`. numpy brojevi i nizovi su u redu.
+- Ne ruši petlju za kameru ako backend nije podignut ili vožnja još nije počela (vraća `None`).
+- Ako imate samo labele: `client.send({"looking_at_phone"}, speed_kmh=60)`. Za nepoznatu labelu
+  odmah baca `ValueError`.
 - Simulacija cele vožnje bez modela, korisno za front: `python notebooks/safety_client.py`
   (sa `--interval 0.3` ide brže od realnog vremena).
+- Replay snimljenog izlaza modela, kao da kamera radi uživo:
+  `python notebooks/safety_client.py --replay frames.jsonl` (`--speedup 2`, `--speed-kmh 90`).
+
+Kategorije modela → labele (`CATEGORY_TO_BEHAVIOR` u [app/services/camera.py](app/services/camera.py)).
+Kategorija koja nije u tabeli ide aplikaciji, ali se ne boduje, a server jednom ispiše warning.
+
+| Kategorija modela | Labela |
+|---|---|
+| `phone_use` | `looking_at_phone` |
+| `eyes_off_road` | `eyes_off_road` |
+| `turned_around` | `turning_around` |
+| `hands_off` | `hands_off_wheel` |
+| `drowsiness`, `microsleep` | `drowsy` |
+| ime same labele (npr. `looking_behind`) | ta labela |
 
 Labele (moraju se poklapati sa `Behavior` u [app/domain/enums.py](app/domain/enums.py)):
 
@@ -81,10 +97,11 @@ Labele (moraju se poklapati sa `Behavior` u [app/domain/enums.py](app/domain/enu
 | `looking_behind` | gleda iza sebe | 2.0 |
 | `turning_around` | okreće se telom (obično ide zajedno sa `looking_behind`, pa se sabiraju) | 1.0 |
 | `hands_off_wheel` | ruke van volana | 1.0 |
+| `eyes_off_road` | pogled van puta (obično ide zajedno sa `looking_at_phone`, pa se sabiraju) | 1.0 |
 
 Više labela u istom ticku je u redu i penali se sabiraju. Novo ponašanje se dodaje na tri mesta:
 `Behavior` u `enums.py`, težina u `scoring.py` i savet u `TIPS` u `services/trips.py`.
-Test će pasti ako nešto od toga fali.
+Test će pasti ako nešto od toga fali. Ako se kategorija modela zove drugačije, dodaj je i u `CATEGORY_TO_BEHAVIOR`.
 
 ## Za mobilnu aplikaciju
 
@@ -114,6 +131,7 @@ njega određuje noćne penale.
 | 35–55 | high_risk | žuto | vibracija + glasan zvuk, ≥ 2 s |
 | 10–35 | critical | crveno | vibracija + glasan zvuk odmah |
 | < 10 | emergency | crveno | + `emergency` događaj i poruka kontaktu (jednom po vožnji) |
+| bilo koji | model javi crveno | prati score | vibracija + glasan zvuk odmah (alarm modela) |
 
 Slanje poruke kontaktu je za sada stub koji samo loguje: [app/services/notifications.py](app/services/notifications.py).
 

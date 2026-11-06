@@ -9,6 +9,7 @@ from app.services.live import LiveHub, get_live_hub
 
 API = "/api/v1"
 NIGHT = datetime(2026, 11, 6, 23, 0, 0, tzinfo=timezone(timedelta(hours=1)))
+DAY = datetime(2026, 11, 6, 14, 0, 0, tzinfo=timezone(timedelta(hours=1)))
 CONTACT = {"name": "Ana", "phone": "+381600000000"}
 
 
@@ -120,6 +121,96 @@ def test_telemetry_without_active_trip_is_rejected(client):
 
 def test_unknown_trip_returns_404(client):
     assert client.get(f"{API}/trips/nope").status_code == 404
+
+
+# A record from the camera model's frames.jsonl, as the CV team writes it.
+MODEL_FRAME = {
+    "t": 38.6,
+    "frame": 1158,
+    "dt": 0.033,
+    "categories": {
+        "phone_use": {"p": 0.715, "p_hat": 0.7, "active": True, "run_s": 3.2, "D_s": 3.5, "h": 1.2, "r": 0.534},
+        "eyes_off_road": {"p": 0.905, "active": True, "run_s": 3.4, "r": 0.767},
+        "drowsiness": {"p": 0.05, "active": False, "run_s": 0.0, "r": 0.0},
+    },
+    "groups": {"visual": 0.767, "manual": 0.374, "fatigue": 0.0},
+    "risk": {"raw": 0.854, "smoothed": 0.84, "floor": 0.5, "final": 0.819},
+    "rules_triggered": ["long_distraction", "phone_sustained"],
+    "alert": {"level": "red", "code": 2},
+    "top_contributors": [["eyes_off_road", 0.767], ["phone_use", 0.534]],
+    "perception": {"head": {"yaw": -31.2, "pitch": -18.0}, "eyes": {"ear": 0.21}, "objects": ["cell phone"]},
+}
+
+
+def send_frame(client, ts, speed, frame):
+    body = {"timestamp": ts.isoformat(), "speed_kmh": speed, "frame": frame}
+    res = client.post(f"{API}/telemetry", json=body)
+    assert res.status_code == 200, res.text
+    return res.json()
+
+
+def test_model_frame_is_scored_and_forwarded(client):
+    start_trip(client)
+    with client.websocket_connect(f"{API}/ws") as ws:
+        ws.receive_json()  # current state on connect
+        state = send_frame(client, DAY, 60, MODEL_FRAME)  # daytime city: 6 pts x 1.3 -> still safe
+        pushed = ws.receive_json()
+
+    assert pushed["data"] == state
+    # Active categories become backend labels and cost points; inactive ones don't.
+    assert set(state["active_behaviors"]) == {"looking_at_phone", "eyes_off_road"}
+    assert state["score"] < 100
+
+    camera = state["camera"]
+    assert camera["risk"] == 0.819
+    assert camera["alert"] == "red"
+    assert camera["rules_triggered"] == ["long_distraction", "phone_sustained"]
+    assert camera["groups"]["visual"] == 0.767
+    assert camera["categories"]["phone_use"] == {"p": 0.715, "active": True, "run_s": 3.2, "r": 0.534}
+    assert "perception" not in str(state)
+
+    # Still "safe" by score, but the model's red alert makes the car react right away.
+    assert state["level"] == "safe"
+    assert state["response"]["vibrate_seat"] is True
+    assert state["response"]["sound"] == "high"
+    assert state["response"]["message"] == "Danger detected - eyes on the road now."
+
+
+def test_camera_alarm_is_silent_while_stationary(client):
+    start_trip(client)
+    state = send_frame(client, NIGHT, 0, MODEL_FRAME)
+    assert state["score"] == 100
+    assert state["response"]["vibrate_seat"] is False
+    assert state["response"]["sound"] == "none"
+
+
+def test_unknown_camera_category_is_shown_but_not_scored(client):
+    start_trip(client)
+    frame = {"categories": {"eating": {"p": 0.9, "active": True}}, "alert": {"code": 1}}
+    state = send_frame(client, NIGHT, 60, frame)
+    assert state["score"] == 100
+    assert state["active_behaviors"] == {}
+    assert state["camera"]["categories"]["eating"]["active"] is True
+    assert state["camera"]["alert"] == "yellow"  # from the code when the level is missing
+
+
+def test_camera_view_clears_on_a_tick_without_frame(client):
+    start_trip(client)
+    assert send_frame(client, NIGHT, 60, MODEL_FRAME)["camera"] is not None
+    assert send_tick(client, NIGHT + timedelta(seconds=1), 60)["camera"] is None
+
+
+def test_nan_in_model_frame_becomes_null(client):
+    start_trip(client)
+    # Python's json.dumps writes NaN for float("nan"); it must not reach the app.
+    raw = (
+        '{"timestamp": "%s", "speed_kmh": 60, "frame": '
+        '{"categories": {"phone_use": {"p": NaN, "active": false}}, "risk": {"final": NaN}}}'
+    ) % NIGHT.isoformat()
+    res = client.post(f"{API}/telemetry", content=raw, headers={"Content-Type": "application/json"})
+    assert res.status_code == 200, res.text
+    assert res.json()["camera"]["risk"] is None
+    assert res.json()["camera"]["categories"]["phone_use"]["p"] is None
 
 
 def test_unknown_behavior_is_rejected(client):

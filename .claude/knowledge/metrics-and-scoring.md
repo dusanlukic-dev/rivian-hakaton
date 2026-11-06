@@ -3,7 +3,7 @@
 The backend owns all the logic: `backend/app/services/scoring.py` (score), `backend/app/services/alerts.py` (levels → car response),
 with a summary in the root `CLAUDE.md`. This is the frontend cheat sheet. If the code and this file disagree, **the code wins**, so update this file.
 
-## Behaviours (labels from the camera models, `POST /telemetry` ~1/s)
+## Behaviours (labels from the camera models, `POST /telemetry` ~2/s)
 
 | label | UI text (EN) | weight (points/s) | notes |
 |---|---|---|---|
@@ -12,9 +12,12 @@ with a summary in the root `CLAUDE.md`. This is the frontend cheat sheet. If the
 | `turning_around` | Turning around | 1.0 | open question: a separate model output, or the same signal as `looking_behind`? |
 | `hands_off_wheel` | Hands off the wheel | 1.0 | open question: both hands, or at least one? |
 | `drowsy` | Drowsiness | 2.5 | heaviest: a microsleep means no reaction at all |
+| `eyes_off_road` | Eyes off the road | 1.0 | added 2026-11-06; usually comes together with `looking_at_phone`, so they add up |
 
 Background: on 2026-11-06 the CV team listed phone use, turning fully around, hands-on-wheel count, drowsiness and eyes-off-road
-(unreliable). The backend dropped eyes-off-road and split turning into two labels. The models side maps detections to labels
+(unreliable). The backend split turning into two labels and, once the model's real output arrived, added `eyes_off_road` back.
+The model now sends its own frame record; the backend maps its categories (`phone_use` → `looking_at_phone`...) and forwards
+its risk, alert and per-category probabilities as `TripState.camera` (display only; may be `null`, may hold unknown category names). The models side maps detections to labels
 (`BEHAVIORS` in `notebooks/safety_client.py`). **The UI must also render unknown labels** (generic icon + raw label) in case one gets added.
 
 ## Score: 0–100, where 100 = fully attentive
@@ -34,11 +37,12 @@ Background: on 2026-11-06 the CV team listed phone use, turning fully around, ha
 | `high_risk` | 35–55 | `yellow` | ≥ 2 s | ✓ | `high` | You're getting distracted often - please focus. |
 | `critical` | 10–35 | `red` | immediately | ✓ | `high` | Dangerous driving - focus on the road now. |
 | `emergency` | < 10 | `red` | immediately | ✓ | `high` | Critical risk - your emergency contact has been notified. Plus a one-off `emergency` event |
+| any + model alarm | – | follows the score | immediately (`camera.alert == "red"`) | ✓ | `high` | at `safe`: Danger detected - eyes on the road now. |
 
 The light always follows the score band. `vibrate_seat` and `sound` are on **only while a behaviour is flagged and the car moves**.
 Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#FACC15`, red `#EF4444`.
 
-## Frontend reactions (each `state` arrives ~1/s, so "per message" effects become a rhythm that stops when the field goes off)
+## Frontend reactions (each `state` arrives ~2/s from the models, 1/s from the simulator, so "per message" effects become a rhythm that stops when the field goes off)
 
 | field | phone, foreground (Drive screen, screen kept on) | phone, background / locked | web dashboard (car screen mock) |
 |---|---|---|---|

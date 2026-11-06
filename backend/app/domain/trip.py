@@ -29,6 +29,31 @@ class CarResponse:
 
 
 @dataclass
+class CameraCategory:
+    """One behavior category as the camera model sees it right now."""
+
+    p: float | None = None  # probability that it is happening now, 0..1
+    active: bool = False  # the model's own on/off decision
+    run_s: float | None = None  # how long it has lasted without a break
+    r: float | None = None  # its contribution to the model's risk
+
+
+@dataclass
+class CameraView:
+    """The camera model's own instantaneous view, forwarded to the app for display (no raw perception)."""
+
+    risk: float | None = None  # risk.final, 0..1
+    alert: str | None = None  # "green" | "yellow" | "red"
+    rules_triggered: list[str] = field(default_factory=list)  # hard rules: microsleep, long look away...
+    categories: dict[str, CameraCategory] = field(default_factory=dict)  # the model's own category names
+    groups: dict[str, float | None] = field(default_factory=dict)  # risk per channel: visual, manual, fatigue
+
+    @property
+    def alarm(self) -> bool:
+        return self.alert == "red"
+
+
+@dataclass
 class Trip:
     id: str
     driver_id: str
@@ -50,6 +75,7 @@ class Trip:
     stats: dict[Behavior, BehaviorStat] = field(default_factory=dict)
 
     response: CarResponse = field(default_factory=CarResponse)
+    camera: CameraView | None = None  # from the latest tick; None if it carried no model frame
     emergency_alert_sent: bool = False
 
     @property

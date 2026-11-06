@@ -61,7 +61,8 @@ export type Behavior =
   | "looking_behind"   // gleda iza sebe
   | "turning_around"   // okreće se telom
   | "hands_off_wheel"  // ruke van volana
-  | "drowsy";          // pospan
+  | "drowsy"           // pospan
+  | "eyes_off_road";   // pogled van puta
 
 export type SafetyLevel = "safe" | "caution" | "warning" | "high_risk" | "critical" | "emergency";
 export type DashboardLight = "green" | "green_yellow" | "yellow" | "red";
@@ -85,10 +86,28 @@ export interface CarResponse {
   dashboard_light: DashboardLight;
   vibrate_seat: boolean;
   sound: SoundLevel;
-  message: string; // na engleskom, jedna poruka po nivou
+  message: string; // na engleskom, jedna poruka po nivou (plus poruka za alarm modela, sekcija 7)
 }
 
-/** Stanje vožnje uživo. Stiže posle svakog ticka sa kamere (~1 u sekundi). */
+/** Jedna kategorija onako kako je model kamere vidi u ovom trenutku. */
+export interface CameraCategory {
+  p: number | null;     // verovatnoća da se dešava sada, 0..1
+  active: boolean;      // odluka samog modela da je ponašanje uključeno
+  run_s: number | null; // koliko neprekidno traje (s)
+  r: number | null;     // doprinos te kategorije riziku modela
+}
+
+/** Trenutni pogled modela kamere. Samo za prikaz, jer je reakcija kola već u `response`. */
+export interface CameraView {
+  risk: number | null;                 // trenutni rizik modela, 0..1 (risk.final)
+  alert: "green" | "yellow" | "red" | null;
+  rules_triggered: string[];           // tvrda pravila modela, npr. "microsleep", "long_distraction"
+  /** Ključevi su imena kategorija modela ("phone_use", "eyes_off_road"...), a ne `Behavior`. */
+  categories: Record<string, CameraCategory>;
+  groups: Record<string, number | null>; // rizik po kanalu: "visual", "manual", "fatigue"
+}
+
+/** Stanje vožnje uživo. Stiže posle svakog ticka sa kamere (~2 u sekundi). */
 export interface TripState {
   trip_id: string;
   driver_id: string;
@@ -98,6 +117,8 @@ export interface TripState {
   /** Ponašanja koja se trenutno vide → koliko sekundi traju. Prazno = vozač je fokusiran. */
   active_behaviors: Partial<Record<Behavior, number>>;
   response: CarResponse;
+  /** null ako tick nije stigao od modela (npr. simulator šalje samo labele). */
+  camera: CameraView | null;
   emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10)
 }
 
@@ -188,6 +209,7 @@ Odgovor `201`, `TripState`:
     "sound": "none",
     "message": "All good - you're driving safely."
   },
+  "camera": null,
   "emergency_alert_sent": false
 }
 ```
@@ -241,6 +263,22 @@ Nije potreban u aplikaciji vozača.
 
 ### `POST /telemetry`: NIJE za aplikaciju
 Ovo zovu modeli za kameru preko `notebooks/safety_client.py`. Aplikacija ga ne koristi.
+Model šalje svoj zapis frejma neizmenjen (bez `perception`), a backend preslikava njegove aktivne
+kategorije na `Behavior` (`phone_use` → `looking_at_phone`...) i prosleđuje `camera` aplikaciji.
+
+Primer: ovo aplikacija dobija u `camera` kad tick stigne od modela:
+```json
+"camera": {
+  "risk": 0.819,
+  "alert": "red",
+  "rules_triggered": ["long_distraction", "phone_sustained"],
+  "categories": {
+    "phone_use":     { "p": 0.715, "active": true, "run_s": 3.2, "r": 0.534 },
+    "eyes_off_road": { "p": 0.905, "active": true, "run_s": 3.4, "r": 0.767 }
+  },
+  "groups": { "visual": 0.767, "manual": 0.374, "fatigue": 0.0 }
+}
+```
 
 ## 6. WebSocket `ws://<IP>:8000/api/v1/ws`
 
@@ -248,7 +286,7 @@ Svaka poruka sa servera je JSON `LiveMessage`: `{"type": ..., "data": ...}`.
 
 | `type` | Kada stiže | `data` |
 |---|---|---|
-| `state` | posle svakog ticka sa kamere (~1/s), i **odmah po povezivanju** ako vožnja traje | `TripState` |
+| `state` | posle svakog ticka sa kamere (~2/s, simulator 1/s), i **odmah po povezivanju** ako vožnja traje | `TripState` |
 | `trip_started` | počela je vožnja | `TripState` |
 | `emergency` | score je pao ispod 10, jednom po vožnji, odmah posle `state` iz istog ticka | `TripState` |
 | `trip_ended` | vožnja je završena | `TripSummary` |
@@ -293,11 +331,12 @@ upozorenje, nego prikazuje ono što piše u `response`.
 |---|---|
 | `response.dashboard_light` | velika lampica / pozadina. Predlog boja: `green` #22C55E, `green_yellow` #A3E635, `yellow` #FACC15, `red` #EF4444 |
 | `score` | veliki broj 0–100 (ili prsten / gauge) |
-| `response.vibrate_seat` | simulira vibraciju sedišta. Za svaku `state` poruku gde je `true`, kratko zavibrira telefon (`Vibration` / `expo-haptics`). Poruke stižu ~1/s, pa to daje ritmičnu vibraciju koja prestaje čim polje postane `false` |
+| `response.vibrate_seat` | simulira vibraciju sedišta. Za svaku `state` poruku gde je `true`, kratko zavibrira telefon (`Vibration` / `expo-haptics`). Poruke stižu ~2/s, pa to daje ritmičnu vibraciju koja prestaje čim polje postane `false` |
 | `response.sound` | `low` je tihi signal, `high` glasan. Pušta se kratak zvuk po poruci, isto kao vibracija (`expo-audio` / `expo-av`) |
 | `response.message` | tekst ispod lampice. Ako aplikacija nije na engleskom, napravi svoj tekst po `level` |
 | `active_behaviors` | ikonice ili čipovi trenutnih ponašanja sa trajanjem u sekundama |
 | `level` | naziv nivoa (tabela ispod) |
+| `camera` | opciono, "šta kamera vidi": trake `p` po kategoriji, `risk` modela, `rules_triggered`. Može biti `null` i može imati nepoznate kategorije (prikaži sirovo ime). **Ne pokreći alarm na osnovu `camera.alert`**, to je već uračunato u `response` |
 
 Nivoi (informativno, logika je na backendu):
 
@@ -310,6 +349,10 @@ Nivoi (informativno, logika je na backendu):
 | `critical` | 10–35 | crveno | vibracija + glasan zvuk odmah |
 | `emergency` | < 10 | crveno | isto + događaj `emergency` |
 
+**Alarm modela:** kad model kamere javi crveno (`camera.alert == "red"`, npr. mikrospavanje ili dug
+pogled van puta), kola **odmah** vibriraju i glasno pište na bilo kom nivou, ali samo dok se kreću.
+Svetlo i dalje prati score. Ako je nivo `safe`, poruka je `"Danger detected - eyes on the road now."`.
+
 Nazivi ponašanja za prikaz:
 
 | `Behavior` | Srpski | English |
@@ -319,6 +362,7 @@ Nazivi ponašanja za prikaz:
 | `turning_around` | Okreće se | Turning around |
 | `hands_off_wheel` | Ruke van volana | Hands off the wheel |
 | `drowsy` | Pospanost | Drowsiness |
+| `eyes_off_road` | Pogled van puta | Eyes off the road |
 
 **Uzbuna (`emergency`):** prikaži preko celog ekrana (crveno, glasan zvuk). Backend trenutno **ne
 šalje pravi SMS**, samo loguje. Predlog, još nije dogovoreno: aplikacija ponudi slanje SMS-a kontaktu
@@ -344,7 +388,9 @@ Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početa
 2. Poveži aplikaciju na taj IP.
 3. U drugom terminalu: `python notebooks/safety_client.py` (sa `--interval 0.3` ide brže).
    Simulator sam pokrene vožnju, prođe kroz sve nivoe od zelenog do uzbune i završi vožnju.
-   Aplikacija sve to dobija preko WebSocket-a.
+   Aplikacija sve to dobija preko WebSocket-a. Simulator šalje samo labele, pa je `camera` tada `null`.
+4. Sa pravim podacima modela: `python notebooks/safety_client.py --replay frames.jsonl`
+   (`--speedup 2` ide duplo brže, `--speed-kmh 90` menja brzinu). Tada `camera` stiže popunjen.
 
 Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventualno pokrenula
 (pravilo jedne aktivne vožnje).
