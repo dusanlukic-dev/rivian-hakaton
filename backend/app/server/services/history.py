@@ -18,7 +18,7 @@ from app.domain.enums import Behavior, DangerLevel, SafetyLevel, TripStatus
 from app.domain.levels import level_for
 from app.domain.tips import TIPS
 from app.schemas.auth import User
-from app.schemas.report import DangerMoment, TripReport, TripSection
+from app.schemas.report import DangerMoment, ModelReport, TripReport, TripSection
 from app.schemas.trip import BehaviorSummary, TripSummary
 from app.server.services.auth import AuthService
 from app.server.services.storage import TripStore
@@ -74,6 +74,7 @@ async def report(
         section_s=row["section_s"] or 2.0,
         sections=stored,
         moments=build_moments(stored),
+        model=ModelReport.model_validate(row["model_report"]) if row.get("model_report") else None,
     )
 
 

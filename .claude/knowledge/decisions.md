@@ -103,13 +103,30 @@ it's the car's own network. 2026-11-06.
 1 s rows of D20. If every tick (~2/s) is ever needed, set `sample_window_s = 0.5`. The `trips` row also gets a running summary every ~10 s,
 so a crash mid-trip still leaves a usable summary, and the next start closes such trips. 2026-11-06.
 
+**D25: The trip-level model report lives in the backend; the CV pipeline only does per-frame math.** The pipeline used to build
+`summary.json` / `events.jsonl` itself (`RiskEngine.summary`, `_category_event`, alert episodes). That code moved to
+`backend/app/services/model_report.py` and runs on the frame stream of `POST /telemetry` (stored in `trips.model_report`, returned as
+`TripReport.model`), so live trips, history and offline runs use one implementation. Alternatives: keep it in the pipeline and upload a
+summary at the end (lost if the pipeline crashes, and it doesn't know the speed), or recompute from `trip_samples` (1 s rows lose the
+model's on/off transitions). The module is stdlib-only, so the pipeline's dev mode imports it to print the same report locally. Checked
+against the old pipeline on 62 recorded runs: identical episodes and alert episodes; summary numbers equal up to rounding. Standing
+time (< 5 km/h) is excluded, like every other statistic. `peak_p` is the raw `p` (the app's `camera` view has no `p_hat`). 2026-11-06.
+
+**D26: `risk_pipeline.py --mode dev|prod`.** dev = window with a reduced overlay (`notebooks/dev_overlay.py`: alert + risk, rules,
+5 categories, 4 signals, 30 s risk line; ROIs behind the R key) and a full `frames.jsonl`. prod = headless, no overlay import, sends a
+slim frame record (only the `ModelFrame` fields) ~2/s plus every alert change, and JPEG video ~8/s, from two background threads with
+small drop-oldest queues, so a slow backend never stalls the camera. File sources run at recording speed in prod (sleep when ahead,
+skip frames when behind), so tick time and clip time stay aligned with the backend's clock. 2026-11-06.
+
 **D27: The backend is split into a coordinator (in the car) and a server (storage/report); the model is its own process.**
 Requested by the user (2026-11-06 evening). The coordinator owns everything live: the phone WS, the camera stream, the model link,
 risk + score + car response, a 5 min video cache, and 2 s section summaries. The server owns Postgres + S3, accounts, history and
 the report. They talk only over HTTP (`/internal/trips/{id}/sync`, `GET /auth/me`); in one process via `httpx.ASGITransport`, split
 via `SERVER_URL`, so separating them is configuration, not code. The demo keeps one process on :8000 so the phone keeps one address.
 Alternatives: two processes now (two ports through the firewall and hotspot, and the app would need two addresses) or a direct
-in-process call (no real boundary). Supersedes the in-process `TripRecorder` that wrote to Postgres from the live process. 2026-11-06.
+in-process call (no real boundary). Supersedes the in-process `TripRecorder` that wrote to Postgres from the live process; D25's
+model report moved with it into the coordinator (the module itself stays at `app/services/model_report.py`, which the CV dev mode
+imports). Both camera paths stay: `risk_pipeline.py --mode prod` → `/telemetry`, or camera → coordinator → model worker. 2026-11-06.
 
 **D28: The model worker dials into the coordinator over a WebSocket (`/api/v1/model/ws`), one frame in flight, newest frame wins.**
 Dialing in needs no new port or firewall rule (port 8000 is already open, which matters for a GPU laptop or a container), and
@@ -133,9 +150,11 @@ coordinators ever need a shared cache. 2026-11-06.
 
 **D31: The CV team's `RiskEngine` is copied into the coordinator, not imported, and a test keeps the copy identical.** The user
 asked to extract the final-score logic without editing the CV code. The coordinator must not depend on numpy/OpenCV or on
-`notebooks/` at runtime, so `coordinator/services/risk_engine.py` is a verbatim copy with plain Python instead of numpy (same
-arithmetic order). `tests/test_risk_engine.py` replays 5 × 4000 random evidence steps through both and requires equal records,
-events and summaries. The worker imports the CV detectors (`FeatureExtractor` etc.) straight from `risk_pipeline.py`. 2026-11-06.
+`notebooks/` at runtime, so `coordinator/services/risk_engine.py` is a verbatim copy of the per-frame engine (after D26 it has
+no trip statistics and no numpy). `tests/test_risk_engine.py` replays 5 × 4000 random evidence steps through both and requires
+equal records. The whole-trip statistics are D25's `app/services/model_report.py`, which the coordinator now feeds with every tick
+(model worker detections and `/telemetry` frames alike) and ships to the server with each section. The worker imports the CV
+detectors (`FeatureExtractor` etc.) straight from `risk_pipeline.py`. 2026-11-06.
 
 **D32: The drive chart on the phone uses `react-native-svg` (native rebuild), not plain Views.** A line + gradient area + shaded
 sections + nodes + dashed connectors is natural in SVG and impractical with Views. Expo SDK 58 pins `react-native-svg` 15.16.0;

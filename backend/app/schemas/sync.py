@@ -6,6 +6,7 @@ It is idempotent, so the coordinator can simply resend a batch after a timeout o
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -41,6 +42,8 @@ class RunningSummary(BaseModel):
     emergency_alert_sent: bool
     behaviors: list[BehaviorTotal]
     ended_at: datetime | None = None
+    # The camera model's own trip report (app/services/model_report.py) when it changed; null = keep the stored one.
+    model_report: dict[str, Any] | None = None
 
 
 class TripSync(BaseModel):

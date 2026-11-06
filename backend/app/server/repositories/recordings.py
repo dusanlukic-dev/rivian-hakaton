@@ -1,6 +1,7 @@
 """Trip tables (Postgres; SQLite in tests).
 
-    trips          one row per trip: who and when, then the running summary (with every section and at the end)
+    trips          one row per trip: who and when, then the running summary (with every section and at the end),
+                   including the camera model's own trip report (JSON, app/services/model_report.py)
     trip_sections  one row per section (2 s) the coordinator posted: score, speed, behaviors, the model's
                    numbers, danger, and the S3 key of the riskiest frame's image for dangerous sections
 
@@ -41,6 +42,8 @@ class TripRow(Base):
     level: Mapped[str | None] = mapped_column(String(16))
     emergency_alert_sent: Mapped[bool | None]
     behaviors: Mapped[list | None] = mapped_column(JsonType)  # [{behavior, occurrences, total_seconds}]
+    # The camera model's own trip report (services/model_report.py), null if no model frames came.
+    model_report: Mapped[dict | None] = mapped_column(JsonType)
 
 
 class SectionRow(Base):
@@ -96,8 +99,9 @@ class RecordingRepository:
                 await conn.execute(self._insert_ignore(SectionRow), sections)
             if summary:
                 values = {**summary, "updated_at": datetime.now(timezone.utc)}
-                if values.get("ended_at") is None:
-                    values.pop("ended_at", None)  # never reopen an ended trip
+                for key in ("ended_at", "model_report"):  # never reopen a trip or drop the model's report
+                    if values.get(key) is None:
+                        values.pop(key, None)
                 await conn.execute(update(TripRow).where(TripRow.id == trip["id"]).values(**values))
 
     async def close_interrupted(self, keep: Collection[str] = ()) -> int:

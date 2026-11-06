@@ -109,7 +109,7 @@
     },
     "eyes_closed": {
       "weight": 1.00, "base": 0.00, "T_crit_s": 0.9, "k": 7.0, "decay": 6.0,
-      "on": 0.60, "off": 0.40, "event_merge_gap_s": 0.1,
+      "on": 0.60, "off": 0.40,
       "membership": {"fatigue": 1.0}
     }
   },
@@ -139,8 +139,14 @@
     "out_dir": "logs",
     "frame_log_hz": 5.0,
     "flush_every_s": 1.0,
-    "event_min_s": 0.5,
-    "event_merge_gap_s": 0.5,
-    "summary_power_p": 2.0
+    "_report_help": "Trip summary, behavior episodes and alert episodes are computed by the backend from the frame stream: backend/app/services/model_report.py (ModelReportConfig). Offline: cd backend && python -m app.services.model_report <frames.jsonl>"
+  },
+
+  "backend": {
+    "url": "http://127.0.0.1:8000/api/v1",
+    "send_hz": 2.0,
+    "video_fps": 8.0,
+    "send_video": true,
+    "_help": "--mode prod (and dev with --backend) sends the frame record ~send_hz times a second plus on every alert change, and JPEG video for the risky-moment clips."
   }
 }

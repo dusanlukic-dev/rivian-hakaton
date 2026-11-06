@@ -55,12 +55,21 @@ Blendshape survey over 2129 face frames (every 10th frame of 28 clips):
 - Evidence now needs a hand **seen off the wheel**. "Not detected" maps to `no_hands_detected_p` (low), and "one on, other unseen"
   to `hands.one_on_other_unseen_p`.
 
-## Display / debugging
+## Modes, display and what moved to the backend (2026-11-06)
 
-`--show` window = video (ROIs, driver face box + head-direction arrow, ignored faces in grey, hands green/orange, YOLO boxes) plus a
-panel with every variable: per category p / p_hat / ON / run / D / h / r, groups, raw→smoothed→floor→final risk, rules + VATS,
-head pose vs baseline, eye blendshapes, PERCLOS, hands, phone components, and a 30 s timeline. `--save-video`, `--verbose` and
-`--log-all` give the same data offline.
+- `--mode dev` (default): window = video (driver face box, orange when eyes_off_road is ON, head arrow, hand dots green/orange,
+  YOLO phone box, alert-coloured border; ROIs only with the **R** key) + a reduced panel from `notebooks/dev_overlay.py`: alert +
+  risk bar, fired rules, 5 categories (bar = `p_hat`, tick = `on` threshold, `ON n.ns`), 4 signals (head vs road, eyes, hands,
+  phone) and a 30 s risk line. Everything else (p, D, h, r, groups, PERCLOS, baseline) is in `frames.jsonl` and `--verbose`.
+  The end-of-run report is printed by importing `backend/app/services/model_report.py` (stdlib only; works from the CV Python).
+- `--mode prod`: headless, streams to the backend (see the bridge section). `--start-trip demo` starts/ends a trip without the phone.
+- **The trip summary and the behaviour / alert episodes are no longer computed here.** `RiskEngine` only does per-frame math
+  (verified identical to the old engine on 18 020 recorded steps). `summary.json` / `events.jsonl` are gone; a run writes
+  `frames.jsonl` + `run.json`. Report for an old run: `cd backend && python -m app.services.model_report <frames.jsonl>`.
+- Their tuning moved too: `logging.event_min_s`, `event_merge_gap_s`, `summary_power_p` and the eyes_closed merge gap are now
+  `ModelReportConfig` in the backend.
+- Speed on this laptop: ~105–120 ms per processed frame (every 3rd of 30 fps = 100 ms budget), so prod on a file drops a few
+  frames to keep real time (149 of 200 in a 20 s test).
 
 ## Whole-dataset check (2026-11-06, all 56 clips, after the fixes)
 
@@ -81,14 +90,20 @@ head pose vs baseline, eye blendshapes, PERCLOS, hands, phone components, and a 
   `eating_drinking` ignored. Its 0–100 score stays the main one; the model's red alert only forces vibration + sound.
 - So **never rename or add a category** in `risk_config.json` without the backend: `backend/tests/test_camera_mapping.py` fails on an
   unknown one. The keys `hands`, `phone`, `head_roi` etc. are outside `categories`, so they're safe.
-- `risk_pipeline.py` doesn't call `send_frame` live yet. `safety_client.py --replay logs/<run>/frames.jsonl` replays a recorded run.
+- `risk_pipeline.py --mode prod` calls it live through `BackendSink`: a slim record (only what `ModelFrame` reads) ~2/s
+  (`backend.send_hz`) plus on every alert change, JPEG video ~8/s, tick timestamp = capture time. Without an active trip the backend
+  answers 409 and the record is dropped (counted as "no trip/unreachable" in the status line).
+- `safety_client.py --replay logs/<run>/frames.jsonl` still replays a recorded run.
 
 ## Extraction into the coordinator + the model worker (2026-11-06 evening)
 
-- `RiskEngine` (smoothing, durations, groups, rules, alert, trip summary) is **copied** into
-  `backend/app/coordinator/services/risk_engine.py`, numpy replaced by plain Python with the same arithmetic order.
-  `backend/tests/test_risk_engine.py` imports the original from `notebooks/risk_pipeline.py` and requires identical records,
-  events and summaries over 5 × 4000 random steps. If the CV team changes `RiskEngine`, port it and the test tells you.
+- `RiskEngine` (per-frame math only since commit 76d38e7) is **copied** into `backend/app/coordinator/services/risk_engine.py`.
+  `backend/tests/test_risk_engine.py` imports the original from `notebooks/risk_pipeline.py` and requires identical records over
+  5 × 4000 random steps. If the CV team changes `RiskEngine`, port it and the test tells you. The whole-trip report
+  (`app/services/model_report.py`) is fed by the coordinator with every tick, whichever path the frames took.
+- Two live paths now: **(a)** `risk_pipeline.py --mode prod` computes the frame record itself and posts it to `/telemetry` (below);
+  **(b)** `tools/camera_stream.py` → coordinator → `model/worker.py` (detectors only) → coordinator's `RiskEngine`. Don't run both
+  for the same trip.
 - `model/worker.py` runs the body of `risk_pipeline.run()` per frame on frames the coordinator sends: `FacePerception`,
   `HandPerception`, `ObjectPerception` (if `models/yolo11s_640.onnx` exists), `FeatureExtractor` → `evidence` back. The schedule
   (`face_every_n`, `hands_every_n`, `objects_every_n`, `max_result_age_s`) is kept; the coordinator decides which frames go
@@ -96,6 +111,6 @@ head pose vs baseline, eye blendshapes, PERCLOS, hands, phone components, and a 
 - MediaPipe VIDEO mode needs strictly increasing timestamps across trips, so the worker keeps a base offset instead of
   restarting at 0; `FeatureExtractor` (head-pose calibration, PERCLOS, phone memory) is recreated on every `reset` (new trip).
 - **Not run with the real models on this laptop** (no `notebooks/models/`, no dataset drive). The fake mode is verified end to end.
-- **`notebooks/setup_models.bat` and `.sh` in commit 6985249 contain unresolved merge-conflict markers** (`<<<<<<< HEAD` ...
-  `>>>>>>> 0c36827`), so they fail as committed. The HEAD side exports `yolo11s_640` (what `risk_config.json` uses), the other side
-  `yolo11n_320`. Left for the CV team to resolve (their file).
+- **`notebooks/setup_models.bat` still contains unresolved merge-conflict markers** (`<<<<<<< HEAD` ... `>>>>>>> 0c36827`, from
+  commit 6985249; the `.sh` was fixed in f82aaf1), so it fails as committed. The HEAD side exports `yolo11s_640` (what
+  `risk_config.json` uses), the other side `yolo11n_320`. Left for the CV team to resolve (their file).

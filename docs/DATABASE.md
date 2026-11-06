@@ -53,6 +53,7 @@ Brisanje vožnje briše njene sekcije (`ON DELETE CASCADE`). Brisanje naloga ost
 | `emergency_contact` (JSONB), `speed_scenario`, `section_s` | kontakt te vožnje, mock scenario brzine, dužina sekcije (2) |
 | `duration_s`, `final_score`, `average_score`, `min_score`, `level`, `emergency_alert_sent` | **rezime vožnje**, isti brojevi kao `TripSummary`, obnavlja se sa svakom sekcijom |
 | `behaviors` (JSONB) | `[{behavior, occurrences, total_seconds}]`. Saveti se dodaju pri čitanju |
+| `model_report` (JSONB) | izveštaj modela kamere za celu vožnju (`ModelReport` u `docs/API.md`): rizik, vreme po boji alarma, pravila, epizode po kategoriji i epizode alarma. Računa ga `services/model_report.py` iz frejmova modela. `NULL` bez frejmova modela |
 
 ### `trip_sections`: 2 s vožnje
 Rezime koji koordinator pravi na svake 2 s (`SECTION_S`) od svih tickova u tom periodu (detekcije modela
@@ -84,7 +85,8 @@ i slikom najrizičnije sekcije (`build_moments` u `server/services/history.py`).
 | trip summary | `GET /trips/{id}/summary`, istorija `GET /trips` | `trips` |
 | **grafik vožnje** (score kroz vreme, opasni delovi, šta je viđeno) | `GET /trips/{id}/report` → `sections` | `trip_sections` |
 | opasni momenti sa slikama | `GET /trips/{id}/report` → `moments[].image_url` | `trip_sections` + S3 |
-| **sve za jednu vožnju odjednom** | `GET /trips/{id}/report` → `{trip, user, section_s, sections, moments}` | sve gore |
+| izveštaj modela kamere (epizode, alarmi, pravila) | `GET /trips/{id}/report` → `model` | `trips.model_report` |
+| **sve za jednu vožnju odjednom** | `GET /trips/{id}/report` → `{trip, user, section_s, sections, moments, model}` | sve gore |
 | samo nove sekcije aktivne vožnje | `GET /trips/{id}/sections?after_seq=N` | `trip_sections` |
 
 Backend ne crta grafike. Šalje sekcije jedne vožnje, a aplikacija od njih crta liniju score-a, senči opasne
@@ -98,7 +100,7 @@ Sve upise radi server kad primi paket od koordinatora (`POST /internal/trips/{id
 |---|---|
 | registracija, login | red u `users` / `user_sessions` (odmah) |
 | start vožnje | red u `trips` (sa `user_id` ako je vozač prijavljen), stiže u prvom paketu |
-| na svake 2 s vožnje | red u `trip_sections` (+ slika u S3 za opasne), i rezime u `trips` |
+| na svake 2 s vožnje | red u `trip_sections` (+ slika u S3 za opasne), i rezime u `trips` (sa izveštajem modela) |
 | kraj vožnje | poslednja sekcija, konačan rezime i `ended_at` u `trips` |
 | start koordinatora posle pada | otvorene vožnje dobijaju `ended_at` = poslednji upis rezimea |
 

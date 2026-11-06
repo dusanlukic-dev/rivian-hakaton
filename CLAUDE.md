@@ -19,6 +19,7 @@ slike** (privatnost).
 | `model/` | **model worker**: svoj proces i okruženje (kasnije Docker), prima frejmove od koordinatora i vraća detekcije. Koristi kod CV tima bez izmena |
 | `tools/camera_stream.py` | kamera za demo: snimak, test slika ili web kamera → koordinator |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
+| `notebooks/risk_pipeline.py` | CV pipeline: `--mode dev` (video + metrike) ili `--mode prod` (šalje frejmove backendu preko `/telemetry`). Uputstvo: `notebooks/pokretanje.txt` |
 | `notebooks/safety_client.py` | stari most modeli → backend, plus simulator cele vožnje (i dalje radi) |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
@@ -118,6 +119,11 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   detektuje. Sekcije zamenjuju uzorke po sekundi i momente sa klipovima; video momenta je planiran.
 - (2026-11-06) `RiskEngine` CV tima je **izdvojen** u koordinator bez izmene matematike (test ga poredi sa
   originalom). `notebooks/risk_pipeline.py` se ne dira; CV tim ga čisti kasnije.
+- (2026-11-06) **Izveštaj modela za celu vožnju računa backend**, ne pipeline: `app/services/model_report.py`
+  (vreme po boji alarma, pravila, epizode ponašanja i alarma), u `GET /trips/{id}/report` kao `model`. Posle podele
+  ga hrani koordinator svakim tickom (frejmovi sa `/telemetry` ili detekcije model worker-a) i šalje serveru uz svaku
+  sekciju. Pipeline radi samo matematiku po frejmu i ima dva moda: `--mode dev` (video sa sažetim metrikama, lokalni
+  log) i `--mode prod` (bez prikaza, šalje backendu). Modul ostaje na toj putanji jer ga dev mod uvozi.
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
@@ -129,9 +135,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 3. **Produkcija:** podela na koordinator (u kolima) i server (izveštaji) je urađena u kodu
    (docs/ARCHITECTURE.md). Otvoreno: reverse proxy da telefon i u odvojenom režimu ima jednu adresu,
    pristup slikama (potpisani URL-ovi umesto javnog bucketa), koliko dugo se čuvaju, više kola (`car_id`).
-4. **Model → backend uživo:** rešeno drugačije: `model/worker.py` uvozi detektore CV tima i radi uživo
-   preko koordinatora. Ostaje: da li CV tim prebacuje `RiskEngine` iz `risk_pipeline.py` (sada je kopija u
-   koordinatoru) i popravlja merge konflikte u `notebooks/setup_models.*`.
+4. ~~**Model → backend uživo**~~ rešeno na dva načina: `risk_pipeline.py --mode prod` šalje frejmove i video
+   backendu, a `model/worker.py` (detektori CV tima) radi preko koordinatora. Ostaje: koji put ide na demo,
+   na pravom autu proveriti da li CPU stiže ~10 obrađenih frejmova/s (na ovom laptopu ~110 ms po frejmu), i
+   merge konflikti u `notebooks/setup_models.bat`.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 

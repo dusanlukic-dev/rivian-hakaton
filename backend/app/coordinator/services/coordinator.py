@@ -6,6 +6,7 @@
     simulator ──POST /telemetry──────────────────────────────────────────────────────┤
                                                                                      ▼
                                 speed (mock / phone) ──► on_tick: score + car response (scoring.py, alerts.py)
+                                                           ├─► ModelReportBuilder: the model's whole-trip report
                                                            ├─► WS `state` (~2/s) / `emergency` ──► phone, dashboard
                                                            └─► SectionRecorder (2 s) ──► closed section
                                                                  ├─► image of the riskiest frame (VideoCache)
@@ -33,6 +34,7 @@ from app.coordinator.services.live import LiveHub, get_live_hub
 from app.coordinator.services.model_link import Detection, Frame, ModelLink
 from app.coordinator.services.outbox import ServerOutbox
 from app.coordinator.services.risk_engine import RiskEngine, load_risk_config
+from app.coordinator.services.scoring import DEFAULT_CONFIG as SCORING
 from app.coordinator.services.sections import ClosedSection, SectionRecorder
 from app.coordinator.services.server_client import ServerClient
 from app.coordinator.services.speed import SpeedService, get_speed_service
@@ -47,13 +49,14 @@ from app.schemas.camera import ModelFrame
 from app.schemas.report import SectionIn, TripSection
 from app.schemas.sync import BehaviorTotal, RunningSummary, TripMeta
 from app.schemas.trip import TelemetryTick, TripCreate, TripState, TripSummary
+from app.services.model_report import ModelReportBuilder
 
 logger = logging.getLogger(__name__)
 
 IMAGE_MAX_GAP_S = 1.5  # nearest cached frame to the riskiest tick, if the exact frame isn't cached
 
 
-def running_summary(trip: Trip) -> RunningSummary:
+def running_summary(trip: Trip, model: ModelReportBuilder | None = None) -> RunningSummary:
     stats = sorted(trip.stats.items(), key=lambda item: (-item[1].total_seconds, item[0]))
     return RunningSummary(
         duration_s=round(trip.elapsed_s, 1),
@@ -67,6 +70,7 @@ def running_summary(trip: Trip) -> RunningSummary:
             for b, s in stats
         ],
         ended_at=trip.ended_at,
+        model_report=model.snapshot() if model is not None and not model.empty else None,
     )
 
 
@@ -133,6 +137,8 @@ class Coordinator:
         self._risk_config = risk_config
         self._risk_error: str | None = None
         self._engines: dict[str, RiskEngine] = {}
+        # The camera model's whole-trip report (episodes, alert time, rules), built live from every tick's camera view
+        self._model_reports: dict[str, ModelReportBuilder] = {}
         self._trip_wall0: dict[str, float] = {}
         self._last_state_at = float("-inf")
         self._last_signature: tuple | None = None
@@ -190,6 +196,7 @@ class Coordinator:
         self.sections.start(trip)
         if self._risk_config is not None:
             self._engines[trip.id] = RiskEngine(self._risk_config)
+        self._model_reports[trip.id] = ModelReportBuilder()
         contact = trip.emergency_contact
         self.outbox.trip(TripMeta(
             trip_id=trip.id,
@@ -218,7 +225,10 @@ class Coordinator:
         if closed is not None:
             await self._emit_section(trip, closed)
         self.sections.forget(trip.id)
-        self.outbox.summary(trip.id, running_summary(trip), ended=True)
+        model = self._model_reports.pop(trip.id, None)
+        if model is not None:
+            model.finish()  # closes the episodes still open
+        self.outbox.summary(trip.id, running_summary(trip, model), ended=True)
         self.speed.end_trip(trip.id)
         self._engines.pop(trip.id, None)
         self._trip_wall0.pop(trip.id, None)
@@ -248,6 +258,10 @@ class Coordinator:
             trip, tick.timestamp, reading, score_before,
             wall=frame_wall if frame_wall is not None else now, frame_id=frame_id, emergency=emergency,
         )
+        model = self._model_reports.get(trip.id)
+        if model is not None:
+            t, dt = self.sections.timing(trip.id)
+            model.add(t, dt, trip.camera, moving=reading.speed_kmh >= SCORING.stationary_speed_kmh)
         state = trip_service.to_state(trip)
         signature = _signature(state)
         due = now - self._last_state_at >= self.cfg.live_state_interval_s
@@ -269,7 +283,9 @@ class Coordinator:
             fields["image_t"] = closed.peak_t
         await self.hub.broadcast(LiveEvent.SECTION, TripSection(**fields, has_image=image is not None, image_url=None))
         self.outbox.section(trip.id, SectionIn(**fields, image_jpeg=image))
-        self.outbox.summary(trip.id, running_summary(trip), ended=trip.ended_at is not None)
+        # The running summary, with the model's trip report (small: capped episode lists), goes along every section.
+        model = self._model_reports.get(trip.id)
+        self.outbox.summary(trip.id, running_summary(trip, model), ended=trip.ended_at is not None)
 
     async def _section_image(self, closed: ClosedSection) -> bytes | None:
         jpeg = None
@@ -315,7 +331,7 @@ class Coordinator:
         if engine is None:
             return  # no risk config: logged at start
         t = detection.wall - self._trip_wall0.get(trip.id, detection.wall)
-        record, _events = engine.step(t, detection.evidence)
+        record = engine.step(t, detection.evidence)
         frame = ModelFrame.model_validate({**record, "frame": detection.frame_id})
         tick = TelemetryTick(timestamp=self._local_time(detection.wall), frame=frame)
         await self.on_tick(trip, tick, frame_wall=detection.wall, frame_id=detection.frame_id, throttle=True)

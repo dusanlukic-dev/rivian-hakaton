@@ -2,50 +2,63 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, accounts + trip report (Claude, for Matija Vujić).
+> Last updated: 2026-11-06, coordinator/server split + model worker + drive chart + phone fixes (Claude, for Matija Radović).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 68 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips. **Accounts** (`/auth/register`, `/login`, `/me`; Bearer token, optional) and **`GET /trips/{id}/report`** = summary + user + raw per-second samples + moments with images, all from Postgres (history and summary survive restarts). Schema and review: `docs/DATABASE.md`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
-| Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
-| Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
-| **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
-| **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
+| Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 89 tests. Speed is mocked by the coordinator (phone GPS opt-in) |
+| Camera + model | ✅ `tools/camera_stream.py` (test pattern / clip / webcam → coordinator) + `model/worker.py` (own venv; CV detectors imported unchanged; `--fake` = scripted detections, verified end to end with Postgres + RustFS). Real-model mode written, **not run here** (no `notebooks/models/` or dataset on this laptop): `model/README.md` |
+| Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. Two live paths now: their `--mode prod` → `/telemetry`, or camera → coordinator → `model/worker.py` |
+| Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
+| **Mobile app** | ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section` (typecheck/lint ✅, **not yet seen on the phone**: USB kept dropping). Phone fixes verified on the A54: stuck test flash, app-specific settings pages, permission re-check |
+| **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary + **drive chart**, QR "connect phone", simulator panel (`?sim`). **`/trip/:id`** = any stored trip's summary + chart (headless-Chrome screenshot ✅). Build + lint OK |
 | Brand / copy | app name only in `config/brand.json` (both apps). Mobile UI copy in `frontend/mobile/src/config/strings.ts` |
-| Tooling | ✅ SDK, adb, `android` CLI, JDK 17 toolchain, Ninja swap, Python 3.13 venv, A54 authorized |
+| Tooling | ✅ SDK, adb, `android` CLI, JDK 17 toolchain, Ninja swap, Python 3.13 venv, A54 authorized, **Docker Desktop** (Postgres + RustFS via `backend/docker-compose.yml`) |
 
 ## How to see it
 
 ```bash
-cd backend && powershell -File scripts/services.ps1 start     # Postgres :5433 + RustFS :9000 (portable, no Docker; `install` once)
-cd backend && .venv/Scripts/python.exe run.py                 # backend :8000
-cd frontend/mobile && npm start                               # Metro; app already installed on the A54 (dev build)
+cd backend && docker compose up -d                            # Postgres :5433 + RustFS :9000 (no Docker: powershell -File scripts/services.ps1 start)
+cd backend && .venv/Scripts/python.exe run.py                 # coordinator + server :8000
+backend/.venv/Scripts/python.exe tools/camera_stream.py       # camera: test pattern 10 fps (--video clip.mp4, --webcam "name")
+backend/.venv/Scripts/python.exe model/worker.py --fake       # model worker with scripted detections (real one: model/README.md)
+curl -s http://127.0.0.1:8000/api/v1/coordinator/status       # camera fps, model, video cache, delivery to the server
+cd frontend/mobile && npm start                               # Metro; app already installed on the A54 (dev build with react-native-svg)
 adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8081 tcp:8081
-cd frontend/dashboard && npm run dev                          # http://localhost:5173 (?sim for the simulator panel)
-backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # or tools/sim.py for exact states
+cd frontend/dashboard && npm run dev                          # http://localhost:5173 (?sim for the simulator panel, /trip/<id> for a report)
+backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # instead of camera + model; or tools/sim.py for exact states
 ```
+**Right now (end of session 5):** backend, camera stream and fake worker run in their own minimized windows, Postgres + RustFS in
+Docker, Metro on 8081. A trip started from the phone gets the scripted detections (close the two windows to stop that).
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
+0. **See the new screens on the A54** (USB dropped during session 5): start a trip with camera + fake worker running, watch the
+   "last minute" strip, end it, open the summary: chart, picture boxes, tap a moment. Also check the Settings fixes once more.
+1. **Run the real model worker** (`model/README.md`): own venv, `notebooks/models/` (setup_models), a dataset clip through
+   `tools/camera_stream.py --video`. Compare with `risk_pipeline.py --mode prod` on the same clip; pick the demo path.
+2. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
    ("standing: no penalty" below 5 km/h), optionally the model's `camera.risk` / `alert` colour. Display only, `response` still drives alerts.
-2. **Login + trip report** (API.md §3–§5, §7 "Izveštaj"; re-copy §4 types: `TripCreate.driver_id` is now optional, new `User`,
-   `AuthOut`, `RegisterIn`, `LoginIn`, `UserUpdate`, `TripReport`). Login/register screen → store the token, send `Authorization: Bearer`
+3. **Login** + the rest of the report (the drive chart is done; API.md §3–§5; types already re-copied: `TripCreate.driver_id` is now optional, new `User`,
+   `AuthOut`, `RegisterIn`, `LoginIn`, `UserUpdate`, `TripReport`, and `ModelReport` / `ModelEpisode` / `ModelAlertEpisode` for the
+   new `report.model`, e.g. a "what the camera saw" section: time per alert colour, phone/eyes-off-road episodes on the chart). Login/register screen → store the token, send `Authorization: Bearer`
    on every REST call, on `401` drop it. The Profile screen syncs with `GET/PATCH /auth/me` (username = driverId, display_name = name,
-   emergency_contact). Report screen = one `GET /trips/{id}/report`: charts from the raw `samples` (score/speed over `t`), "worst
-   moments" with `thumbnail_url` + `video_url` (expo-video). History `GET /trips` with the token = my trips. Hide the report on `503`.
-3. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
+   emergency_contact). Report: the chart + moments exist; add `report.model` ("what the camera saw"). History `GET /trips` with the
+   token = my trips.
+4. **Video of the whole moment** instead of one image (planned by the user): `VideoCache.frames_between` + `encode_mp4`, clip per
+   moment to S3, `video_url` on the moment.
+5. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
    the socket alive with the screen off, that the full-screen intent wakes the A54 on `emergency`, and the alarm-channel sound in vibrate mode.
    Log the results in `android-alerting.md` → To verify.
-4. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
-5. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
-6. **Team alignment:** proposals in `contract-notes.md`: dashboard sim panel posting `/telemetry`, SMS on emergency. Phone GPS speed now
+6. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
+7. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
+8. **Team alignment:** proposals in `contract-notes.md`: dashboard sim panel posting `/telemetry`, SMS on emergency. Phone GPS speed now
    exists as an **opt-in** backend feature (`GET /speed` → `phone_enabled`, then `POST /speed` ~1/s); the app may implement it behind that flag.
-7. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level.
-8. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+9. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level.
+10. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
 
 ## In progress
 
@@ -53,20 +66,32 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 ## Known issues / risks
 
-- **Notification permission isn't granted yet** on the A54. Background warnings and emergency notifications fail (logged as
-  `[notify] … POST_NOTIFICATIONS`). Fix: Settings → Phone setup → Notifications → Allow, or start a trip with the in-app Start button (it asks).
+- **A54 USB link is flaky** (session 5): `adb reverse` emptied by itself, then the device went `offline`/missing while Windows still
+  showed "ADB Interface". Replug / re-allow USB debugging, then re-apply `adb reverse`. All permissions are granted on the phone now.
+- **"undefined" error after swiping the app away:** not reproduced (logcat clean; with a trip running the process survives via the
+  foreground service, without one Android kills it at once). Fixed the likely sources (keep-awake / links / headless handler rejected
+  without an Activity). If it comes back, note *where* it prints (Metro terminal or phone).
+- **DND row** in Phone setup always shows "Open": no installed library can read `isNotificationPolicyAccessGranted` (needs a tiny
+  native module). The other three rows refresh on return from Android settings.
+- **With camera + fake worker running, every trip gets scripted detections** (phone at 14–20 s of each minute, etc.). Close their
+  windows (or don't start them) when testing something else.
+- `notebooks/setup_models.bat` still has unresolved merge-conflict markers (CV team's file; `.sh` was fixed).
 - The dev-client gear button overlaps the top-right status pill. It's dev builds only.
 - Web dashboard audio needs one click per page load ("Enable sound"), a browser rule. Its main chunk is 642 KB (Vite warning, harmless).
 - `node.exe` is blocked inbound on Public networks (Metro over Wi-Fi / LAN dashboard). USB + `adb reverse` works. Fix: `networking.md`.
 - **Windows long paths:** the SDK CMake Ninja was swapped to 1.13.2 (D18). **Android Studio's setup may reinstall CMake**, so re-check
   `cmake/*/bin/ninja.exe --version` afterwards (loop in `environment.md`).
 - In-app sounds use media volume (expo-audio has no alarm usage). Only the background notification uses the alarm stream (silent-mode safe).
-- Only the live state of the active trip is in backend memory. History, summaries, reports and logins are in Postgres (restart-safe).
-  A trip interrupted by a backend crash keeps its summary up to the last ~10 s write and is closed on the next start.
-- Schema changes have no migrations yet: after pulling a change to `backend/app/repositories/*.py`, run `backend/scripts/services.ps1 reset`
-  (the backend log names the missing columns otherwise).
+- Only the live state of the active trip is in the coordinator's memory. History, summaries, sections, reports and logins are on the
+  server (Postgres, restart-safe). A trip interrupted by a coordinator crash keeps its summary up to the last section and is closed on
+  the next start. While the server is down, sections wait in the coordinator (history/report answer 503).
+- **Schema changed (session 5):** `trip_sections` is new and `trips` has `section_s` + `model_report`; `trip_samples` / `risk_events` are
+  no longer used. An existing dev Postgres needs a reset (`docker compose down -v` / `services.ps1 reset`; the Docker one on this
+  laptop was fresh). No migrations yet: after pulling a change to `backend/app/server/repositories/*.py`, reset (the log names missing columns).
+- **Restarting the backend on Windows:** kill the whole process tree; an orphaned uvicorn worker keeps serving old code on :8000
+  (`backend/CLAUDE.md` → Zamke). The stale v0.1.0 backend that was running before session 5 was exactly that.
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
-  (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
+  (Docker or `backend/scripts/services.ps1`). Without them the live path still works, the server answers 503 (log says so).
 - CV: hand detection is weak in the dark night clips (`05_23_62_0101xx`, no hands seen in ~37% of frames). Sunglasses make the eye
   blendshapes meaningless. YOLO sees a phone in only ~30% of frames of a texting clip (hence the decaying memory). Details: `cv-pipeline.md`.
 
@@ -74,9 +99,13 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 ## Open questions
 
 - **CV:** the model has no `looking_behind` / `turning_around` output (only the simulator sends them). Will the CV team add one?
-  `risk_pipeline.py` doesn't call `SafetyClient.send_frame` yet, so the models don't run live against the backend.
-- **Production storage:** split the in-car compute server from a report server the driver can reach away from the car? Clip access
-  (signed URLs instead of the demo's public bucket) and retention are still open.
+  The models now run live against the backend (`risk_pipeline.py --mode prod`). Open: is the in-car CPU fast enough
+  (~110 ms per processed frame on this laptop vs a 100 ms budget at every 3rd frame)?
+- **Production split:** coordinator (car) and server (reports) are separated in code (`docs/ARCHITECTURE.md`). Open: a reverse proxy
+  so the phone keeps one address when they run apart, image access (signed URLs instead of the demo's public bucket), retention,
+  several cars (`car_id`).
+- **Which camera path for the demo:** `risk_pipeline.py --mode prod` (pipeline scores itself, posts `/telemetry`) or camera →
+  coordinator → `model/worker.py` (user's architecture: the coordinator scores)? Both work; don't run both on one trip.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
 - **Accounts:** login is optional for now (trips without a token still work). Should the app require it? No password reset/change yet.
@@ -84,9 +113,10 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 ## Manual steps only a human can do
 
 - [x] Authorize USB debugging on the A54 · [x] Allow Python through the firewall
-- [ ] On the A54: Settings tab → Phone setup → **Notifications: Allow**, **Unrestricted battery: Allow**, **DND: Open → allow**
+- [x] On the A54: Settings tab → Phone setup → Notifications, Unrestricted battery, DND (all allowed, session 5)
+- [ ] Replug the A54 USB cable (the link kept dropping at the end of session 5)
 - [ ] Android Studio install: when asked for the SDK location, choose the existing `%LOCALAPPDATA%\Android\Sdk`
-- [x] ~~Docker Desktop + WSL~~ not needed: Postgres + RustFS run portable from `%LOCALAPPDATA%\safety-reviewer` (`backend/scripts/services.ps1`)
+- [x] Docker Desktop installed (session 5): Postgres + RustFS run from `backend/docker-compose.yml` on this laptop
 - [ ] Optional (admin): remove the `node.exe` Block firewall rules (`networking.md`)
 
 ## Session log
@@ -124,3 +154,21 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - 2026-11-06, session 3 (CV pipeline, for ttcpavle): `risk_pipeline.py` fixed to watch the driver (right side), head_roi face crop,
   calibration clamped to a measured prior, look-down/eyes-closed retune, yolo11s/640, hands evidence, unique log folders, `--show` diagnostic
   panel + `--save-video/--verbose/--log-all/--pick-roi/--calibrate`. Category names unchanged (backend mapping still valid). Run on all 56 clips.
+- 2026-11-06, session 4 (CV pipeline for deployment, for ttcpavle): the trip-level part of the pipeline (summary, behaviour episodes,
+  alert episodes) moved to `backend/app/services/model_report.py`, fed by the `/telemetry` frame stream, stored in `trips.model_report`
+  and returned as `TripReport.model` (API.md, DATABASE.md updated). `risk_pipeline.py` keeps per-frame math only and got `--mode dev`
+  (reduced overlay in `dev_overlay.py`) and `--mode prod` (headless `BackendSink`, real-time pacing for files, `--start-trip`).
+  Verified: 76 backend tests; new engine identical to the old on 18 020 steps; backend report equals the old summary/events on 62
+  recorded runs (up to rounding); dev run on a clip + screenshot; prod run on a clip against a live backend (SQLite) → report with
+  `model` (35 ticks, 0 errors).
+- 2026-11-06, session 5 (Claude, for Matija Radović): **phone fixes** verified on the A54: test alerts no longer overwrite the live trip
+  (double "Test warning" kept the red flash on forever; now a Stop toggle, and live flashing stops after 3 s without `state`); Phone
+  setup opens this app's own Android pages (was: all-apps lists; our code, not the dev build); permissions re-check on return + pull to
+  refresh + a refresh button after Open; keep-awake/links/headless handler can't reject without an Activity. **Backend split** into
+  coordinator + server (`docs/ARCHITECTURE.md`): camera WS, model worker link, extracted `RiskEngine` (identical to the CV original),
+  5 min diskcache video cache, 2 s sections with danger + image → WS `section` + server via an outbox; server stores `trip_sections` +
+  images, report = sections + moments (+ the CV team's `model` report, merged from their parallel commit and now fed by the coordinator).
+  `model/worker.py` (+ `--fake`), `tools/camera_stream.py`, `model/Dockerfile` (untested). Mobile + dashboard drive charts, dashboard
+  `/trip/:id`. Postgres + RustFS moved to Docker here. Verified: 89 backend tests, live run camera → fake worker → coordinator →
+  Postgres/RustFS (66 sections, 9 moments with images), dashboard chart screenshot, mobile + dashboard typecheck/lint/build.
+  Not verified: the new mobile screens on the phone (USB dropped), the real model worker (no models here).

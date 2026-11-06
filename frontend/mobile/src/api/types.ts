@@ -245,6 +245,57 @@ export interface SpeedStatus {
   phone_age_s: number | null;  // sekundi od poslednjeg očitavanja telefona
 }
 
+// ---------- Izveštaj modela kamere (deo izveštaja) ----------
+/** Statistika jedne kategorije modela kroz celu vožnju (samo dok se kola kreću). */
+export interface ModelCategoryStats {
+  active_s: number;       // sekundi koliko ju je model držao aktivnom
+  episodes: number;       // epizode od bar 0.5 s
+  max_episode_s: number;
+}
+
+/** Jedna epizoda ponašanja kako je model vidi: kategorija aktivna, kratki prekidi spojeni. */
+export interface ModelEpisode {
+  category: string;       // ime kategorije modela ("phone_use", "eyes_off_road"...)
+  t_start: number;        // sekunde od prvog ticka (ista osa kao TripSection.t_start)
+  t_end: number;
+  duration_s: number;
+  peak_r: number;         // najveći doprinos riziku modela
+  peak_p: number;         // najveće sirovo p među primljenim frejmovima (~2/s)
+  open: boolean;          // još traje (aktivna vožnja) ili je trajala do kraja vožnje
+}
+
+/** Od trenutka kad alarm modela napusti zeleno do povratka na zeleno. */
+export interface ModelAlertEpisode {
+  t_start: number;
+  t_end: number;
+  duration_s: number;
+  max_level: CameraAlert;
+  peak_risk: number;
+  causes: string[];       // kategorije koje su nosile rizik i "rule:<ime>" za tvrda pravila
+  open: boolean;
+}
+
+/** Pogled modela kamere na celu vožnju. Računa ga backend iz toka frejmova modela.
+ *  Samo za prikaz i analizu: score vozača je `TripSummary`. Vreme stajanja (< 5 km/h) se ne broji. */
+export interface ModelReport {
+  frames: number;                 // primljenih frejmova modela
+  duration_s: number;             // sekundi frejmova modela dok se kola kreću
+  stationary_s: number;           // sekundi frejmova dok kola stoje (ne ulaze u statistiku)
+  risk_mean: number;              // vremenski prosek rizika modela 0..1
+  risk_rms: number;               // koren srednjeg kvadrata: duži rizični periodi teže više
+  risk_p95: number;
+  risk_max: number;
+  model_score: number;            // 100 * (1 - risk_rms): ocena vožnje po modelu, 0..100
+  time_in_alert_s: Record<CameraAlert, number>;
+  time_in_alert_frac: Record<CameraAlert, number>;
+  alerts: Record<string, number>;          // koliko puta je alarm porastao na "yellow" / "red"
+  alerts_per_hour: Record<string, number>;
+  rules: Record<string, number>;           // tvrdo pravilo → koliko puta je opalilo
+  categories: Record<string, ModelCategoryStats>; // ključevi su imena kategorija modela
+  episodes: ModelEpisode[];                // od najstarije, najviše 200
+  alert_episodes: ModelAlertEpisode[];     // od najstarije, najviše 200
+}
+
 // ---------- Izveštaj jedne vožnje ----------
 /** Sve o jednoj vožnji u jednom odgovoru (GET /trips/{id}/report). */
 export interface TripReport {
@@ -255,6 +306,8 @@ export interface TripReport {
   sections: TripSection[];
   /** Opasni momenti sa slikom najrizičnijeg frejma, od najstarijeg. */
   moments: DangerMoment[];
+  /** Izveštaj modela kamere za celu vožnju; null ako nijedan frejm modela nije stigao (npr. simulator). */
+  model: ModelReport | null;
 }
 
 // ---------- WebSocket ----------

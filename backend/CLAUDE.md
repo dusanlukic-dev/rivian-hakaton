@@ -59,6 +59,12 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 - `repositories/`: `database.py` (engine, šema, SQLite redom), `users.py`, `recordings.py` (`trips`,
   `trip_sections`), `media.py` (S3, `MemoryMediaStore` za testove). Struktura: `../docs/DATABASE.md`.
 
+**Zajedničko:** `app/services/model_report.py` (CV tim): izveštaj modela kamere za celu vožnju (rizik, vreme po
+boji alarma, epizode ponašanja i alarma) iz toka frejmova. Koordinator ga hrani svakim tickom i šalje snimak uz
+svaku sekciju (`RunningSummary.model_report` → `trips.model_report` → `TripReport.model`). Samo standardna
+biblioteka, pa ga uvozi i dev mode pipeline-a; offline: `python -m app.services.model_report frames.jsonl`.
+**Ne pomeraj ga** (dev mode ga uvozi po toj putanji).
+
 **Spajanje:** `app/main.py` pravi aplikaciju za ulogu `all` / `coordinator` / `server` (rute + lifespan).
 `app/coordinator/main.py` i `app/server/main.py` su odvojeni ulazi.
 
@@ -76,6 +82,10 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 | promeniš šta koordinator šalje serveru | `schemas/sync.py`, `coordinator/services/outbox.py`, `server/routes/internal.py`, `server/services/storage.py` |
 | dodaš kolonu u sekciju | `SectionBase` u `schemas/report.py`, `_close` u `sections.py`, `SectionRow` u `server/repositories/recordings.py`, `docs/API.md` §4, `docs/DATABASE.md`, pa prazna baza |
 | promeniš momente | `build_moments` u `server/services/history.py` |
+| podesiš izveštaj modela (min. epizoda, spajanje, uzroci alarma) | `ModelReportConfig` u `app/services/model_report.py` |
+| promeniš šta od frejma modela ide aplikaciji | `CameraView` u `domain/trip.py`, `to_view` u `coordinator/services/camera.py`, ulaz u `schemas/camera.py`, `docs/API.md` |
+| promeniš alarm modela | `evaluate_response` i `CAMERA_ALARM_MESSAGE` u `coordinator/services/alerts.py` |
+| dodaš ili promeniš scenario brzine | `SCENARIOS` / `RANDOM_POOL` u `coordinator/services/speed.py` (test proverava glatkoću i petlju) |
 | dodaš WebSocket događaj | `LiveEvent` u `domain/enums.py`, `hub.broadcast` u `Coordinator`, `LiveMessage` u `docs/API.md` |
 | promeniš adresu ili ključeve Postgresa / S3, token za `/internal` | `Settings` u `core/config.py`, `.env` (primer: `.env.example`) |
 | pravi SMS ili push | `coordinator/services/notifications.py` (sada stub) |
@@ -133,6 +143,8 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 - `trip.camera` se postavlja na svaki tick. Tick bez `frame` ga briše, da crveni alarm modela ne ostane zaglavljen.
 - Kategorija modela koja nije u `CATEGORY_TO_BEHAVIOR` ide aplikaciji, ali se ne boduje (jedan warning).
 - WebSocket se ne vidi u OpenAPI-ju ni na `/docs`, pa se dokumentuje ručno (`docs/API.md`, `docs/ARCHITECTURE.md`).
+- Izveštaj modela (`trips.model_report`) koristi `t`/`dt` po satu tickova (ista osa kao sekcije), ne `t`
+  modela. `peak_p` je najveće sirovo `p` među primljenim frejmovima, jer `p_hat` ne stiže do koordinatora.
 - Testovi: `tests/conftest.py` daje `client` sa svežim koordinatorom (`make_coordinator`: `FakeClock`, video keš
   u memoriji, risk config iz `notebooks/`, bez pozadinskog housekeeping-a) i serverom (`store`: SQLite u
   memoriji + `MemoryMediaStore`). `flush(client, coordinator)` čeka da outbox isporuči sve serveru. Restart se

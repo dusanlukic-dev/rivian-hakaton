@@ -184,6 +184,8 @@ class _TripSections:
     last_ts: datetime | None = None
     score: float = 100.0
     open: _Section | None = None
+    last_t: float = 0.0
+    last_dt: float = 0.0
 
 
 class SectionRecorder:
@@ -223,6 +225,7 @@ class SectionRecorder:
         if rec.last_ts is None or ts > rec.last_ts:
             rec.last_ts = ts
         t = max((ts - rec.t0).total_seconds(), 0.0)
+        rec.last_t, rec.last_dt = t, dt
 
         seq = int(t // self.section_s)
         closed = None
@@ -233,6 +236,11 @@ class SectionRecorder:
         rec.open.add(trip, t, dt, speed, score_before, emergency, wall, frame_id)
         rec.score = trip.score
         return closed
+
+    def timing(self, trip_id: str) -> tuple[float, float]:
+        """(t, dt) of the trip's latest tick: seconds since its first tick, and the gap to the previous one."""
+        rec = self._trips.get(trip_id)
+        return (rec.last_t, rec.last_dt) if rec is not None else (0.0, 0.0)
 
     def close(self, trip_id: str) -> ClosedSection | None:
         """Trip over: the open section closes as it is."""
