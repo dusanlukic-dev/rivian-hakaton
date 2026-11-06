@@ -1,36 +1,43 @@
-import { HugeiconsIcon } from '@hugeicons/react'
 import { cn } from '@/lib/utils'
 import { BEHAVIORS, behaviorMeta } from './carMeta'
 
 interface BehaviorTilesProps {
   /** `active_behaviors`: label → seconds. Driven by data, so labels the UI doesn't know still get a tile */
   active: Partial<Record<string, number>>
+  /** The car is sounding its loud alarm (`response.sound` "high"): lit tiles turn danger instead of caution */
+  alarm?: boolean
 }
 
 const formatSeconds = (s: number) => `${s < 10 ? s.toFixed(1) : Math.round(s)} s`
 
-const BehaviorTiles = ({ active }: BehaviorTilesProps) => {
+/** One tile per behaviour: the word, and the seconds it has lasted (Vigil: word and number, no icons) */
+const BehaviorTiles = ({ active, alarm = false }: BehaviorTilesProps) => {
   const unknown = Object.keys(active).filter((id) => !BEHAVIORS.some((b) => b.id === id))
   const tiles = [...BEHAVIORS, ...unknown.map(behaviorMeta)]
 
   return (
-    <section aria-label="Detected behaviours" className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
-      {tiles.map(({ id, label, icon }) => {
+    <section aria-label="Detected behaviours" className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-6">
+      {tiles.map(({ id, label }) => {
         const seconds = active[id]
         const lit = seconds !== undefined
         return (
           <div
             key={id}
             className={cn(
-              'flex flex-col items-center gap-2 rounded-lg p-4 text-center ring-1 transition-colors duration-300',
-              lit ? 'bg-lamp-yellow/15 text-foreground ring-lamp-yellow' : 'bg-card text-muted-foreground ring-foreground/10',
+              'flex min-h-28 flex-col justify-between gap-4 rounded-md border p-4 transition-colors duration-300',
+              !lit && 'bg-card',
+              lit && (alarm ? 'border-danger bg-danger-soft text-danger' : 'border-caution bg-caution-soft text-caution'),
             )}
           >
-            <HugeiconsIcon icon={icon} size={32} className={lit ? 'text-lamp-yellow' : 'opacity-40'} />
-            <span className="text-sm font-medium">{label}</span>
-            <span className={cn('font-mono text-xs tabular-nums', !lit && 'invisible')}>
-              {lit ? formatSeconds(seconds) : '0 s'}
-            </span>
+            <span className={cn('text-label uppercase', !lit && 'text-muted-foreground')}>{label}</span>
+            {lit ? (
+              <span className="text-h2">{formatSeconds(seconds)}</span>
+            ) : (
+              <span className="text-h2 text-track">
+                <span aria-hidden>--</span>
+                <span className="sr-only">not detected</span>
+              </span>
+            )}
           </div>
         )
       })}

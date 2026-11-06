@@ -18,22 +18,22 @@ const CarScreen = () => {
     <div className="min-h-dvh bg-background text-foreground">
       <CarHeader status={status} trip={trip} sound={sound} />
 
-      <main className="mx-auto grid w-full max-w-[1600px] gap-4 p-4 lg:grid-cols-[minmax(0,1fr)_24rem] lg:p-6">
-        <div className="flex min-w-0 flex-col gap-4">
+      <main className="mx-auto grid w-full max-w-[1600px] gap-6 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_24rem] lg:gap-8 lg:p-8">
+        <div className="flex min-w-0 flex-col gap-6">
           {summary && <TripSummaryCard summary={summary} onDismiss={dismissSummary} />}
           <StatusPanel trip={trip} stale={stale} />
-          <BehaviorTiles active={trip?.active_behaviors ?? {}} />
+          <BehaviorTiles active={trip?.active_behaviors ?? {}} alarm={alarm} />
           <CarIndicators response={trip?.response ?? null} soundOn={sound.on} />
-          {stale && <p className="text-sm text-muted-foreground">Connection lost: showing the last known state while reconnecting.</p>}
+          {stale && <p className="text-body-sm text-muted-foreground">Connection lost: showing the last known state while reconnecting.</p>}
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <aside className="flex flex-col gap-6">
           <ConnectPhoneCard />
           <SimulatorPanel tripId={trip?.trip_id ?? null} />
         </aside>
       </main>
 
-      {/* sound "high": red edge pulse at 1 Hz (≤ 2 Hz) */}
+      {/* sound "high": danger edge pulse at 1 Hz (≤ 2 Hz) */}
       {alarm && (
         <div
           aria-hidden

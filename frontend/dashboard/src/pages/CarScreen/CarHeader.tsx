@@ -1,9 +1,10 @@
-import { HugeiconsIcon } from '@hugeicons/react'
-import { SecurityCheckIcon, VolumeHighIcon, VolumeMute02Icon, VolumeOffIcon } from '@hugeicons/core-free-icons'
+import { useTheme } from 'next-themes'
 import type { TripState } from '@/api/types'
 import type { LiveStatus } from '@/hooks/useLive'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { lightColor } from './carMeta'
+import Wordmark from './Wordmark'
 
 export interface SoundControl {
   on: boolean
@@ -19,48 +20,78 @@ interface CarHeaderProps {
 }
 
 const STATUS: Record<LiveStatus, { label: string; dot: string }> = {
-  open: { label: 'Live', dot: 'bg-lamp-green' },
-  connecting: { label: 'Connecting…', dot: 'bg-lamp-yellow animate-pulse' },
-  reconnecting: { label: 'Reconnecting…', dot: 'bg-lamp-red animate-pulse' },
+  open: { label: 'Live', dot: 'bg-safe' },
+  connecting: { label: 'Connecting', dot: 'bg-caution' },
+  reconnecting: { label: 'Reconnecting', dot: 'bg-danger' },
   idle: { label: 'Offline', dot: 'bg-muted-foreground' },
+}
+
+/** Day / night: Vigil's light and dark themes (next-themes keeps the choice) */
+const ThemeSwitch = () => {
+  const { resolvedTheme, setTheme } = useTheme()
+  const options = [
+    { id: 'light', label: 'Day' },
+    { id: 'dark', label: 'Night' },
+  ]
+  return (
+    <div role="group" aria-label="Theme" className="flex h-12 items-center gap-1 rounded-md border p-1">
+      {options.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          aria-pressed={resolvedTheme === id}
+          onClick={() => setTheme(id)}
+          className={cn(
+            'h-full rounded-sm px-3 text-label uppercase transition-colors duration-300',
+            resolvedTheme === id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
 }
 
 const CarHeader = ({ status, trip, sound }: CarHeaderProps) => {
   const { label, dot } = STATUS[status]
   return (
-    <header className="flex flex-wrap items-center gap-x-6 gap-y-3 border-b px-4 py-3 lg:px-6">
-      <div className="flex items-center gap-3">
-        <div className="grid size-10 place-items-center rounded-lg bg-primary text-primary-foreground">
-          <HugeiconsIcon icon={SecurityCheckIcon} size={22} />
-        </div>
-        <div>
-          <h1 className="text-lg leading-tight font-bold">{__BRAND__.name}</h1>
-          {__BRAND__.tagline && <p className="text-xs text-muted-foreground">{__BRAND__.tagline}</p>}
-        </div>
+    <header className="flex flex-wrap items-center gap-x-8 gap-y-4 border-b px-4 py-4 sm:px-6 lg:px-8">
+      <div className="flex flex-col gap-1.5">
+        <Wordmark name={__BRAND__.name} lens={trip ? lightColor(trip.response.dashboard_light) : undefined} className="text-h2 leading-none" />
+        {__BRAND__.tagline && <p className="text-caption text-muted-foreground">{__BRAND__.tagline}</p>}
       </div>
 
-      <div className="ml-auto flex flex-wrap items-center gap-3 text-sm">
+      <div className="ml-auto flex flex-wrap items-center gap-x-6 gap-y-3">
         {trip ? (
-          <span className="text-muted-foreground">
-            Trip <code className="font-mono text-foreground" title={trip.trip_id}>{trip.trip_id.slice(0, 8)}</code>
-            {' · '}Driver <span className="text-foreground">{trip.driver_id}</span>
-          </span>
+          <dl className="flex items-baseline gap-5 text-body-sm">
+            <div className="flex items-baseline gap-2">
+              <dt className="text-label text-muted-foreground uppercase">Trip</dt>
+              <dd title={trip.trip_id}>{trip.trip_id.slice(0, 8)}</dd>
+            </div>
+            <div className="flex items-baseline gap-2">
+              <dt className="text-label text-muted-foreground uppercase">Driver</dt>
+              <dd>{trip.driver_id}</dd>
+            </div>
+          </dl>
         ) : (
-          <span className="text-muted-foreground">No active trip</span>
+          <span className="text-body-sm text-muted-foreground">No active trip</span>
         )}
 
-        <span className="flex items-center gap-2 rounded-full bg-muted px-3 py-1" role="status">
+        <span className="flex h-8 items-center gap-2 rounded-full border px-3 text-label uppercase" role="status">
           <span className={cn('size-2 rounded-full', dot)} />
           {label}
         </span>
+
+        <ThemeSwitch />
 
         <Button
           size="lg"
           variant={sound.on && !sound.blocked ? 'outline' : 'default'}
           onClick={sound.toggle}
           title={sound.on && !sound.blocked ? 'Mute this screen' : undefined}
+          className="h-12 px-5 text-body-sm"
         >
-          <HugeiconsIcon icon={!sound.on ? VolumeOffIcon : sound.blocked ? VolumeMute02Icon : VolumeHighIcon} />
           {!sound.on ? 'Enable sound' : sound.blocked ? 'Click to unlock sound' : 'Sound on'}
         </Button>
       </div>

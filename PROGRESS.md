@@ -64,7 +64,9 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
 
 ## In progress
 
-- (nothing)
+- **Dashboard restyle to the Vigil design system** (Claude, for Veljko, branch `redesign-ui`, not committed yet): first pass done
+  (D35). Waiting for the user's review; open: rename the app to Vigil in `config/brand.json` (both apps), keep or calm the 1 Hz alarm
+  pulse, then the same tokens in the mobile app.
 
 ## Known issues / risks
 
@@ -180,3 +182,8 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
   `TripMeta.owner_token` resolved by the server); video frames also expire on housekeeping. `setup_models.bat`/`.sh` resolved
   (+ `.gitattributes`: bat CRLF, sh LF). Docs: ARCHITECTURE (real vs debug paths, rolling-window cache, owner_token), API.md,
   root CLAUDE.md, D34. Verified: 92 backend tests (new ones 8× repeated), `setup_models.bat` downloads + package stop in cmd.
+- 2026-11-06, session 7 (Claude, for Veljko): **Vigil restyle**: web dashboard moved to the Vigil design system: tokens in `src/index.css` (both
+  themes, type scale, radii, focus ring), Noto Sans Mono, Day/Night switch, ScoreRing + lamp + alert in StatusPanel, word-and-number
+  tiles and indicators (no icons), Vigil chips, wordmark, chart and report in Vigil colours, shadcn button/card/input/badge/switch
+  adjusted. Verified: build + lint, headless screenshots of every state (idle, all levels, emergency, summary, simulator, /trip/:id)
+  in both themes with mocked WS + report data. D35.

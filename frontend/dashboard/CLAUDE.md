@@ -43,7 +43,7 @@ and Read the PNG. `--dump-dom` gives the rendered HTML instead.
 | `context/AuthContext/` (barrel, also `@/context`) | `AuthProvider`, `useAuth()`, `type AuthContextValue`; files `AuthContext.ts` (createContext), `AuthProvider.tsx`, `useAuth.ts` |
 | `hooks/` | `useDebounce` (default), `useVisibility` (default), `useLocalStorage` (default), `useLive` (named: backend WebSocket `/api/v1/ws`, never-give-up reconnect, `liveUrl()`) |
 | `api/` | `types.ts` = docs/API.md §4 verbatim (identical to mobile). `trips.ts`: `startTrip`, `endTrip`, `postTelemetry`, `localIsoTimestamp`, `httpStatus`, `errorMessage` |
-| `pages/CarScreen/` | `/` = the car screen. `useCarScreen.ts` (live state + sound reactions), `audio.ts` (clips + remembered sound choice), `carMeta.ts` (labels, icons, lamp colours), private children (StatusPanel, BehaviorTiles, SimulatorPanel…). `?sim` opens the simulator |
+| `pages/CarScreen/` | `/` = the car screen. `useCarScreen.ts` (live state + sound reactions), `audio.ts` (clips + remembered sound choice), `carMeta.ts` (labels, lamp colours as words and CSS variables), private children (StatusPanel, BehaviorTiles, SimulatorPanel, Chip, Wordmark…). Styled with the Vigil design system, see `../../.claude/rules/dashboard.md`. `?sim` opens the simulator |
 | `utils/api/client.ts` | default axios `api`; `API_BASE_URL`, `TOKEN_KEY='auth_token'`, `UNAUTHORIZED_EVENT='auth:unauthorized'` |
 | `utils/jwt.ts` | `decodeJwt`, `isJwtExpired`, `getJwtRoles` |
 | `utils/css/` | `_functions.scss` → `mapped($min, $max, $min-vw: 402px, $max-vw: 1440px)` (clamped fluid value); `_mediaqueries.scss` → `$phone`, `$tablet`, `$desktop`… |

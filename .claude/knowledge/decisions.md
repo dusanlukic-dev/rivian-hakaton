@@ -174,3 +174,13 @@ while a model worker is connected. Alternative (keep both as equal demo paths) d
 silently double-scored a trip when both ran. Follow-ups in the same pass: a phone login never blocks the car (stale-if-error token
 cache; an unchecked token travels as `TripMeta.owner_token` and the server resolves it), video frames also expire on housekeeping.
 Still open: outbox on disk and the phone's second address once the server really runs elsewhere. 2026-11-06.
+
+**D35: The web dashboard follows the Vigil design system** (the user's claude.ai design system "Vigil": `project/tokens.json`
++ README). Noto Sans Mono everywhere (`@fontsource-variable/noto-sans-mono`, bundled, so it works offline on the hotspot), linen/plum
+palette in a Day and a Night theme (header switch, Night by default), `safe` / `caution` / `danger` only for score and events, words
+and numbers instead of icons on the car screen, borders before shadows, ScoreRing (thin ring, score-xl number, state word). The four
+lamp lights of API.md §7 keep their meaning but take Vigil's colours (green → safe, green_yellow → 50 % safe + 50 % caution, yellow →
+caution, red → danger) instead of the suggested hex values. Vigil's own thresholds (80 / 60) are **not** used: the level still comes
+from the backend. Kept on purpose although Vigil says "no flashing": the 1 Hz alarm pulse (D14), until the team decides. The app
+name stays in `config/brand.json`; the wordmark shows Vigil's lens only when that name is "Vigil". Alternative (tokens only, keep
+the icons and the glowing lamp) dropped: Vigil's principles ask for text over icons and calm, flat states. 2026-11-06.

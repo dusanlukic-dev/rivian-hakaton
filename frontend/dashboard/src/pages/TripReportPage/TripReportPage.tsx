@@ -19,9 +19,9 @@ const TripReportPage = () => {
   }, [id])
 
   return (
-    <main className="mx-auto flex min-h-dvh max-w-4xl flex-col gap-4 p-6 text-foreground">
-      <Link to="/" className="text-sm text-muted-foreground hover:underline">← Car screen</Link>
-      {error && <p className="text-destructive">{error}</p>}
+    <main className="mx-auto flex min-h-dvh max-w-5xl flex-col gap-6 p-4 text-foreground sm:p-6 lg:p-8">
+      <Link to="/" className="self-start text-label text-muted-foreground uppercase hover:text-foreground">← Car screen</Link>
+      {error && <p className="rounded-md border border-danger bg-danger-soft px-4 py-3 text-body-sm text-danger">{error}</p>}
       {summary && <TripSummaryCard summary={summary} onDismiss={() => history.back()} />}
     </main>
   )

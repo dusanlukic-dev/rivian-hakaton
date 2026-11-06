@@ -3,8 +3,8 @@ import type { DangerLevel, DangerMoment, TripReport, TripSection } from '@/api/t
 import { getReport, httpStatus } from '@/api/trips'
 import { behaviorMeta, formatDuration, formatScore } from './carMeta'
 
-/** The backend decides the danger (docs/API.md §4 DangerLevel); these are only its colours */
-const DANGER_COLOR: Record<DangerLevel, string> = { none: '#737373', dangerous: '#F59E0B', critical: '#EF4444' }
+/** The backend decides the danger (docs/API.md §4 DangerLevel); these are only its Vigil colours (index.css) */
+const DANGER_COLOR: Record<DangerLevel, string> = { none: 'var(--muted-foreground)', dangerous: 'var(--caution)', critical: 'var(--danger)' }
 
 // Drawn in a fixed coordinate space and scaled with the card (viewBox), text included
 const W = 720
@@ -37,7 +37,9 @@ function layoutBoxes(moments: DangerMoment[], xOf: (t: number) => number): Box[]
   return boxes
 }
 
-/** Score over the trip, dangerous sections shaded, a node per dangerous moment, pictures above the critical ones */
+const AXIS = { fill: 'var(--muted-foreground)' }
+
+/** Score over the trip, dangerous sections as colour blocks, a dot per dangerous moment, pictures above the critical ones */
 export function DriveChart({ sections, moments, onSelect, selected }: {
   sections: TripSection[]
   moments: DangerMoment[]
@@ -58,34 +60,29 @@ export function DriveChart({ sections, moments, onSelect, selected }: {
   return (
     <svg viewBox={`0 0 ${W} ${height}`} className="h-auto w-full select-none" role="img" aria-label="Score over the drive">
       <defs>
-        <linearGradient id="drive-score" x1="0" y1={y(100)} x2="0" y2={y(0)} gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#22C55E" stopOpacity="0.35" />
-          <stop offset="0.45" stopColor="#FACC15" stopOpacity="0.22" />
-          <stop offset="1" stopColor="#EF4444" stopOpacity="0.3" />
-        </linearGradient>
         <clipPath id="drive-box">
-          <rect width={BOX_W} height={BOX_H} rx="8" />
+          <rect width={BOX_W} height={BOX_H} rx="6" />
         </clipPath>
       </defs>
       {sections.filter((s) => s.danger !== 'none').map((s) => (
         <rect key={s.section_id} x={x(s.t_start)} y={top} width={Math.max(x(s.t_end) - x(s.t_start), 1.5)} height={PLOT_H}
-          fill={DANGER_COLOR[s.danger]} opacity={s.danger === 'critical' ? 0.24 : 0.14} />
+          style={{ fill: DANGER_COLOR[s.danger] }} opacity={s.danger === 'critical' ? 0.2 : 0.14} />
       ))}
       {[100, 75, 50, 25, 0].map((v) => (
         <g key={v}>
-          <line x1={LEFT} x2={W - RIGHT} y1={y(v)} y2={y(v)} stroke="currentColor" strokeOpacity="0.1" />
-          <text x={LEFT - 8} y={y(v) + 4} fontSize="11" textAnchor="end" fill="currentColor" fillOpacity="0.5">{v}</text>
+          <line x1={LEFT} x2={W - RIGHT} y1={y(v)} y2={y(v)} style={{ stroke: 'var(--line)' }} />
+          <text x={LEFT - 8} y={y(v) + 4} fontSize="11" fontWeight="500" textAnchor="end" style={AXIS}>{v}</text>
         </g>
       ))}
-      <path d={area} fill="url(#drive-score)" />
-      <path d={line} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinejoin="round" />
+      <path d={area} style={{ fill: 'var(--brand-accent)' }} opacity="0.35" />
+      <path d={line} fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
       {boxes.map((b) => (
         <line key={`c${b.moment.moment_id}`} x1={b.center} y1={b.y + BOX_H} x2={x(b.moment.peak_t)} y2={y(b.moment.peak_score)}
-          stroke={DANGER_COLOR.critical} strokeWidth="1.5" strokeDasharray="4 3" />
+          style={{ stroke: DANGER_COLOR.critical }} strokeWidth="1.5" strokeDasharray="4 3" />
       ))}
       {moments.map((m) => (
         <circle key={m.moment_id} cx={x(m.peak_t)} cy={y(m.peak_score)} r={m.danger === 'critical' ? 7 : 5}
-          fill={DANGER_COLOR[m.danger]} stroke={selected?.moment_id === m.moment_id ? 'currentColor' : 'var(--background, #0a0a0a)'}
+          style={{ fill: DANGER_COLOR[m.danger], stroke: selected?.moment_id === m.moment_id ? 'var(--foreground)' : 'var(--card)' }}
           strokeWidth="2.5" className="cursor-pointer" onClick={() => onSelect(m)}>
           <title>{`${formatDuration(m.peak_t)}: ${Object.keys(m.behaviors).map((k) => behaviorMeta(k).label).join(', ') || 'camera alarm'}`}</title>
         </circle>
@@ -93,11 +90,11 @@ export function DriveChart({ sections, moments, onSelect, selected }: {
       {boxes.map((b) => (
         <g key={`b${b.moment.moment_id}`} transform={`translate(${b.x},${b.y})`} className="cursor-pointer" onClick={() => onSelect(b.moment)}>
           <image href={b.moment.image_url ?? undefined} width={BOX_W} height={BOX_H} preserveAspectRatio="xMidYMid slice" clipPath="url(#drive-box)" />
-          <rect width={BOX_W} height={BOX_H} rx="8" fill="none" stroke={DANGER_COLOR.critical} strokeWidth="2" />
+          <rect width={BOX_W} height={BOX_H} rx="6" fill="none" style={{ stroke: DANGER_COLOR.critical }} strokeWidth="2" />
         </g>
       ))}
-      <text x={LEFT} y={top + PLOT_H + 17} fontSize="11" fill="currentColor" fillOpacity="0.5">0:00</text>
-      <text x={W - RIGHT} y={top + PLOT_H + 17} fontSize="11" textAnchor="end" fill="currentColor" fillOpacity="0.5">{formatDuration(tMax)}</text>
+      <text x={LEFT} y={top + PLOT_H + 17} fontSize="11" fontWeight="500" style={AXIS}>0:00</text>
+      <text x={W - RIGHT} y={top + PLOT_H + 17} fontSize="11" fontWeight="500" textAnchor="end" style={AXIS}>{formatDuration(tMax)}</text>
     </svg>
   )
 }
@@ -105,16 +102,17 @@ export function DriveChart({ sections, moments, onSelect, selected }: {
 function MomentDetail({ moment }: { moment: DangerMoment }) {
   const behaviors = Object.entries(moment.behaviors)
   return (
-    <div className="flex flex-col gap-3 rounded-lg bg-muted/50 p-3 sm:flex-row">
+    <div className="flex flex-col gap-4 rounded-md bg-muted p-4 sm:flex-row">
       {moment.image_url && (
-        <img src={moment.image_url} alt="The camera at that moment" className="w-full rounded-md object-cover sm:w-56" />
+        <img src={moment.image_url} alt="The camera at that moment" className="w-full rounded-sm object-cover sm:w-56" />
       )}
-      <div className="flex min-w-0 flex-col gap-1">
-        <p className="font-semibold" style={{ color: DANGER_COLOR[moment.danger] }}>
-          {moment.danger === 'critical' ? 'Critical' : 'Dangerous'} · {formatDuration(moment.t_start)}–{formatDuration(moment.t_end)}
+      <div className="flex min-w-0 flex-col gap-2">
+        {/* Vigil: the state as a word, then the time after a gap, no separator */}
+        <p className="text-label whitespace-pre uppercase" style={{ color: DANGER_COLOR[moment.danger] }}>
+          {moment.danger === 'critical' ? 'Critical' : 'Dangerous'}{'  '}{formatDuration(moment.t_start)}–{formatDuration(moment.t_end)}
         </p>
-        <p>{behaviors.length ? behaviors.map(([k, s]) => `${behaviorMeta(k).label} ${(s ?? 0).toFixed(1)} s`).join(' · ') : 'Camera alarm'}</p>
-        <p className="text-muted-foreground">
+        <p className="text-body">{behaviors.length ? behaviors.map(([k, s]) => `${behaviorMeta(k).label} ${(s ?? 0).toFixed(1)} s`).join(' · ') : 'Camera alarm'}</p>
+        <p className="text-body-sm text-muted-foreground">
           −{moment.score_drop.toFixed(1)} points ({formatScore(moment.score_start)} → {formatScore(moment.score_min)})
           {' · '}{Math.round(moment.speed_avg_kmh)} km/h
           {moment.rules_triggered.length > 0 && ` · ${moment.rules_triggered.map((r) => r.replace(/_/g, ' ')).join(', ')}`}
@@ -141,10 +139,10 @@ export function DriveReport({ tripId }: { tripId: string }) {
   const critical = report.moments.filter((m) => m.danger === 'critical').length
   return (
     <section className="flex flex-col gap-3">
-      <div className="flex items-baseline gap-3">
-        <h3 className="font-semibold">Your drive</h3>
-        <span className="text-xs text-muted-foreground">
-          {report.moments.length} dangerous moment{report.moments.length === 1 ? '' : 's'}{critical ? `, ${critical} critical` : ''} · click a dot or a picture
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-h3">Your drive</h3>
+        <span className="text-caption text-muted-foreground">
+          {report.moments.length} dangerous moment{report.moments.length === 1 ? '' : 's'}{critical ? ` · ${critical} critical` : ''} · click a dot or a picture
         </span>
       </div>
       <DriveChart sections={report.sections} moments={report.moments} onSelect={setSelected} selected={selected} />

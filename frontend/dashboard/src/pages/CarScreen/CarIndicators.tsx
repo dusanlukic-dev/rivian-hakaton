@@ -1,8 +1,6 @@
-import type { ReactNode } from 'react'
-import { HugeiconsIcon, type IconSvgElement } from '@hugeicons/react'
-import { SeatSelectorIcon, VolumeHighIcon, VolumeLowIcon, VolumeOffIcon } from '@hugeicons/core-free-icons'
 import type { CarResponse, SoundLevel } from '@/api/types'
 import { cn } from '@/lib/utils'
+import Chip, { type ChipTone } from './Chip'
 
 interface CarIndicatorsProps {
   response: CarResponse | null
@@ -10,20 +8,38 @@ interface CarIndicatorsProps {
   soundOn: boolean
 }
 
-const SOUND: Record<SoundLevel, { value: string; icon: IconSvgElement }> = {
-  none: { value: 'None', icon: VolumeOffIcon },
-  low: { value: 'Low: chime', icon: VolumeLowIcon },
-  high: { value: 'High: alarm', icon: VolumeHighIcon },
+const SOUND: Record<SoundLevel, { value: string; chip: string; tone: ChipTone | null }> = {
+  none: { value: 'None', chip: 'Off', tone: null },
+  low: { value: 'Low: chime', chip: 'Low', tone: 'caution' },
+  high: { value: 'High: alarm', chip: 'High', tone: 'danger' },
 }
 
-const Indicator = ({ icon, title, value, active, children }: { icon: ReactNode; title: string; value: string; active: boolean; children?: ReactNode }) => (
-  <div className={cn('flex items-center gap-4 rounded-lg bg-card p-4 ring-1', active ? 'ring-lamp-yellow' : 'ring-foreground/10')}>
-    {icon}
-    <div className="flex min-w-0 flex-col">
-      <span className="text-xs tracking-widest text-muted-foreground uppercase">{title}</span>
-      <span className={cn('text-lg font-semibold', !active && 'text-muted-foreground')}>{value}</span>
-      {children}
+const LIT: Record<ChipTone, string> = {
+  neutral: '',
+  safe: 'border-safe bg-safe-soft text-safe',
+  caution: 'border-caution bg-caution-soft text-caution',
+  danger: 'border-danger bg-danger-soft text-danger',
+}
+
+interface IndicatorProps {
+  title: string
+  value: string
+  chip: string
+  /** null = idle */
+  tone: ChipTone | null
+  note?: string
+}
+
+const Indicator = ({ title, value, chip, tone, note }: IndicatorProps) => (
+  <div className={cn('flex items-center justify-between gap-4 rounded-md border bg-card p-5 transition-colors duration-300', tone && LIT[tone])}>
+    <div className="flex min-w-0 flex-col gap-1">
+      <span className={cn('text-label uppercase', !tone && 'text-muted-foreground')}>{title}</span>
+      <span className={cn('text-h3', !tone && 'text-muted-foreground')}>{value}</span>
+      {note && <span className="text-caption text-muted-foreground">{note}</span>}
     </div>
+    <Chip tone={tone ?? 'neutral'} className={cn(tone && 'bg-card')}>
+      {chip}
+    </Chip>
   </div>
 )
 
@@ -31,34 +47,23 @@ const Indicator = ({ icon, title, value, active, children }: { icon: ReactNode; 
 const CarIndicators = ({ response, soundOn }: CarIndicatorsProps) => {
   const vibrating = response?.vibrate_seat ?? false
   const level = response?.sound ?? 'none'
-  const sound = SOUND[level] ?? { value: level, icon: VolumeHighIcon }
+  const sound = SOUND[level] ?? { value: level, chip: level, tone: 'danger' }
 
   return (
-    <div className="grid gap-3 sm:grid-cols-2">
+    <div className="grid gap-4 sm:grid-cols-2">
       <Indicator
         title="Seat vibration"
         value={vibrating ? 'Vibrating' : 'Off'}
-        active={vibrating}
-        icon={
-          <div className="relative grid size-14 shrink-0 place-items-center rounded-full bg-muted">
-            {/* animate-ping: 1 cycle per second */}
-            {vibrating && <span className="absolute inset-0 animate-ping rounded-full bg-lamp-yellow/50" />}
-            <HugeiconsIcon icon={SeatSelectorIcon} size={28} className={cn('relative', vibrating && 'text-lamp-yellow')} />
-          </div>
-        }
+        chip={vibrating ? 'On' : 'Off'}
+        tone={vibrating ? (level === 'high' ? 'danger' : 'caution') : null}
       />
       <Indicator
         title="Sound"
         value={sound.value}
-        active={level !== 'none'}
-        icon={
-          <div className="grid size-14 shrink-0 place-items-center rounded-full bg-muted">
-            <HugeiconsIcon icon={sound.icon} size={28} className={cn(level === 'high' ? 'text-lamp-red' : level === 'low' && 'text-lamp-yellow')} />
-          </div>
-        }
-      >
-        {level !== 'none' && !soundOn && <span className="text-xs text-muted-foreground">Muted on this screen</span>}
-      </Indicator>
+        chip={sound.chip}
+        tone={sound.tone}
+        note={level !== 'none' && !soundOn ? 'Muted on this screen' : undefined}
+      />
     </div>
   )
 }
