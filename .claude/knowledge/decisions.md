@@ -174,3 +174,18 @@ while a model worker is connected. Alternative (keep both as equal demo paths) d
 silently double-scored a trip when both ran. Follow-ups in the same pass: a phone login never blocks the car (stale-if-error token
 cache; an unchecked token travels as `TripMeta.owner_token` and the server resolves it), video frames also expire on housekeeping.
 Still open: outbox on disk and the phone's second address once the server really runs elsewhere. 2026-11-06.
+
+**D35: The score is a live reading of the current situation, not a points balance.** User's request: "score is not gamification, it goes
+up and down depending on the current situation; speed is a scaling factor; at 0 km/h nothing warns". The old model (weight × seconds,
+onset hit, fragility, +3/min recovery after 30 s) only ever fell during a drive. Now: danger = worst behaviour (growing with its
+duration) + 30 % of the rest, or the CV risk engine's risk (minus its calm 0.1, ×0.8); × speed factor (0 below 5 km/h, 1 at 50, 1.6 at
+130) × night 1.25; score follows 100 × (1 − exposure) with τ 0.5 s down / 2.5 s up. Calibrated on the fake worker at fixed speeds and
+on the A54 (critical with the phone in town, back to safe ~6 s later). Reaction thresholds (≥ 5 s / ≥ 2 s) dropped: the level already
+encodes duration; vibration/sound only while something risky happens. Summaries headline `average_score` (moving time) and `level` is
+for it, because the live score at the end is ~100. Alternatives: keep the balance with faster recovery (still "never goes up" while
+driving), or show the model's risk directly (no speed, no labels from the simulator). 2026-11-07.
+
+**D36: The phone app requires an account.** Register/login screen first, token on every REST call (401 → back to login), logout in
+Profile, history = my trips. Trips from the app always belong to the account; the backend keeps accepting token-less trips for the
+simulator and the dashboard sim panel. Token in AsyncStorage, not expo-secure-store (would be a new native module = rebuild; fine for
+the demo). `run.py --mock` starts the mocked camera + fake model with the backend so a fresh phone needs nothing else. 2026-11-07.

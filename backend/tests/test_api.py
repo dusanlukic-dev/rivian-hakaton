@@ -64,10 +64,9 @@ def test_websocket_pushes_live_events(client):
         sections = [m["data"] for m in messages if m["type"] == "section"]
         assert len(sections) == 30
         assert [s["seq"] for s in sections] == list(range(30))
-        # Phone at 130 km/h: dangerous from the start (behavior while moving), critical once the loud alarm sounds.
+        # Phone at 130 km/h at night: the loud alarm sounds from the first second, so every section is critical.
         dangers = [s["danger"] for s in sections]
-        assert dangers[0] == "dangerous" and dangers[-1] == "critical"
-        assert set(dangers) == {"dangerous", "critical"} and dangers == sorted(dangers, key=["dangerous", "critical"].index)
+        assert set(dangers) == {"critical"}
         assert sections[-1]["behaviors"]["looking_at_phone"] > 0 and sections[-1]["image_url"] is None
         assert messages[-1]["data"]["final_score"] < 10
 
@@ -112,7 +111,7 @@ def test_model_frame_is_scored_and_forwarded(client):
     start_trip(client)
     with client.websocket_connect(f"{API}/ws") as ws:
         ws.receive_json()  # current state on connect
-        state = send_frame(client, DAY, 60, MODEL_FRAME)  # daytime city: 6 pts x 1.3 -> still safe
+        state = send_frame(client, DAY, 60, MODEL_FRAME)  # the model's red alert (risk 0.82) at 60 km/h
         pushed = ws.receive_json()
 
     assert pushed["data"] == state
@@ -128,11 +127,11 @@ def test_model_frame_is_scored_and_forwarded(client):
     assert camera["categories"]["phone_use"] == {"p": 0.715, "active": True, "run_s": 3.2, "r": 0.534}
     assert "perception" not in str(state)
 
-    # Still "safe" by score, but the model's red alert makes the car react right away.
-    assert state["level"] == "safe"
+    # The model's own risk counts in the live score, and its red alert makes the car react right away.
+    assert state["score"] < 35 and state["level"] in ("critical", "emergency")
+    assert state["emergency_alert_sent"] is False  # the emergency level must last 2 s first
     assert state["response"]["vibrate_seat"] is True
     assert state["response"]["sound"] == "high"
-    assert state["response"]["message"] == "Danger detected - eyes on the road now."
 
 
 def test_camera_alarm_is_silent_while_stationary(client):

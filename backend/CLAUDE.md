@@ -73,7 +73,7 @@ biblioteka, pa ga uvozi i dev mode pipeline-a; offline: `python -m app.services.
 
 | Hoćeš da... | Fajl |
 |---|---|
-| podesiš penale, brzinu, noć, oporavak | `ScoringConfig` u `coordinator/services/scoring.py` |
+| podesiš score (opasnost ponašanja, brzinu, noć, brzinu pada/oporavka, model) | `ScoringConfig` u `coordinator/services/scoring.py` |
 | promeniš opsege ili reakciju kola | `LEVEL_BANDS` u `domain/levels.py`, `POLICIES` u `coordinator/services/alerts.py` |
 | dodaš ponašanje | `Behavior` u `domain/enums.py`, `_default_weights` u `scoring.py`, `TIPS` u `domain/tips.py`, `BEHAVIORS` u `notebooks/safety_client.py`, `docs/API.md` |
 | preslikaš kategoriju modela na labelu | `CATEGORY_TO_BEHAVIOR` u `coordinator/services/camera.py` |
@@ -135,10 +135,10 @@ biblioteka, pa ga uvozi i dev mode pipeline-a; offline: `python -m app.services.
 - Slike aplikacija dobija preko `GET /api/v1/media/...` (port 8000, podržava `Range`), a ne direktno sa
   9000: Windows firewall i IP hotspota.
 - Svaki `Behavior` mora imati težinu i `TIPS` savet. Test `test_every_behavior_has_a_weight_and_a_tip` to proverava.
-- `timestamp` u ticku je lokalno vreme sa offsetom. Sat iz njega određuje noćne penale. Za detekcije modela
+- `timestamp` u ticku je lokalno vreme sa offsetom. Sat iz njega određuje noć (×1.25). Za detekcije modela
   koordinator pravi timestamp iz vremena kad je frejm stigao (`_local_time`). Razmak između tickova je
   ograničen na 5 s. Mock brzina i ose grafika (`t`) idu po satu tickova; video keš po satu servera (`time.monotonic`).
-- Ispod 5 km/h: nema penala, nema oporavka, nema upozorenja, ne ulazi u statistiku i sekcija nije opasna.
+- Ispod 5 km/h: nema opasnosti (score ide na 100), nema upozorenja, ne ulazi u statistiku i sekcija nije opasna.
 - Tick može imati `behaviors` (labele), `frame` (zapis modela) ili oba, a labele se spajaju.
   `ModelFrame` deklariše samo polja koja koristimo. NaN/inf iz modela postaju `null`.
 - `trip.camera` se postavlja na svaki tick. Tick bez `frame` ga briše, da crveni alarm modela ne ostane zaglavljen.

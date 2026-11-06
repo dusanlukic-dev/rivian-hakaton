@@ -113,7 +113,9 @@ def test_live_section_messages(client, clock):
     sections = [m["data"] for m in messages if m["type"] == "section"]
     assert [s["seq"] for s in sections] == [0, 1]  # ticks at t = 0..3.5 s; the last one closes with the trip
     assert all(s["trip_id"] == trip_id and s["image_url"] is None for s in sections)
-    assert sections[1]["danger"] == "dangerous" and sections[1]["behaviors"] == {"looking_at_phone": 2.0}
+    # Phone at 50 km/h: a soft warning first (dangerous), the loud alarm after ~2 s (critical).
+    assert sections[0]["danger"] == "dangerous" and sections[1]["danger"] == "critical"
+    assert sections[1]["behaviors"] == {"looking_at_phone": 2.0}
 
 
 def test_ticks_stopping_closes_the_section(client, clock, coordinator):
@@ -174,7 +176,7 @@ def test_dead_database(tmp_path, clock, speed):
     coordinator = make_coordinator(clock, speed)
     with app_client(store, coordinator, db) as client:
         trip_id = start_trip(client)["trip_id"]
-        assert Drive(client, clock).run(3, behaviors=PHONE)["level"] in ("safe", "caution", "warning")
+        assert Drive(client, clock).run(3, behaviors=PHONE)["score"] < 100  # the live score works without the database
         assert client.get(f"{API}/trips/{trip_id}/report").status_code == 503
 
 

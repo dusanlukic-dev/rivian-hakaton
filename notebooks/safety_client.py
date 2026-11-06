@@ -172,20 +172,21 @@ class SafetyClient:
             return json.load(response)
 
 
-# (seconds, speed_kmh, behaviors) - walks through every safety level.
+# (seconds, speed_kmh, behaviors) - walks through every safety level. The score is live: it falls while a behavior
+# lasts and comes back within a few clean seconds (backend app/coordinator/services/scoring.py).
 DEMO_DRIVE = [
     (10, 50, []),                                  # safe
-    (8, 50, ["hands_off_wheel"]),                  # -> caution
+    (8, 50, ["hands_off_wheel"]),                  # -> caution, then warning (soft tone) as it drags on
+    (10, 50, []),                                  # back to safe
+    (5, 50, ["looking_at_phone"]),                 # -> warning, high risk, critical (loud alarm)
     (10, 50, []),
-    (5, 50, ["looking_at_phone"]),                 # -> warning
-    (10, 50, []),
-    (2, 80, ["looking_behind", "turning_around"]), # -> high risk
+    (2, 80, ["looking_behind", "turning_around"]), # -> critical at 80 km/h
     (5, 80, []),
-    (2, 60, ["looking_at_phone"]),                 # -> critical
+    (2, 60, ["looking_at_phone"]),                 # -> high risk
     (5, 120, []),
-    (3, 130, ["drowsy"]),                          # -> emergency
-    (10, 0, ["looking_at_phone"]),                 # stopped at a light: no penalty
-    (40, 60, []),
+    (3, 130, ["drowsy"]),                          # -> emergency (the contact alert after 2 s of it)
+    (10, 0, ["looking_at_phone"]),                 # stopped at a light: no danger, no warnings
+    (10, 60, []),
 ]
 
 

@@ -66,13 +66,20 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 
 - Labele: `looking_at_phone`, `looking_behind`, `turning_around`, `hands_off_wheel`, `drowsy`,
   `eyes_off_road`.
-- Penal = težina × sekunde, plus jednokratni udar kad ponašanje počne. Penal se množi sa:
-  - brzinom (< 5 km/h nema penala, autoput 1.7×)
-  - noći (22–06h, 1.5×)
-  - "krhkošću" (što je score niži, lakše pada)
-- Oporavak: posle 30 s čiste vožnje, +3 poena/min.
+- **Score je trenutno stanje, ne bodovni saldo** (`coordinator/services/scoring.py`): koliko je vožnja bezbedna
+  SADA. Pada dok traje rizično ponašanje i vraća se na 100 čim prestane (~6–8 s).
+  - opasnost sada = najgore ponašanje (raste što duže traje) + 30 % ostalih; ili rizik modela (bez mirne
+    osnove 0.1, ×0.8) ako je veći;
+  - **brzina je pojačivač**: < 5 km/h = 0 (stoji: nema opasnosti ni upozorenja, šta god vozač radi), 0.4 pri
+    hodu, 1.0 na 50 km/h, 1.6 na 130 km/h; noć (22–06h) ×1.25;
+  - cilj = 100 × (1 − opasnost × brzina), score ga prati: pada brzo (τ 0.5 s), raste malo sporije (τ 2.5 s).
+- Kalibracija (dan): dug pogled u telefon je `critical` u gradu, a `emergency` od ~70 km/h; mikrospavanje u
+  brzini je `emergency`; ruke van volana same su `caution`/`warning`.
 - Nivoi: `safe` 90–100, `caution` 75–90, `warning` 55–75, `high_risk` 35–55, `critical` 10–35,
-  `emergency` < 10. Reakcija kola po nivou je opisana u `docs/API.md`, sekcija 7.
+  `emergency` < 10. Svetlo prati nivo; vibracija i zvuk samo dok se nešto rizično dešava i kola se kreću.
+  Poruka kontaktu kad `emergency` traje 2 s u vožnji. Detalji: `docs/API.md`, sekcija 7.
+- Rezime vožnje: `average_score` = prosek dok se kola kreću, `level` = nivo za taj prosek (score na kraju je
+  skoro uvek ~100, jer kola stoje).
 - Alarm modela: kad model javi crveno (`alert.level == "red"`), kola u pokretu odmah vibriraju i
   glasno pište, na bilo kom nivou.
 - Brzinu daje backend (`backend/app/services/speed.py`), redom: GPS telefona (ako je uključen i
@@ -86,13 +93,13 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 - U nacrtu je pisalo 75–80 → uzeto 75–90. Pisalo je 35–75 → uzeto 35–55, sa žutim svetlom i
   pragom reakcije od 2 s.
 - "Velika pripravnost" (10–35) = crveno svetlo, a vibracija i zvuk kreću odmah.
-- Dok kola stoje nema penala ni upozorenja, i to se ne računa u statistiku.
+- Dok kola stoje nema opasnosti ni upozorenja, i to se ne računa u statistiku.
 - Jelo, cigareta, konverzacija i ometanje od suvozača su izbačeni, jer ih modeli ne prepoznaju.
 - (2026-11-06) Model ima svoj trenutni rizik (0..1, tri boje). **Naš score 0–100 ostaje glavni** za
   svetlo, nivoe i statistiku, a crveni alarm modela samo forsira vibraciju i zvuk. Razlog: kod
   score-a 100 nivo `safe` nikad ne reaguje, pa bi prvo mikrospavanje prošlo bez upozorenja.
 - (2026-11-06) `eyes_off_road` je vraćen kao labela sa malom težinom (1.0), jer ga model sada daje.
-  Kad ide zajedno sa `phone_use`, penali se sabiraju.
+  Kad ide zajedno sa `phone_use`, dodaje deo svoje opasnosti (30 %).
 - `perception` (uglovi glave, oči, šake) ne ide na backend, jer aplikaciji ne treba.
 - (2026-11-06) **Skladište: Postgres + S3 (RustFS)**, bez vektorske baze. Izveštaj (gde je bilo
   najgore, šta je najgore uradio, grafici) su obični SQL upiti. MinIO je odbačen jer je Community
@@ -112,7 +119,7 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   (`rules_triggered`), a ne kategorije. Model nema izlaz za `looking_behind` ni `turning_around`, pa
   njih šalje samo simulator. `backend/tests/test_camera_mapping.py` pada ako model doda nepoznatu kategoriju.
 - (2026-11-06) **Nalozi:** korisničko ime + lozinka (scrypt), nasumični token od 30 dana (u bazi samo
-  SHA-256). Login nije obavezan: vožnja sa tokenom pripada nalogu i vidi je samo vlasnik (ostali dobijaju 404),
+  SHA-256). Backend ne traži login (aplikacija ga traži): vožnja sa tokenom pripada nalogu i vidi je samo vlasnik (ostali dobijaju 404),
   a vožnja bez tokena radi kao ranije (`driver_id`) i vidi je svako. Živi kanal (WS, telemetrija,
   kraj vožnje) ostaje otvoren, jer je to mreža kola. Detalji i review: `docs/DATABASE.md`.
 - (2026-11-06) Za izveštaj backend šalje **podatke jedne vožnje** (`GET /trips/{id}/report`: rezime,
@@ -133,6 +140,11 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   debug (rizik tada računa pipeline, ne koordinator). Koordinator odbija zapise frejma na `/telemetry` dok je
   worker povezan. Prijava ne blokira kola: bez servera vožnja kreće, a server je upiše na nalog kad je primi
   (`TripMeta.owner_token`).
+- (2026-11-07) **Score je trenutno stanje** (zahtev korisnika): nema više penala koji se skupljaju, "krhkosti" ni
+  sporog oporavka (+3/min posle 30 s); score prati trenutnu opasnost pojačanu brzinom i vraća se kad je sve ok.
+  Pragovi reakcije (≥ 5 s / ≥ 2 s) su izbačeni: nivo već uključuje koliko dugo ponašanje traje.
+- (2026-11-07) **Aplikacija traži nalog**: registracija/prijava pri prvom otvaranju, token na svakom pozivu, odjava u
+  Profilu. Vožnje iz aplikacije uvek pripadaju nalogu. Backend i dalje prima vožnje bez tokena (simulator, dashboard).
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 

@@ -18,7 +18,7 @@ const Stat = ({ label, value, color }: { label: string; value: number; color?: s
   </div>
 )
 
-/** Shown on `trip_ended`: final / average / lowest score and the behaviours with tips (worst first) */
+/** Shown on `trip_ended`: average (while driving) / lowest score and the behaviours with tips (worst first) */
 const TripSummaryCard = ({ summary, onDismiss }: TripSummaryCardProps) => (
   <Card className="gap-5 p-6 text-sm">
     <div className="flex items-start gap-4">
@@ -34,9 +34,8 @@ const TripSummaryCard = ({ summary, onDismiss }: TripSummaryCardProps) => (
       </Button>
     </div>
 
-    <div className="grid grid-cols-3 gap-3">
-      <Stat label="Final score" value={summary.final_score} color={lightColor(LEVELS.find((l) => l.id === summary.level)?.light)} />
-      <Stat label="Average" value={summary.average_score} />
+    <div className="grid grid-cols-2 gap-3">
+      <Stat label="Average while driving" value={summary.average_score} color={lightColor(LEVELS.find((l) => l.id === summary.level)?.light)} />
       <Stat label="Lowest" value={summary.min_score} />
     </div>
 

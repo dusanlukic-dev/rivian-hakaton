@@ -67,7 +67,7 @@ def running_summary(trip: Trip, model: ModelReportBuilder | None = None) -> Runn
         final_score=round(trip.score, 1),
         average_score=round(trip.average_score, 1),
         min_score=round(trip.min_score, 1),
-        level=level_for(trip.score),
+        level=level_for(trip.average_score),
         emergency_alert_sent=trip.emergency_alert_sent,
         behaviors=[
             BehaviorTotal(behavior=b, occurrences=s.occurrences, total_seconds=round(s.total_seconds, 1))

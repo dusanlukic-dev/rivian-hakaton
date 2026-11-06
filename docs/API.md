@@ -66,8 +66,9 @@ Istorija ── GET /trips (sa tokenom: moje vožnje) ──► Statistika / Izv
 Profil ── GET /auth/me, PATCH /auth/me (ime, kontakt za hitne slučajeve), POST /auth/logout
 ```
 
-Prijava nije obavezna: bez tokena sve radi kao ranije (`driver_id` u `POST /trips`). Sa tokenom je
-vožnja vezana za nalog i vide je samo vlasnikovi zahtevi.
+Backend ne traži prijavu: bez tokena sve radi kao ranije (`driver_id` u `POST /trips`; simulator, dashboard).
+**Aplikacija vozača je traži** (2026-11-07): ekran za prijavu/registraciju pri prvom otvaranju, token na svakom
+REST pozivu, `401` → nazad na prijavu. Sa tokenom je vožnja vezana za nalog i vide je samo vlasnikovi zahtevi.
 
 WebSocket treba otvoriti čim je adresa poznata i držati ga otvorenim (sekcija 6).
 
@@ -186,9 +187,9 @@ export interface TripState {
   response: CarResponse;
   /** null ako tick nije stigao od modela (npr. simulator šalje samo labele). */
   camera: CameraView | null;
-  speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema penala
+  speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema opasnosti ni upozorenja
   speed_source: SpeedSource | null;  // null pre prvog ticka
-  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10)
+  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10 bar 2 s u vožnji)
 }
 
 export interface BehaviorSummary {
@@ -206,10 +207,10 @@ export interface TripSummary {
   started_at: string;      // ISO 8601 UTC, npr. "2026-11-06T14:12:55.670995Z"
   ended_at: string | null; // null dok vožnja traje
   duration_s: number;
-  final_score: number;     // "finalni koeficijent": score na kraju vožnje
-  average_score: number;   // prosek tokom cele vožnje (ponderisan vremenom)
+  final_score: number;     // score u trenutku kraja (trenutno stanje, obično ~100 jer kola stoje)
+  average_score: number;   // **glavni broj vožnje**: prosek dok se kola kreću (ponderisan vremenom)
   min_score: number;
-  level: SafetyLevel;      // nivo za final_score
+  level: SafetyLevel;      // nivo za average_score
   emergency_alert_sent: boolean;
   behaviors: BehaviorSummary[]; // najgore prvo; prazan niz = čista vožnja
 }
@@ -686,25 +687,32 @@ upozorenje, nego prikazuje ono što piše u `response`.
 | Polje | Prikaz |
 |---|---|
 | `response.dashboard_light` | velika lampica / pozadina. Predlog boja: `green` #22C55E, `green_yellow` #A3E635, `yellow` #FACC15, `red` #EF4444 |
-| `score` | veliki broj 0–100 (ili prsten / gauge) |
+| `score` | veliki broj 0–100 (ili prsten / gauge). **Trenutno stanje**: pada dok traje rizično ponašanje i vraća se na 100 nekoliko sekundi posle (nije bodovni saldo) |
 | `response.vibrate_seat` | simulira vibraciju sedišta. Za svaku `state` poruku gde je `true`, kratko zavibrira telefon (`Vibration` / `expo-haptics`). Poruke stižu ~2/s, pa to daje ritmičnu vibraciju koja prestaje čim polje postane `false` |
 | `response.sound` | `low` je tihi signal, `high` glasan. Pušta se kratak zvuk po poruci, isto kao vibracija (`expo-audio` / `expo-av`) |
 | `response.message` | tekst ispod lampice. Ako aplikacija nije na engleskom, napravi svoj tekst po `level` |
 | `active_behaviors` | ikonice ili čipovi trenutnih ponašanja sa trajanjem u sekundama |
 | `level` | naziv nivoa (tabela ispod) |
 | `camera` | opciono, "šta kamera vidi": trake `p` po kategoriji, `risk` modela, `rules_triggered`. Može biti `null` i može imati nepoznate kategorije (prikaži sirovo ime). **Ne pokreći alarm na osnovu `camera.alert`**, to je već uračunato u `response` |
-| `speed_kmh` | brzinomer. Ispod 5 km/h nema penala ni upozorenja (npr. semafor), pa je korisno da se vidi. `speed_source` može da ide sitno ispod (`mock` / `phone`) |
+| `speed_kmh` | brzinomer. Ispod 5 km/h nema opasnosti ni upozorenja (npr. semafor), pa je korisno da se vidi. Brzina pojačava opasnost (×0.4 pri hodu, ×1 na 50, ×1.6 na 130 km/h). `speed_source` može da ide sitno ispod (`mock` / `phone`) |
+
+**Score** (backend, `coordinator/services/scoring.py`): opasnost ponašanja koja se sada vide (raste što duže
+traje) ili rizik modela, puta faktor brzine, daje cilj `100 × (1 − opasnost)`; score ga prati (pada za ~1 s,
+vraća se za ~6–8 s). Dok kola stoje (< 5 km/h) cilj je 100 i nema upozorenja, šta god vozač radi.
 
 Nivoi (informativno, logika je na backendu):
 
-| `level` | Score | Svetlo | Reakcija kola na rizično ponašanje (samo dok se kola kreću) |
+| `level` | Score | Svetlo | Reakcija kola (samo dok se kola kreću i nešto rizično se dešava) |
 |---|---|---|---|
 | `safe` | 90–100 | zeleno | ništa |
-| `caution` | 75–90 | zeleno-žuto | vibracija ako ponašanje traje ≥ 5 s |
-| `warning` | 55–75 | žuto | vibracija + tihi zvuk, ≥ 5 s |
-| `high_risk` | 35–55 | žuto | vibracija + glasan zvuk, ≥ 2 s |
-| `critical` | 10–35 | crveno | vibracija + glasan zvuk odmah |
-| `emergency` | < 10 | crveno | isto + događaj `emergency` |
+| `caution` | 75–90 | zeleno-žuto | samo svetlo |
+| `warning` | 55–75 | žuto | vibracija + tihi zvuk |
+| `high_risk` | 35–55 | žuto | vibracija + glasan zvuk |
+| `critical` | 10–35 | crveno | vibracija + glasan zvuk |
+| `emergency` | < 10 | crveno | isto; posle 2 s u vožnji i događaj `emergency` (jednom po vožnji) |
+
+Vibracija i zvuk prestaju čim ponašanje prestane, a svetlo se vraća zajedno sa score-om. Dok kola stoje:
+zeleno svetlo, bez vibracije i zvuka, poruka `"Standing still - no warnings."`.
 
 **Alarm modela:** kad model kamere javi crveno (`camera.alert == "red"`, npr. mikrospavanje ili dug
 pogled van puta), kola **odmah** vibriraju i glasno pište na bilo kom nivou, ali samo dok se kreću.
@@ -726,7 +734,7 @@ Nazivi ponašanja za prikaz:
 (`expo-sms` ili `Linking.openURL("sms:...")`), jer telefon ima SIM karticu i mrežu.
 
 **Kraj vožnje (`trip_ended` ili odgovor na `POST /end`):** ekran sa statistikom. Prikaži
-`final_score` (finalni koeficijent), pored njega `average_score` i `min_score`, a zatim
+`average_score` (prosek dok se kola kreću, glavni broj) sa `level`, pored njega `min_score`, a zatim
 `behaviors` kao listu sa `tip` savetima. Prazan `behaviors` znači da je vožnja bila bez grešaka.
 
 **Izveštaj (grafik vožnje):** sa ekrana statistike, jedan `GET /trips/{id}/report`:

@@ -69,9 +69,9 @@ vožnje) odgovara koordinator, a istoriju, izveštaj i naloge server. Koji deo s
    `risk_pipeline.py` (fajl CV tima se ne menja). Matematika je ista do bita:
    `tests/test_risk_engine.py` pušta nasumičan dokaz kroz kopiju i original i traži iste zapise i rezime.
    Pragove i dalje podešava CV tim u `notebooks/risk_config.json` (čitaju ga oba).
-3. **Koordinator, score** (`scoring.py`, `alerts.py`): naš koeficijent 0–100 (težina × sekunde ×
-   brzina × noć × krhkost, oporavak), nivoi i reakcija kola. Crveni alarm modela odmah pali vibraciju i
-   glasan zvuk. Ovo je ostalo isto kao pre podele.
+3. **Koordinator, score** (`scoring.py`, `alerts.py`): naš koeficijent 0–100 kao **trenutno stanje**
+   (opasnost ponašanja ili rizik modela × brzina × noć; pada i vraća se za par sekundi), nivoi i reakcija kola.
+   Crveni alarm modela odmah pali vibraciju i glasan zvuk.
 4. **Server**: ništa ne računa, samo čuva i spaja uzastopne opasne sekcije u momente pri čitanju.
 
 Kad CV tim počisti svoj kod, `RiskEngine` iz `risk_pipeline.py` može da se izbaci: worker ga ne koristi,

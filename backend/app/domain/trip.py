@@ -62,16 +62,18 @@ class Trip:
     user_id: str | None = None  # the logged-in account that started it; None = started without login
     ended_at: datetime | None = None
 
-    score: float = MAX_SCORE
+    score: float = MAX_SCORE  # live: how safe it is right now (services/scoring.py)
+    exposure: float = 0.0  # danger now x speed factor; the score's target is 100 x (1 - exposure)
     min_score: float = MAX_SCORE
     elapsed_s: float = 0.0
-    score_seconds: float = 0.0  # integral of score over time, for the time-weighted average
-    clean_streak_s: float = 0.0  # seconds since the last penalized behavior
+    moving_s: float = 0.0  # seconds driven at >= 5 km/h (standing still isn't part of the statistics)
+    score_seconds: float = 0.0  # integral of the score over moving time, for the average
+    emergency_streak_s: float = 0.0  # how long the emergency level has lasted while moving
     last_tick_at: datetime | None = None
 
     # Behaviors currently visible on camera -> how long they have lasted (seconds).
     active: dict[Behavior, float] = field(default_factory=dict)
-    # Active behaviors already counted as an occurrence (and given the onset penalty).
+    # Active behaviors already counted as an occurrence (counted once per streak, while moving).
     counted: set[Behavior] = field(default_factory=set)
     stats: dict[Behavior, BehaviorStat] = field(default_factory=dict)
 
@@ -87,4 +89,5 @@ class Trip:
 
     @property
     def average_score(self) -> float:
-        return self.score_seconds / self.elapsed_s if self.elapsed_s else self.score
+        """Time-weighted over the moving part of the trip: how the drive went (standing still doesn't count)."""
+        return self.score_seconds / self.moving_s if self.moving_s else MAX_SCORE

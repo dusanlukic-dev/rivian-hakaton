@@ -113,9 +113,9 @@ export interface TripState {
   response: CarResponse;
   /** null ako tick nije stigao od modela (npr. simulator šalje samo labele). */
   camera: CameraView | null;
-  speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema penala
+  speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema opasnosti ni upozorenja
   speed_source: SpeedSource | null;  // null pre prvog ticka
-  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10)
+  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10 bar 2 s u vožnji)
 }
 
 export interface BehaviorSummary {
@@ -133,10 +133,10 @@ export interface TripSummary {
   started_at: string;      // ISO 8601 UTC, npr. "2026-11-06T14:12:55.670995Z"
   ended_at: string | null; // null dok vožnja traje
   duration_s: number;
-  final_score: number;     // "finalni koeficijent": score na kraju vožnje
-  average_score: number;   // prosek tokom cele vožnje (ponderisan vremenom)
+  final_score: number;     // score u trenutku kraja (trenutno stanje, obično ~100 jer kola stoje)
+  average_score: number;   // **glavni broj vožnje**: prosek dok se kola kreću (ponderisan vremenom)
   min_score: number;
-  level: SafetyLevel;      // nivo za final_score
+  level: SafetyLevel;      // nivo za average_score
   emergency_alert_sent: boolean;
   behaviors: BehaviorSummary[]; // najgore prvo; prazan niz = čista vožnja
 }

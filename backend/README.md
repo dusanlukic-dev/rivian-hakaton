@@ -78,7 +78,7 @@ Adrese i ključevi se menjaju u `.env` (primer: [.env.example](.env.example)). `
 Scenariji: `city` (30–50 km/h, tri semafora), `highway` (do 130), `stop_and_go` (gužva, dugo stajanje),
 `country_road` (60–90), `cruise` (nikad ne staje, dobar za demo na bini), `parked` (stalno 0). Između
 tačaka je kubna Bezier kriva sa ravnim ručkama: auto glatko ubrzava i koči, a stoji na tačno 0 km/h
-(tada nema penala).
+(tada nema opasnosti ni upozorenja).
 
 ## Pokretanje
 
@@ -192,27 +192,28 @@ Ceo ugovor (rute, WebSocket poruke, TypeScript tipovi, primeri, pravila prikaza)
 ## Kako radi koeficijent
 
 Sve se podešava na jednom mestu:
-- [app/coordinator/services/scoring.py](app/coordinator/services/scoring.py) (`ScoringConfig`): težine ponašanja, množioci za brzinu i noć, oporavak
+- [app/coordinator/services/scoring.py](app/coordinator/services/scoring.py) (`ScoringConfig`): opasnost ponašanja, kriva brzine, noć, model, brzina pada i oporavka
 - [app/domain/levels.py](app/domain/levels.py) (`LEVEL_BANDS`) i [app/coordinator/services/alerts.py](app/coordinator/services/alerts.py) (`POLICIES`): opsezi i reakcija kola po nivou
 
-Po ticku:
-- svako vidljivo ponašanje skida `težina × sekunde` poena, plus jednokratni udar kad počne (pada brzo na početku)
-- penal se množi sa: **brzinom** (< 5 km/h = 0, grad 1.0, vangradski 1.3, autoput 1.7), **noć** (22–06h) ×1.5,
-  i **krhkošću** `1 + (100 − score)/100` (što je niži, lakše pada)
-- posle 30 s čiste vožnje score raste 3 poena u minutu
+Score je **trenutno stanje** (koliko je bezbedno SADA), ne bodovni saldo. Po ticku:
+- opasnost = najgore ponašanje koje se sada vidi (raste što duže traje) + 30 % ostalih, ili rizik modela (bez mirne
+  osnove 0.1, ×0.8) ako je veći
+- × **brzina** (< 5 km/h = 0: stoji, nema opasnosti ni upozorenja; 0.4 pri hodu, 1.0 na 50, 1.6 na 130 km/h) × **noć** (22–06h) ×1.25
+- cilj = 100 × (1 − opasnost); score ga prati: pada brzo (τ 0.5 s), vraća se za nekoliko sekundi (τ 2.5 s)
 
 `timestamp` mora biti u **lokalnom vremenu sa offsetom** (`safety_client` to radi sam), jer sat iz
-njega određuje noćne penale.
+njega određuje noć.
 
-| Score | Nivo | Svetlo | Reakcija na rizično ponašanje (samo u pokretu) |
+| Score | Nivo | Svetlo | Reakcija (samo u pokretu i dok se nešto rizično dešava) |
 |---|---|---|---|
 | 90–100 | safe | zeleno | – |
-| 75–90 | caution | zeleno-žuto | vibracija ako traje ≥ 5 s |
-| 55–75 | warning | žuto | vibracija + tihi zvuk, ≥ 5 s |
-| 35–55 | high_risk | žuto | vibracija + glasan zvuk, ≥ 2 s |
-| 10–35 | critical | crveno | vibracija + glasan zvuk odmah |
-| < 10 | emergency | crveno | + `emergency` događaj i poruka kontaktu (jednom po vožnji) |
+| 75–90 | caution | zeleno-žuto | samo svetlo |
+| 55–75 | warning | žuto | vibracija + tihi zvuk |
+| 35–55 | high_risk | žuto | vibracija + glasan zvuk |
+| 10–35 | critical | crveno | vibracija + glasan zvuk |
+| < 10 | emergency | crveno | isto; posle 2 s `emergency` događaj i poruka kontaktu (jednom po vožnji) |
 | bilo koji | model javi crveno | prati score | vibracija + glasan zvuk odmah (alarm modela) |
+| – | stoji (< 5 km/h) | zeleno | ništa, šta god vozač radi |
 
 Slanje poruke kontaktu je za sada stub koji samo loguje: [app/coordinator/services/notifications.py](app/coordinator/services/notifications.py).
 

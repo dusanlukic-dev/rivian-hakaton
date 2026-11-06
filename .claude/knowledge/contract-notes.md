@@ -78,7 +78,7 @@ All additive. Nothing the apps already use changed shape.
 > The report's `samples`/`events` became `sections`/`moments` (see below). Accounts are unchanged.
 
 Additive, except `TripCreate.driver_id` became optional. Clients that send it keep working unchanged.
-- **Login is optional.** `POST /auth/register` or `/auth/login` returns `AuthOut {token, token_type, expires_at, user}`. Send
+- **The app requires login (2026-11-07, D36);** the backend still doesn't. `POST /auth/register` or `/auth/login` returns `AuthOut {token, token_type, expires_at, user}`. Send
   `Authorization: Bearer <token>` on REST calls. The token is opaque (not a JWT) and lasts 30 days. The dashboard template's
   AuthProvider still works, it just can't decode claims. On any `401`, drop the token and show login.
 - With a token, `POST /trips` may send `{}`. The trip gets `driver_id` = username and the account's saved emergency contact.
@@ -86,7 +86,10 @@ Additive, except `TripCreate.driver_id` became optional. Clients that send it ke
   Trips started without a token behave as before.
 - `GET /trips` with a token = my trips, from Postgres, so they survive backend restarts. Without a token = trips without login,
   optionally filtered by `driver_id`. `GET /trips/{id}/summary` also survives restarts now.
-- Profile ↔ account mapping: local `driverId` = `user.username`, `name` = `display_name`, contact = `emergency_contact`. Edit with
+- Implemented 2026-11-07: `state/auth.ts` (token + user, AsyncStorage `auth.v1`), `api/client.ts` adds `Authorization` to every call and
+  logs out on a 401, `app/login.tsx` (log in / create account + the car-computer address), root layout `Stack.Protected` guards with
+  explicit `redirectTo` (without them expo-router fell back to the QR scanner). The old local profile (`state/profile.ts`) is gone.
+- Profile ↔ account mapping (was the local profile): `driverId` = `user.username`, `name` = `display_name`, contact = `emergency_contact`. Edit with
   `PATCH /auth/me`.
 - **`GET /trips/{id}/report`** is the report screen in one call: `trip` (TripSummary) + `user` + `samples` (raw per-second rows:
   `t`, `score`, `speed_kmh`, `behaviors`, model `categories`...) + `events` (with `thumbnail_url` / `video_url`). Charts are the app's
@@ -116,3 +119,14 @@ What changed for the apps (both `src/api/types.ts` re-copied from §4 the same d
   the report opened right after "End" is complete.
 - `POST /trips` with a token is `503` if the server can't be asked about the token (the coordinator checks logins via `GET /auth/me`).
 - `GET /coordinator/status` (diagnostics, not part of the app contract): camera fps, model worker, video cache, server delivery.
+
+## Live score + summary semantics (2026-11-07, D35)
+
+- `TripState.score` is a **live reading** (falls while something risky happens, back at 100 a few seconds later), not a balance.
+  Nothing changes in the types; the UI already showed it as the big number.
+- `TripSummary.level` is now the level of **`average_score`** (moving time only); `final_score` is the live score at the end (~100 once
+  parked). Both apps headline `average_score` + `level` (history badges, summary hero, dashboard summary card).
+- Standing still (< 5 km/h): `response` is green/silent with "Standing still - no warnings." whatever the driver does.
+- The dashboard's report for a **logged-in** trip is 404 (private to the account): the chart just hides there; the phone shows it.
+- After a backend restart mid-trip the app now asks `GET /trips/{id}` on reconnect and drops the trip on 404; "End" on such a trip
+  opens its stored summary instead of an error.

@@ -4,6 +4,7 @@ Listens on every network interface so the phone can reach the laptop over the mo
 the address to put into the app (a hotspot has no DNS).
 
     python run.py                                   # coordinator + server in one process, port 8000 (the demo)
+    python run.py --mock                            # ...plus the mocked car: test-pattern camera + fake model worker
     python run.py --port 9000
     python run.py --role server --port 8001         # split: the server alone...
     SERVER_URL=http://127.0.0.1:8001/api/v1 python run.py --role coordinator   # ...and the coordinator alone
@@ -11,8 +12,13 @@ the address to put into the app (a hotspot has no DNS).
 
 import argparse
 import socket
+import subprocess
+import sys
+from pathlib import Path
 
 import uvicorn
+
+REPO = Path(__file__).resolve().parent.parent
 
 APPS = {"all": "app.main:app", "coordinator": "app.coordinator.main:app", "server": "app.server.main:app"}
 
@@ -27,12 +33,30 @@ def lan_ip() -> str:
             return "127.0.0.1"
 
 
+def start_mocks(port: int) -> list[subprocess.Popen]:
+    """The car without a car: tools/camera_stream.py (test pattern, 10 fps) + model/worker.py --fake (scripted
+    detections: phone 14-20 s, look away 28-31 s, microsleep 38-41 s, hands off 48-52 s of every minute of a trip).
+    Both reconnect by themselves, so they can start before the backend listens. Same Python as the backend.
+
+    Windows: uvicorn's auto-reload stops its worker with a Ctrl+C sent to the whole console, which would kill the
+    mocks too. In their own process group they ignore it; closing the window or leaving run.py still stops them."""
+    commands = [
+        [sys.executable, str(REPO / "tools" / "camera_stream.py"), "--url", f"ws://127.0.0.1:{port}/api/v1/camera/ws"],
+        [sys.executable, str(REPO / "model" / "worker.py"), "--fake", "--coordinator", f"ws://127.0.0.1:{port}/api/v1/model/ws"],
+    ]
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0
+    return [subprocess.Popen(command, cwd=REPO, creationflags=flags) for command in commands]
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--role", choices=sorted(APPS), default="all", help="both parts (default) or one of them")
     parser.add_argument("--no-reload", action="store_true", help="don't restart on code changes")
+    parser.add_argument("--mock", action="store_true", help="also run the mocked camera and the fake model worker")
     args = parser.parse_args()
+    if args.mock and args.role == "server":
+        parser.error("--mock needs the coordinator (role all or coordinator)")
 
     ip, port = lan_ip(), args.port
     lines = [f"\n  Role: {args.role}  (docs/ARCHITECTURE.md)"]
@@ -51,5 +75,12 @@ if __name__ == "__main__":
         lines += [
             "  Server storage: Postgres :5433 + RustFS :9000 (docker compose up -d, or .\\scripts\\services.ps1 start)",
         ]
+    if args.mock:
+        lines += ["  Mocked car: test-pattern camera + fake model worker started (every trip gets scripted detections)"]
     print("\n".join(lines) + "\n")
-    uvicorn.run(APPS[args.role], host="0.0.0.0", port=port, reload=not args.no_reload, reload_dirs=["app"])
+    mocks = start_mocks(port) if args.mock else []
+    try:
+        uvicorn.run(APPS[args.role], host="0.0.0.0", port=port, reload=not args.no_reload, reload_dirs=["app"])
+    finally:
+        for mock in mocks:
+            mock.terminate()

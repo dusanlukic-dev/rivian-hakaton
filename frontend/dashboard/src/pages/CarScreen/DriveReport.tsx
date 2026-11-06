@@ -124,7 +124,8 @@ function MomentDetail({ moment }: { moment: DangerMoment }) {
   )
 }
 
-/** GET /trips/{id}/report for the summary card. Hidden when storage is down (503) or the trip wasn't stored */
+/** GET /trips/{id}/report for the summary card. Hidden when storage is down (503), the trip wasn't stored, or it
+ * belongs to a logged-in driver (404: their report is private to their account, the phone shows it) */
 export function DriveReport({ tripId }: { tripId: string }) {
   const [report, setReport] = useState<TripReport | null>(null)
   const [selected, setSelected] = useState<DangerMoment | null>(null)
@@ -133,7 +134,7 @@ export function DriveReport({ tripId }: { tripId: string }) {
     let cancelled = false
     getReport(tripId)
       .then((r) => { if (!cancelled) setReport(r) })
-      .catch((e: unknown) => { if (!cancelled && httpStatus(e) !== 503) console.warn('[report]', e) })
+      .catch((e: unknown) => { if (!cancelled && ![404, 503].includes(httpStatus(e) ?? 0)) console.warn('[report]', e) })
     return () => { cancelled = true }
   }, [tripId])
 

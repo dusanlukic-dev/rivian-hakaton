@@ -23,11 +23,16 @@ Storage: **Docker Desktop is installed on this laptop now**, so use `docker comp
 
 ```bash
 cd backend && docker compose up -d                                   # Postgres :5433 + RustFS :9000 (containers backend-postgres-1 / -rustfs-1)
+cd backend && .venv/Scripts/python.exe run.py --mock                # coordinator + server + mocked car (camera + fake model), auto-reload
+# or the pieces one by one (e.g. a clip or the real model instead of the mocks):
 cd backend && .venv/Scripts/python.exe run.py                       # coordinator + server, 0.0.0.0:8000, auto-reload, prints the phone URL
 backend/.venv/Scripts/python.exe tools/camera_stream.py             # camera stand-in: test pattern 10 fps (--video clip.mp4, --webcam "name")
 backend/.venv/Scripts/python.exe model/worker.py --fake             # model worker without CV packages: scripted 60 s loop of detections
 curl -s http://127.0.0.1:8000/api/v1/coordinator/status             # camera fps, model connected/latency, video cache, server delivery
 ```
+- `--mock` starts the camera and the fake model as children of run.py in **their own process group**: on Windows uvicorn's
+  auto-reload sends Ctrl+C to the whole console, which killed them on every code change before (fixed 2026-11-07). Closing the
+  window or Ctrl+C on run.py stops all three. A fresh phone then needs nothing else: the app opens on Log in / Create account.
 - Long-running things go in their own background shell. To keep the **backend alive after the agent session**, start it in
   its own window: `Start-Process <backend>\.venv\Scripts\python.exe -ArgumentList run.py -WorkingDirectory <backend> -WindowStyle Minimized`.
 - **Restarting the backend on Windows:** kill the whole tree. Killing only the reloader leaves its `multiprocessing-fork` worker
@@ -55,9 +60,9 @@ Don't run it while the model worker is connected: both would score the same trip
 ### Put the app into an exact state (`tools/sim.py`)
 ```bash
 backend/.venv/Scripts/python.exe tools/sim.py --start --driver matija --ticks 3        # trip + clean ticks → green, 100
-backend/.venv/Scripts/python.exe tools/sim.py looking_at_phone --speed 130 --ticks 12  # → caution, warning (chime), high_risk/critical (red flash + alarm)
-backend/.venv/Scripts/python.exe tools/sim.py drowsy --speed 130 --ticks 2             # → emergency overlay + siren
-backend/.venv/Scripts/python.exe tools/sim.py --ticks 40                               # clean driving (recovery starts after 30 s)
+backend/.venv/Scripts/python.exe tools/sim.py looking_at_phone --speed 50 --ticks 6   # → warning (chime), high_risk, critical (red flash + alarm)
+backend/.venv/Scripts/python.exe tools/sim.py drowsy --speed 130 --ticks 4             # → emergency overlay + siren (needs 2 s at < 10)
+backend/.venv/Scripts/python.exe tools/sim.py --ticks 8                                # clean driving: the live score is back at 100 in ~6 s
 backend/.venv/Scripts/python.exe tools/sim.py --end                                    # trip_ended → summary
 ```
 Take phone screenshots mid-run. The flash pulses at 2 Hz, so take two shots ~0.25 s apart.

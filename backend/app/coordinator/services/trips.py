@@ -5,8 +5,9 @@ from app.coordinator.repositories.trips import InMemoryTripRepository
 from app.coordinator.services.alerts import evaluate_response, level_for
 from app.coordinator.services.camera import behaviors_from_frame, to_view
 from app.coordinator.services.notifications import notify_emergency_contact
+from app.coordinator.services.scoring import DEFAULT_CONFIG as SCORING
 from app.coordinator.services.scoring import apply_tick
-from app.domain.enums import SafetyLevel, SpeedSource
+from app.domain.enums import SpeedSource
 from app.domain.tips import TIPS
 from app.domain.trip import EmergencyContact, Trip
 from app.schemas.auth import User
@@ -68,9 +69,10 @@ def process_tick(trip: Trip, tick: TelemetryTick, speed_kmh: float, speed_source
         behaviors |= behaviors_from_frame(tick.frame)
         trip.camera = to_view(tick.frame)
     trip.speed_kmh, trip.speed_source = speed_kmh, speed_source
-    apply_tick(trip, tick.timestamp, speed_kmh, behaviors)
+    model_risk = trip.camera.risk if trip.camera is not None else None
+    apply_tick(trip, tick.timestamp, speed_kmh, behaviors, model_risk)
     trip.response = evaluate_response(trip, speed_kmh)
-    if level_for(trip.score) is SafetyLevel.EMERGENCY and not trip.emergency_alert_sent:
+    if trip.emergency_streak_s >= SCORING.emergency_hold_s and not trip.emergency_alert_sent:
         notify_emergency_contact(trip)
         trip.emergency_alert_sent = True
         return True
@@ -114,7 +116,7 @@ def to_summary(trip: Trip) -> TripSummary:
         final_score=round(trip.score, 1),
         average_score=round(trip.average_score, 1),
         min_score=round(trip.min_score, 1),
-        level=level_for(trip.score),
+        level=level_for(trip.average_score),  # how the drive went; the live score is ~100 once parked
         emergency_alert_sent=trip.emergency_alert_sent,
         behaviors=[
             BehaviorSummary(
