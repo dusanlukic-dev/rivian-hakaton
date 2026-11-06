@@ -6,6 +6,7 @@
 //   chime.wav           level 1 "notice"   – soft two-tone ding
 //   alarm_warning.wav   level 2 "warning"  – 3 high beeps, 1 s loop
 //   alarm_critical.wav  level 3 "critical" – fast high/higher beeps, 1 s loop
+//   alarm_siren.wav     emergency – sweeping square-wave siren, 1 s loop (in-app only)
 // 2–4 kHz is where hearing is most sensitive, so these cut through road noise.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -66,6 +67,17 @@ const sounds = {
   }),
   alarm_critical: render(1.0, (b) => {
     for (let k = 0; k < 8; k++) tone(b, k * 0.125, 0.075, BEEP(k % 2 ? 3600 : 3000), 0.75);
+  }),
+  // Emergency: harsh "whoop" siren, 4 accelerating sweeps (1.6 → 4.2 kHz) per second, soft-clipped square
+  // wave + 3rd harmonic. Built to be impossible to ignore. In-app only (no notification channel uses it).
+  alarm_siren: render(1.0, (b) => {
+    let phase = 0;
+    for (let i = 0; i < b.length; i++) {
+      const k = ((i / RATE) * 4) % 1; // position inside a 0.25 s sweep
+      phase += (2 * Math.PI * (1600 + 2600 * k * k)) / RATE;
+      const s = Math.tanh(4 * Math.sin(phase)) * 0.8 + 0.2 * Math.sin(3 * phase);
+      b[i] += 0.85 * Math.min(1, k / 0.01, (1 - k) / 0.02) * s;
+    }
   }),
 };
 

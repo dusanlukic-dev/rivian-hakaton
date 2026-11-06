@@ -27,6 +27,18 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.3     #
 - Swagger for REST: `http://localhost:8000/docs`. The WebSocket isn't listed there.
 - Trips live in memory. Restarting the backend (or an auto-reload after a teammate pulls code) wipes them, and a saved `trip_id` then gives 404.
 
+## Put the app into an exact state (`tools/sim.py`)
+
+Deterministic alternative to the full simulator, for testing specific UI states (verified 2026-11-06 on the A54):
+```bash
+backend/.venv/Scripts/python.exe tools/sim.py --start --driver matija --ticks 3        # trip + clean ticks → green, 100
+backend/.venv/Scripts/python.exe tools/sim.py looking_at_phone --speed 130 --ticks 12  # → caution, warning (chime), high_risk/critical (red flash + alarm)
+backend/.venv/Scripts/python.exe tools/sim.py drowsy --speed 130 --ticks 2             # → emergency overlay + siren
+backend/.venv/Scripts/python.exe tools/sim.py --ticks 40                               # clean driving (recovery starts after 30 s)
+backend/.venv/Scripts/python.exe tools/sim.py --end                                    # trip_ended → summary
+```
+Run it in the background (`&`) and take phone screenshots mid-run (`android screen capture`). The flash pulses at 2 Hz, so take two shots ~0.25 s apart.
+
 ## Watch the WebSocket without the app
 
 A small probe exists at the scratchpad path from setup, but writing a new one is trivial with the venv's `websockets`:

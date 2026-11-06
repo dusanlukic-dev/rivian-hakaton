@@ -31,6 +31,10 @@ https://docs.expo.dev/versions/v58.0.0/ and https://docs.expo.dev/llms.txt inste
   with `npm run adb:reverse`. Data for dev comes from skill `backend-local` (real backend + simulator).
 - **Only `src/api/` knows the wire format** (types, REST client, `connectLive`). The UI must tolerate unknown behaviour labels, an empty
   `active_behaviors`, and long silences when no trip is active.
+- **Where things go** (map: `.claude/knowledge/architecture.md` § Mobile app layout): every UI string in `src/config/strings.ts`; the app
+  name only in repo-root `config/brand.json`; app state in `src/state/*` stores (`createStore` + `useStore`, persisted with `persist()`),
+  not React context; side effects of alerts in `src/alerts/engine.ts`; visual alerts in `components/AlertOverlays.tsx` (global).
+- Selectors passed to `useStore`/`useLive`/`useSettings` must return primitives or existing references (never build new objects in them).
 - **UI:** dark-first (in-car), big touch targets, readable at arm's length, English strings. Flashing ≤ 3 Hz (D14).
 - **Done means:** `npm run lint` and `npm run typecheck` pass in `frontend/mobile`. If native config changed, also a successful
   `npm run android` on the device and a screenshot check (skill `android-device`).

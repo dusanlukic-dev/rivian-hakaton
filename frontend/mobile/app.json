@@ -1,6 +1,5 @@
 {
   "expo": {
-    "name": "Safety Reviewer",
     "slug": "safety-reviewer",
     "version": "0.1.0",
     "orientation": "default",
@@ -115,7 +114,6 @@
       "./plugins/withLockScreenActivity"
     ],
     "experiments": {
-      "typedRoutes": true,
       "reactCompiler": true
     }
   }

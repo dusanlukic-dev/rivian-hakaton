@@ -9,7 +9,7 @@ Contract: `docs/API.md`.
  laptop = car computer ─────────────────────────────────────────────────────────────────┐
  │ camera models (notebooks/, CV team)                                                   │
  │   detections → labels → SafetyClient ──POST 127.0.0.1:8000/api/v1/telemetry (~1/s)──┐ │
- │   (or simulator: python notebooks/safety_client.py)                                 │ │
+ │   (or simulators: notebooks/safety_client.py full drive · tools/sim.py exact states)│ │
  │                                                                                     ▼ │
  │ backend/ FastAPI (python run.py → 0.0.0.0:8000)                                       │
  │   scoring.py: score 0–100 · alerts.py: level → response (light, vibrate, sound, msg)  │
@@ -17,14 +17,14 @@ Contract: `docs/API.md`.
  │        │ ws://localhost:8000/api/v1/ws                  ▲ REST /trips (start/end)      │
  │        ▼                                                │                             │
  │ frontend/dashboard (browser) = car screen mock: lamp, score, behaviour icons,         │
- │   seat-vibration icon, sounds, (proposal) sim panel → POST /telemetry                  │
+ │   seat-vibration icon, sounds, QR for the phone, sim panel → POST /telemetry (proposal)│
  └────────┬──────────────────────────────────────────────────────────────────────────────┘
-          │ phone's mobile hotspot (laptop IP printed by run.py, changes every session)
+          │ phone's mobile hotspot (laptop IP printed by run.py, changes every session) or USB + adb reverse
           ▼
  Galaxy A54: frontend/mobile (Expo dev build)
-   Settings (IP + GET /health) → Start trip (driver id, emergency contact; POST /trips)
-   → Drive (WS live: lamp colour, score, chips, vibration/sound per message, red pulse, keep-awake,
-     foreground service + full-screen intent when locked) → End (POST /trips/{id}/end) → Summary; History
+   Settings (address, Test → GET /health, QR scan) · Profile (driver id, emergency contact)
+   Drive: Start trip (POST /trips) → live lamp/score/behaviours (WS) + alerts (flash, sound, vibration, voice,
+   emergency screen, foreground service, full-screen notification) → End (POST /trips/{id}/end) → Summary · History
 ```
 
 ## Ownership
@@ -32,18 +32,27 @@ Contract: `docs/API.md`.
 | part | owner | status (see PROGRESS.md) |
 |---|---|---|
 | `notebooks/` CV models | CV team | manual and slow. `safety_client.py` is the bridge + simulator |
-| `backend/`, `docs/API.md`, root `CLAUDE.md` | backend teammate Matija Vujić (`vujicmatija04@gmail.com`) | working, 27 tests (commit `903df76`) |
+| `backend/`, `docs/API.md`, root `CLAUDE.md` | backend teammate Matija Vujić (`vujicmatija04@gmail.com`) | working, 27 tests (commit `903df76`). Adding Postgres + MinIO |
 | repo / initial structure | `dusanlukic-dev` (GitHub owner) | |
-| `frontend/mobile`, `frontend/dashboard`, `.claude/`, `PROGRESS.md` | Matija Radović + agents | scaffolded |
+| `frontend/mobile`, `frontend/dashboard`, `.claude/`, `PROGRESS.md`, `tools/`, `config/` | Matija Radović + agents | mobile core works on the A54 |
 
-## Frontend module layout (planned, the same shape in both apps)
+## Mobile app layout (`frontend/mobile`, implemented and verified on the A54 2026-11-06)
 
 ```
-src/api/types.ts      verbatim copy of docs/API.md §4 (keep identical in both apps)
-src/api/client.ts     REST: health, startTrip, endTrip, getSummary, listTrips (base URL from settings)
-src/api/live.ts       connectLive(): WebSocket with never-give-up reconnect (API.md §6 pattern) + "no data" watchdog during trips
-src/alerts/           maps each TripState.response / emergency → effects (sound, vibration, flash, notification, TTS)
-src/settings/         server host:port store (AsyncStorage on mobile, localStorage on web) + "Test connection"
+index.js                 entry: registers notify-kit foreground-service runner + background "I'm OK" action, then expo-router
+app.config.ts            reads repo-root config/brand.json → app name + extra.brand (single source of the name)
+src/api/                 types.ts (verbatim API.md §4) · client.ts (REST, ApiError, timeouts) · live.ts (WS, reconnect, kick) · address.ts
+src/lib/                 store.ts (createStore/useStore on useSyncExternalStore) · persist.ts (AsyncStorage) · format.ts
+src/state/               settings.ts (address, alert toggles) · profile.ts (local "account") · live.ts (socket status, active trip,
+                         tick counter, emergency, last summary, local test alerts)
+src/alerts/              engine.ts executes `response` per message: vibration, chime/alarm, voice, background notifications;
+                         emergency: siren loop + vibration + max brightness + full-screen notification · sounds.ts (expo-audio)
+                         · notifications.ts (channels, foreground service, permissions, settings deep links)
+src/components/          ui.tsx (Txt, Screen, Card, Button, TextField, ToggleRow, Pill, Banner, Icon) · dashboard.tsx (Lamp,
+                         LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge) · AlertOverlays.tsx (global 2 Hz red flash + emergency screen)
+src/config/              strings.ts (ALL UI copy) · brand.ts · behaviors.ts (label → icon)
+src/app/                 (tabs)/index (Drive) · history · profile · settings · trip/[id] (summary) · scan (QR)
 ```
 
-**Rule:** only `src/api/` knows the wire format. The UI works with the typed objects and must tolerate unknown behaviour labels.
+**Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels. Alerts are global (root layout), so they
+show on every tab. The web dashboard mirrors the same `api/` shape.
