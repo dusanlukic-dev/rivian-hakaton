@@ -56,7 +56,6 @@ download() {
 }
 
 mkdir -p models
-<<<<<<< HEAD
 [ -f models/face_landmarker.task ] || curl -L -o models/face_landmarker.task \
   https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 [ -f models/hand_landmarker.task ] || curl -L -o models/hand_landmarker.task \
@@ -67,9 +66,8 @@ if [ ! -f models/yolo11s_640.onnx ]; then
   mv yolo11s.onnx models/yolo11s_640.onnx
 fi
 ls -l models
-=======
+
 echo "Modeli:"
->>>>>>> 0c36827 (requirements i setup skripte finalne)
 
 download https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task \
     models/face_landmarker.task
