@@ -9,10 +9,11 @@ export interface BehaviorMeta {
   icon: IconName;
 }
 
-/** The five labels the backend knows (docs/API.md §4), in display order. */
+/** The labels the backend knows (docs/API.md §4), in display order. */
 export const BEHAVIORS: BehaviorMeta[] = (
   [
     ['looking_at_phone', 'cellphone-text'],
+    ['eyes_off_road', 'eye-off-outline'],
     ['looking_behind', 'eye-arrow-left-outline'],
     ['turning_around', 'rotate-3d-variant'],
     ['hands_off_wheel', 'steering-off'],

@@ -17,6 +17,7 @@ export const strings = {
   } satisfies Record<SafetyLevel, string>,
   behaviors: {
     looking_at_phone: 'Looking at phone',
+    eyes_off_road: 'Eyes off road',
     looking_behind: 'Looking behind',
     turning_around: 'Turning around',
     hands_off_wheel: 'Hands off wheel',

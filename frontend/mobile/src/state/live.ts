@@ -121,6 +121,9 @@ function fakeState(level: SafetyLevel): TripState {
         ? 'Test emergency: this is what the driver gets.'
         : 'Test warning: this is what a distracted driver gets.',
     },
+    camera: null,
+    speed_kmh: 80,
+    speed_source: 'mock',
     emergency_alert_sent: emergency,
   };
 }
