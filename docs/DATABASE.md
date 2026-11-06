@@ -50,6 +50,7 @@ bez vlasnika (`SET NULL`).
 | `emergency_contact` (JSONB), `speed_scenario` | kontakt te vožnje, mock scenario brzine |
 | `duration_s`, `final_score`, `average_score`, `min_score`, `level`, `emergency_alert_sent` | **rezime vožnje**, isti brojevi kao `TripSummary` |
 | `behaviors` (JSONB) | `[{behavior, occurrences, total_seconds}]`. Saveti se dodaju pri čitanju |
+| `model_report` (JSONB) | izveštaj modela kamere za celu vožnju (`ModelReport` u `docs/API.md`): rizik, vreme po boji alarma, pravila, epizode po kategoriji i epizode alarma. Računa ga `services/model_report.py` iz frejmova modela. `NULL` bez frejmova modela |
 
 ### `trip_samples`: jedna sekunda vožnje (sirovi zapis za grafike)
 Svaki red sabira tickove te sekunde (stižu ~2/s). Za sat vožnje to je oko 3600 redova.
@@ -85,7 +86,8 @@ alarm. Prekid kraći od 2 s je isti momenat, a duži od 30 s se seče.
 | trip summary | `GET /trips/{id}/summary`, istorija `GET /trips` | `trips` (živa vožnja iz memorije) |
 | score tokom vožnje + podaci za grafike (**sirovo**) | `GET /trips/{id}/report` → `samples` | `trip_samples` |
 | slike i klipovi tokom vožnje | `GET /trips/{id}/report` → `events[].thumbnail_url`, `video_url` | `risk_events` + S3 |
-| **sve za jednu vožnju odjednom** | `GET /trips/{id}/report` → `{trip, user, window_s, samples, events}` | sve gore |
+| izveštaj modela kamere (epizode, alarmi, pravila) | `GET /trips/{id}/report` → `model` | `trips.model_report` (živa vožnja iz memorije) |
+| **sve za jednu vožnju odjednom** | `GET /trips/{id}/report` → `{trip, user, window_s, samples, events, model}` | sve gore |
 
 Backend ne pravi grafike. Šalje sirove uzorke jedne vožnje, a aplikacija od njih pravi šta hoće:
 score i brzinu kroz vreme, verovatnoću "telefon" po sekundi, oznake rizičnih momenata (`t_start`).
@@ -98,7 +100,7 @@ Primer odgovora i tipovi su u `docs/API.md` (§4 `TripReport`, §5).
 | registracija, login | red u `users` / `user_sessions` (odmah) |
 | start vožnje | red u `trips` (sa `user_id` ako je vozač prijavljen) |
 | svake sekunde | red u `trip_samples` |
-| svakih ~10 s | rezime u `trips` (trenutni score, prosek, min, ponašanja) |
+| svakih ~10 s | rezime u `trips` (trenutni score, prosek, min, ponašanja, izveštaj modela) |
 | kraj rizičnog momenta | klip i slika u S3, pa red u `risk_events` |
 | kraj vožnje | konačan rezime i `ended_at` u `trips` |
 | start backenda posle pada | otvorene vožnje dobijaju `ended_at` = poslednji upis rezimea |

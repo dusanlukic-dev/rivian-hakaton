@@ -304,6 +304,57 @@ export interface SpeedStatus {
   phone_age_s: number | null;  // sekundi od poslednjeg očitavanja telefona
 }
 
+// ---------- Izveštaj modela kamere (deo izveštaja) ----------
+/** Statistika jedne kategorije modela kroz celu vožnju (samo dok se kola kreću). */
+export interface ModelCategoryStats {
+  active_s: number;       // sekundi koliko ju je model držao aktivnom
+  episodes: number;       // epizode od bar 0.5 s
+  max_episode_s: number;
+}
+
+/** Jedna epizoda ponašanja kako je model vidi: kategorija aktivna, kratki prekidi spojeni. */
+export interface ModelEpisode {
+  category: string;       // ime kategorije modela ("phone_use", "eyes_off_road"...)
+  t_start: number;        // sekunde od prvog ticka (ista osa kao TripSample.t)
+  t_end: number;
+  duration_s: number;
+  peak_r: number;         // najveći doprinos riziku modela
+  peak_p: number;         // najveće sirovo p među primljenim frejmovima (~2/s)
+  open: boolean;          // još traje (aktivna vožnja) ili je trajala do kraja vožnje
+}
+
+/** Od trenutka kad alarm modela napusti zeleno do povratka na zeleno. */
+export interface ModelAlertEpisode {
+  t_start: number;
+  t_end: number;
+  duration_s: number;
+  max_level: CameraAlert;
+  peak_risk: number;
+  causes: string[];       // kategorije koje su nosile rizik i "rule:<ime>" za tvrda pravila
+  open: boolean;
+}
+
+/** Pogled modela kamere na celu vožnju. Računa ga backend iz toka frejmova modela.
+ *  Samo za prikaz i analizu: score vozača je `TripSummary`. Vreme stajanja (< 5 km/h) se ne broji. */
+export interface ModelReport {
+  frames: number;                 // primljenih frejmova modela
+  duration_s: number;             // sekundi frejmova modela dok se kola kreću
+  stationary_s: number;           // sekundi frejmova dok kola stoje (ne ulaze u statistiku)
+  risk_mean: number;              // vremenski prosek rizika modela 0..1
+  risk_rms: number;               // koren srednjeg kvadrata: duži rizični periodi teže više
+  risk_p95: number;
+  risk_max: number;
+  model_score: number;            // 100 * (1 - risk_rms): ocena vožnje po modelu, 0..100
+  time_in_alert_s: Record<CameraAlert, number>;
+  time_in_alert_frac: Record<CameraAlert, number>;
+  alerts: Record<string, number>;          // koliko puta je alarm porastao na "yellow" / "red"
+  alerts_per_hour: Record<string, number>;
+  rules: Record<string, number>;           // tvrdo pravilo → koliko puta je opalilo
+  categories: Record<string, ModelCategoryStats>; // ključevi su imena kategorija modela
+  episodes: ModelEpisode[];                // od najstarije, najviše 200
+  alert_episodes: ModelAlertEpisode[];     // od najstarije, najviše 200
+}
+
 // ---------- Izveštaj jedne vožnje ----------
 /** Sve o jednoj vožnji u jednom odgovoru (GET /trips/{id}/report). */
 export interface TripReport {
@@ -314,6 +365,8 @@ export interface TripReport {
   samples: TripSample[];
   /** Rizični momenti sa slikom (`thumbnail_url`) i klipom (`video_url`), od najstarijeg. */
   events: RiskEvent[];
+  /** Izveštaj modela kamere za celu vožnju; null ako nijedan frejm modela nije stigao (npr. simulator). */
+  model: ModelReport | null;
 }
 
 // ---------- WebSocket ----------
@@ -469,6 +522,11 @@ za ekran izveštaja.** Grafike računa aplikacija iz `samples`, kako god hoće. 
 `score` (score kroz vožnju), `speed_kmh`, `risk_max` ili `categories["phone_use"].p_max`. Momente
 može da označi na grafiku po `events[].t_start`. Čita se iz Postgresa, pa radi i posle restarta
 backenda, a i za aktivnu vožnju (poslednja sekunda još nije upisana).
+`model` je pogled modela kamere na celu vožnju (`ModelReport`): vreme po boji alarma, koliko puta je
+alarm porastao, tvrda pravila, epizode po kategoriji (npr. "telefon 12 s od t=13") i epizode alarma
+sa uzrocima. Backend ga računa iz toka frejmova na `/telemetry` (`backend/app/services/model_report.py`),
+pa pipeline kamere sam ne pravi rezime. Za aktivnu vožnju je svež iz memorije. `null` ako nije stigao
+nijedan frejm modela.
 Greške: `404` ako vožnja ne postoji, nije snimljena ili pripada drugom nalogu. `503` ako je
 snimanje isključeno ili Postgres nije dostupan.
 
@@ -533,6 +591,8 @@ tabela u `backend/README.md`) i prosleđuje `camera` aplikaciji. U `camera.categ
 kategorije koje se ne boduju (npr. `eating_drinking`), pa ih prikaži sirovim imenom.
 `speed_kmh` je opciono i model ga ne šalje: brzinu daje backend (`GET /speed`). Simulator ga šalje
 da bi vožnja kroz nivoe bila ista svaki put.
+Uživo ga šalje `python notebooks/risk_pipeline.py --video 0 --mode prod` (~2/s plus svaka promena
+alarma, i JPEG video na `/video/frames`). Iz istog toka backend pravi i `TripReport.model`.
 
 ### `POST /video/frames`: NIJE za aplikaciju
 Strana sa kamerom šalje JPEG frejmove (~8/s, telo je sirov JPEG, `Content-Type: image/jpeg`) preko
@@ -685,6 +745,8 @@ Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početa
    pa simulator sa videom: `--video 0` (web kamera) ili `--video snimak.mp4` (treba OpenCV).
    Na kraju simulator ispiše najgore momente sa `video_url`.
 6. `--backend-speed`: simulator ne šalje brzinu, nego je određuje mock vožnja backenda.
+7. Pravi model na snimku iz kabine, bez telefona: `python notebooks/risk_pipeline.py --video snimak.mp4
+   --mode prod --start-trip demo` (pokrene i završi vožnju sam, ide brzinom snimka i šalje video).
 
 Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventualno pokrenula
 (pravilo jedne aktivne vožnje).

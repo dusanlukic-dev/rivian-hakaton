@@ -11,7 +11,7 @@ from typing import Any
 from app.domain.enums import Behavior, SafetyLevel, TripStatus
 from app.repositories.trips import InMemoryTripRepository
 from app.schemas.auth import User
-from app.schemas.recording import RiskEvent, TripReport, TripSample
+from app.schemas.recording import ModelReport, RiskEvent, TripReport, TripSample
 from app.schemas.trip import BehaviorSummary, TripSummary
 from app.services.alerts import level_for
 from app.services.auth import AuthService
@@ -77,12 +77,14 @@ async def report(
     owner = None
     if owner_id is not None:
         owner = user if user is not None and user.user_id == owner_id else await auth.user_by_id(owner_id)
+    model = recorder.live_model_report(trip_id) or stored.trip.get("model_report")
     return TripReport(
         trip=to_summary(live) if live is not None else summary_from_row(stored.trip),
         user=owner,
         window_s=recorder.cfg.sample_window_s,
         samples=[TripSample.model_validate(row) for row in stored.samples],
         events=[to_event(row, media_url) for row in stored.events],
+        model=ModelReport.model_validate(model) if model else None,
     )
 
 

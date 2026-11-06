@@ -37,6 +37,9 @@ python ..\notebooks\safety_client.py --replay frames.jsonl --speedup 2   # sniml
     pravilo vidljivosti `can_see` (vožnju sa nalogom vidi samo vlasnik).
   - `speed.py`: brzina, redom telefon > tick > mock scenario (kubna Bezier kriva između tačaka).
   - `video.py`: JPEG frejmovi → MP4 H.264 (ffmpeg dolazi u `imageio-ffmpeg` wheel-u).
+  - `model_report.py`: izveštaj modela kamere za celu vožnju (rezime rizika, vreme po boji alarma,
+    epizode ponašanja i alarma) iz toka frejmova. Pipeline to više ne radi. Samo standardna biblioteka,
+    pa ga uvozi i dev mode pipeline-a. Offline: `python -m app.services.model_report frames.jsonl`.
 - `app/repositories/trips.py`: aktivne vožnje u memoriji (`add/get/active/list`).
 - `app/repositories/database.py`: `Database` (engine, pravljenje šeme, SQLite redom), `get_database()`.
   `users.py`: tabele `users`, `user_sessions`. `recordings.py`: `trips`, `trip_samples`, `risk_events`.
@@ -54,6 +57,7 @@ python ..\notebooks\safety_client.py --replay frames.jsonl --speedup 2   # sniml
 | promeniš alarm modela | `evaluate_response` i `CAMERA_ALARM_MESSAGE` u `app/services/alerts.py` |
 | dodaš WebSocket događaj | `LiveEvent` u `enums.py`, `hub.broadcast` u ruti, `LiveMessage` u `docs/API.md` |
 | podesiš snimanje (prozor, spajanje momenata, dužina klipa) | `RecordingConfig` u `app/services/recording.py` |
+| podesiš izveštaj modela (min. epizoda, spajanje, uzroci alarma) | `ModelReportConfig` u `app/services/model_report.py` |
 | dodaš ili promeniš scenario brzine | `SCENARIOS` / `RANDOM_POOL` u `app/services/speed.py` (test proverava glatkoću i petlju) |
 | dodaš kolonu u izveštaj | model u `app/repositories/recordings.py`, `_Window.row` / `_Event.row` u `recording.py`, `app/schemas/recording.py`, `docs/API.md`, pa `services.ps1 reset` |
 | promeniš adresu ili ključeve Postgresa / S3 | `Settings` (`DATABASE_URL`, `S3_*`) u `app/core/config.py`, `.env` (primer: `.env.example`) |
@@ -109,6 +113,8 @@ python ..\notebooks\safety_client.py --replay frames.jsonl --speedup 2   # sniml
 - Kategorija modela koja nije u `CATEGORY_TO_BEHAVIOR` ide aplikaciji, ali se ne boduje, i jednom
   se loguje warning u konzoli servera.
 - WebSocket se ne vidi u OpenAPI-ju ni na `/docs`, pa se dokumentuje ručno u `docs/API.md`.
+- Izveštaj modela (`trips.model_report`) koristi `t`/`dt` po satu tickova (ista osa kao `samples`), ne `t`
+  modela. `peak_p` je najveće sirovo `p` među primljenim frejmovima (~2/s), jer `p_hat` ne stiže na backend.
 - Testovi: `tests/conftest.py` daje `client` sa svežim repo/hub-om, in-memory SQLite umesto Postgresa
   (`db`), `MemoryMediaStore`, `FakeClock`, `SpeedService(scenario="city")` i `AuthService`, plus
   pomoćne `register()` i `bearer()`. Koristi `with TestClient(app)`, da HTTP, WebSocket i recorder dele

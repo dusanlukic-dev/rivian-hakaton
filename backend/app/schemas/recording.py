@@ -86,6 +86,61 @@ class RiskEvent(BaseModel):
     clip_duration_s: float | None
 
 
+class ModelCategoryStats(BaseModel):
+    active_s: float = Field(description="Seconds the model marked the category active (moving only).")
+    episodes: int = Field(description="Behavior episodes of at least 0.5 s.")
+    max_episode_s: float
+
+
+class ModelEpisode(BaseModel):
+    """One behavior episode as the camera model saw it: a category active, short breaks merged."""
+
+    category: str = Field(description="The model's category name (phone_use, eyes_off_road...).")
+    t_start: float = Field(description="Seconds since the trip's first tick (matches `TripSample.t`).")
+    t_end: float
+    duration_s: float
+    peak_r: float = Field(description="Largest contribution to the model's risk.")
+    peak_p: float = Field(description="Largest raw probability `p` among the frames received (~2/s).")
+    open: bool = Field(description="Still going (live trip) or still going when the trip ended.")
+
+
+class ModelAlertEpisode(BaseModel):
+    """From the model's alert leaving green until it is green again."""
+
+    t_start: float
+    t_end: float
+    duration_s: float
+    max_level: Alert
+    peak_risk: float
+    causes: list[str] = Field(description="Categories that drove the risk, and `rule:<name>` for hard rules.")
+    open: bool
+
+
+class ModelReport(BaseModel):
+    """The camera model's own view of the whole drive, built from its frames (standing time not counted).
+
+    Only for display and analysis: the driver's score is `TripSummary`. Null in the report if no model
+    frames came (e.g. the simulator sends labels only).
+    """
+
+    frames: int = Field(description="Model frames received.")
+    duration_s: float = Field(description="Seconds of model frames while moving.")
+    stationary_s: float = Field(description="Seconds of model frames while standing (< 5 km/h), not counted.")
+    risk_mean: float = Field(description="Time-weighted mean of the model's risk 0..1.")
+    risk_rms: float = Field(description="Root mean square of the risk: long risky stretches weigh more.")
+    risk_p95: float
+    risk_max: float
+    model_score: float = Field(description="100 * (1 - risk_rms): the model's own 0..100 grade of the drive.")
+    time_in_alert_s: dict[Alert, float]
+    time_in_alert_frac: dict[Alert, float]
+    alerts: dict[str, int] = Field(description="Times the alert rose to yellow / to red.")
+    alerts_per_hour: dict[str, float]
+    rules: dict[str, int] = Field(description="Hard rule -> times it fired (microsleep, long_distraction...).")
+    categories: dict[str, ModelCategoryStats] = Field(description="Keys are the model's category names.")
+    episodes: list[ModelEpisode] = Field(description="Oldest first, at most 200.")
+    alert_episodes: list[ModelAlertEpisode] = Field(description="Oldest first, at most 200.")
+
+
 class TripReport(BaseModel):
     """Everything about one drive in one response, for the summary screen and the charts.
 
@@ -98,3 +153,6 @@ class TripReport(BaseModel):
     window_s: float = Field(description="Seconds per sample.")
     samples: list[TripSample]
     events: list[RiskEvent] = Field(description="Risky moments with their images and clips, oldest first.")
+    model: ModelReport | None = Field(
+        default=None, description="The camera model's own trip report; null if no model frames came."
+    )

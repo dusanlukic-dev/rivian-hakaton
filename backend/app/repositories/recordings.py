@@ -1,6 +1,7 @@
 """Trip recording tables (Postgres; SQLite in tests).
 
-    trips          one row per trip: who and when, then a running summary (every ~10 s and at the end)
+    trips          one row per trip: who and when, then a running summary (every ~10 s and at the end),
+                   including the camera model's own trip report (JSON)
     trip_samples   one row per second of driving: score, speed, labels, the camera model's numbers
     risk_events    one row per risky moment, with the S3 keys of its clip and thumbnail
 
@@ -40,6 +41,8 @@ class TripRow(Base):
     level: Mapped[str | None] = mapped_column(String(16))
     emergency_alert_sent: Mapped[bool | None]
     behaviors: Mapped[list | None] = mapped_column(JsonType)  # [{behavior, occurrences, total_seconds}]
+    # The camera model's own trip report (services/model_report.py), null if no model frames came.
+    model_report: Mapped[dict | None] = mapped_column(JsonType)
 
 
 class SampleRow(Base):

@@ -2,7 +2,8 @@
 
     trip start / every ~10 s / end ───────────────────────────────► trips (running summary)
     telemetry tick ─┬─► sample window (1 s) ──────────────────────► trip_samples
-                    └─► risky moment ─────────────────────────────► risk_events
+                    ├─► risky moment ─────────────────────────────► risk_events
+                    └─► camera model's trip report (model_report.py) ► trips.model_report
     JPEG frame ─────► frame buffer (a few s) ─► clip per moment ──► S3 clips/<trip>/<event>.mp4 + .jpg
 
 The routes call `trip_started`, `on_tick`, `on_video_frame` and `trip_ended`. Those only touch
@@ -35,6 +36,7 @@ from app.repositories.media import MediaStore, S3MediaStore
 from app.repositories.database import Database, get_database
 from app.repositories.recordings import EVENT, SAMPLE, TRIP_START, TRIP_UPDATE, RecordingRepository
 from app.services.alerts import level_for
+from app.services.model_report import ModelReportBuilder
 from app.services.scoring import DEFAULT_CONFIG as SCORING
 from app.services.speed import SpeedReading
 from app.services.video import clip_fps, encode_mp4
@@ -295,6 +297,7 @@ class _TripRecording:
     event: _Event | None = None
     clips: int = 0
     wall_last_summary: float = 0.0
+    model: ModelReportBuilder = field(default_factory=ModelReportBuilder)  # the camera model's own trip report
 
 
 @dataclass
@@ -398,10 +401,11 @@ class TripRecorder:
 
         self._add_to_window(rec, trip, t, speed)
         self._track_event(rec, trip, ts, t, now, dt, speed)
+        rec.model.add(t, dt, trip.camera, moving=speed.speed_kmh >= SCORING.stationary_speed_kmh)
         rec.last_score = trip.score
         if now - rec.wall_last_summary >= self.cfg.summary_interval_s:
             rec.wall_last_summary = now
-            self._enqueue(TRIP_UPDATE, self._summary_row(trip))
+            self._enqueue(TRIP_UPDATE, self._summary_row(trip, rec))
 
     def on_video_frame(self, jpeg: bytes) -> None:
         """One camera frame. Only a few seconds are kept, unless a risky moment is in progress."""
@@ -423,11 +427,17 @@ class TripRecorder:
         rec = self._trips.pop(trip.id, None)
         if rec is not None:
             self._close_open(rec)
+            rec.model.finish()
         self._frames.clear()
-        self._enqueue(TRIP_UPDATE, self._summary_row(trip))
+        self._enqueue(TRIP_UPDATE, self._summary_row(trip, rec))
         self._wake.set()
 
     # ---- reads for the report endpoints (they see everything recorded up to now) ----
+
+    def live_model_report(self, trip_id: str) -> dict[str, Any] | None:
+        """The camera model's report of a trip this process is recording right now (fresher than its row)."""
+        rec = self._trips.get(trip_id)
+        return rec.model.snapshot() if rec is not None else None
 
     async def read_trip(self, trip_id: str, samples: bool = True, events: bool = True) -> StoredTrip | None:
         """The trip row plus, if asked, its samples and risky moments. None if it was never recorded."""
@@ -525,8 +535,8 @@ class TripRecorder:
             self._overflowing = True
             logger.warning("Postgres has been down too long: dropping the oldest recorded rows")
 
-    def _summary_row(self, trip: Trip) -> dict[str, Any]:
-        """The trip's running summary (TripSummary numbers); with `ended_at` once the trip is over."""
+    def _summary_row(self, trip: Trip, rec: _TripRecording | None) -> dict[str, Any]:
+        """The trip's running summary (TripSummary numbers + the model's report); `ended_at` once it is over."""
         stats = sorted(trip.stats.items(), key=lambda item: (-item[1].total_seconds, item[0]))
         row = {
             "id": trip.id,
@@ -542,6 +552,8 @@ class TripRecorder:
                 for b, s in stats
             ],
         }
+        if rec is not None and not rec.model.empty:
+            row["model_report"] = rec.model.snapshot()
         if trip.ended_at is not None:
             row["ended_at"] = _to_utc(trip.ended_at)
         return row
