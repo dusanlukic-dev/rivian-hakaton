@@ -30,7 +30,17 @@ npx expo install --fix    # align package versions with SDK 58
 ```
 
 Metro over Wi-Fi instead of USB: phone and laptop on the same network, `npm start`, then in the dev client enter
-`http://<laptop-ip>:8081`. The Windows firewall must allow 8081 (`.claude/knowledge/networking.md`).
+`http://<laptop-ip>:8081`. On Matija's laptop `node.exe` is firewall-blocked on Public networks (`.claude/knowledge/networking.md`), so stay on USB.
+
+**Agent-driven launch (verified 2026-11-06):**
+```bash
+npm start                                   # background shell. Don't set CI=1 if you need hot reload (CI mode disables reloads)
+adb reverse tcp:8081 tcp:8081
+adb shell am force-stop dev.hakaton.driveralert
+adb shell am start -a android.intent.action.VIEW -d "driveralert://expo-development-client/?url=http%3A%2F%2Flocalhost%3A8081" dev.hakaton.driveralert
+# wait for "Android Bundled … (N modules)" in Metro's output, then: android screen capture --output=<scratchpad>/s.png and Read it
+```
+A blank white screen means the app started before Metro was reachable. Force-stop and relaunch as above.
 
 ## Toolchain on this PC (details: `.claude/knowledge/environment.md`)
 

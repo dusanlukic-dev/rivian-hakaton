@@ -12,7 +12,7 @@
 | Simulator | ✅ `notebooks/safety_client.py` drives a full trip through every level, verified over WS |
 | CV models | manual / not integrated. The simulator stands in for them |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
-| Mobile app | Expo SDK 58 scaffold, placeholder screen, **all planned native modules + alerting config**. Dev build on the A54: first build in progress (Windows path-limit fix applied, D18) |
+| Mobile app | Expo SDK 58 scaffold, placeholder screen, **all planned native modules + alerting config**. **Dev build installed on the A54 ✅**: loads the bundle from Metro over USB, merged manifest verified (2026-11-06) |
 | Dashboard | user's starter in `frontend/dashboard`, deps installed, `npm run build` ✅. Not adapted to the project yet |
 | Phone ↔ laptop | ✅ the phone reaches the backend over the hotspot (`10.190.62.27:8000`) and over USB (`adb reverse`) |
 | Tooling (Matija's PC) | ✅ Android SDK + adb + `android` CLI, portable JDK 17 toolchain, Ninja 1.13.2 swap, Python 3.13, A54 authorized |
@@ -55,8 +55,10 @@
   another device won't work over the hotspot. USB + `adb reverse` and `localhost` are fine. The fix (admin) is in `networking.md`.
 - New env vars (`ANDROID_HOME`, PATH → adb/android) only reach **newly started** shells. Restart VS Code once.
 - **Windows long paths:** the SDK CMake's Ninja was swapped to 1.13.2 (D18). Other PCs, or an SDK CMake reinstall, need the same swap, or the C++ build fails.
-- Unverified: the sound-name format for expo-notifications channels versus notify-kit; whether a full-screen intent wakes the A54 (Android 16
-  needs the special-access toggle); FGS survival with the screen off on battery (Samsung kills it unless Unrestricted).
+- Unverified at runtime: whether a full-screen intent wakes the A54 (Android 16 needs the special-access toggle); FGS survival with the
+  screen off on battery (Samsung kills it unless Unrestricted); alarm-stream playback in silent mode. The manifest side is verified (`android-alerting.md`).
+- The placeholder screen is light-themed. `userInterfaceStyle: dark` only affects the system UI, so screens must apply the dark theme themselves.
+- If the dev build launches before Metro runs, it sits on a blank white screen. Start Metro, then force-stop and relaunch (skill `mobile-dev`).
 - There's no WS heartbeat while no trip is active, so silence can't detect a dead socket then (`contract-notes.md`).
 - `npm audit` reports moderate vulns in Expo/ESLint transitive deps (ignored for the hackathon). The dashboard's main chunk is > 500 kB (from the starter).
 
@@ -84,4 +86,5 @@
   `frontend/dashboard`. Wrote `.claude/` (rules, skills: backend-local, android-device, mobile-dev, dashboard-dev, ship; knowledge books).
 - 2026-11-06, Claude: the backend landed mid-session (`903df76`), so the docs were realigned to `docs/API.md`. The speculative WS draft and
   mock-server plan were dropped (D15). Verified backend tests, the simulator → WS flow, and phone → backend over the hotspot and USB. Fixed the
-  first native build (Windows path limit → Ninja swap, D18).
+  first native build (Windows path limit → Ninja swap in both SDK CMakes, D18). Rebuilt in 3m41s, installed on the A54, bundle loads,
+  screenshot OK. Merged manifest has all alerting permissions, the FGS types, the lock-screen flags, cleartext and the raw sounds.

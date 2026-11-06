@@ -89,6 +89,11 @@ adb shell cmd appops set $P RUN_ANY_IN_BACKGROUND allow
 
 ## To verify on the device (log the results here)
 
+- [x] 2026-11-06, the merged debug manifest contains `USE_FULL_SCREEN_INTENT`, `FOREGROUND_SERVICE_{LOCATION,SPECIAL_USE,MEDIA_PLAYBACK}`,
+  `ACCESS_NOTIFICATION_POLICY`, `REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`, `SYSTEM_ALERT_WINDOW`, `POST_NOTIFICATIONS`, `VIBRATE`,
+  `WAKE_LOCK`, location and camera. **No `RECORD_AUDIO`.** The notify-kit service has `foregroundServiceType="location|specialUse"` + the
+  special-use subtype property. MainActivity has `showWhenLocked`/`turnScreenOn`. Cleartext is on. `res/raw` holds `alarm_critical.wav`,
+  `alarm_warning.wav`, `chime.wav`, so notify-kit's `sound` is the name without an extension (e.g. `alarm_critical`). Small icon `ic_stat_alert` was generated.
 - [ ] Alarm channel created by expo-notifications plays `alarm_critical` on the alarm stream with the ringer on vibrate.
 - [ ] A notify-kit `displayNotification` on that channel uses the channel sound; `loopSound` repeats it.
 - [ ] `fullScreenAction` wakes a locked A54 and shows the app over the keyguard.
