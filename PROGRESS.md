@@ -2,13 +2,13 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, backend storage session (Claude, for Matija Vujić).
+> Last updated: 2026-11-06, alignment after the frontend pull (Claude, for Matija Vujić).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 56 tests pass. Accepts the CV model's frame records (`TripState.camera`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips → `GET /trips/{id}/timeline`, `/events`, `/media/...`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
+| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 59 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips → `GET /trips/{id}/timeline`, `/events`, `/media/...`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
@@ -30,9 +30,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Re-copy API.md §4 types into both apps** (2026-11-06 backend changes): new label `eyes_off_road` + `TripState.camera` (model risk,
-   colour, categories), then **`TripState.speed_kmh` / `speed_source`** and the report types (`TripTimeline`, `TripSample`, `RiskEvent`,
-   `SpeedStatus`, `PhoneSpeedIn`). Add `eyes_off_road` to the behaviour tables/icons/strings; show `speed_kmh` (speedometer, "standing: no penalty").
+1. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
+   ("standing: no penalty" below 5 km/h), optionally the model's `camera.risk` / `alert` colour. Display only, `response` still drives alerts.
 2. **Trip report screen** (API.md §5 + §7 "Izveštaj"): score/speed chart from `GET /trips/{id}/timeline`, "worst moments" from
    `GET /trips/{id}/events?order=worst` with thumbnail + `video_url` playback (expo-video). Hide the button on `503` (recording down).
 3. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
@@ -64,12 +63,13 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
   (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
 
+- **Node on the backend laptop (Matija Vujić) is 22.11 / npm 10.9:** too old for the frontends (vite 8 build fails with "Cannot find
+  native binding", the Expo CLI wants ≥ 22.13, `npm ci` in mobile fails on the lock). Upgrade Node before running the apps there (`environment.md`).
+
 ## Open questions
 
-- **CV:** `notebooks/risk_config.json` names the categories: `phone_use`, `eyes_off_road`, `hands_off_wheel`, `eating_drinking`,
-  `drowsiness`, `eyes_closed`. **`eyes_closed` is not in `CATEGORY_TO_BEHAVIOR`** (`backend/app/services/camera.py`), so it is shown but
-  not scored (map it to `drowsy`?). `microsleep` is a rule (`rules_triggered`), not a category; `turned_around` / `hands_off` don't exist.
-  Is there a separate `looking_behind`? Does `hands_off_wheel` mean both hands or at least one? Do the models run live?
+- **CV:** the model has no `looking_behind` / `turning_around` output (only the simulator sends them). Will the CV team add one?
+  `risk_pipeline.py` doesn't call `SafetyClient.send_frame` yet, so the models don't run live against the backend.
 - **Production storage:** split the in-car compute server from a report server the driver can reach away from the car? Clip access
   (signed URLs instead of the demo's public bucket) and retention are still open.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
@@ -102,3 +102,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   mocked by the backend (6 Bezier scenarios, random per trip); phone GPS is opt-in (`PHONE_SPEED_ENABLED`). Portable Postgres 18.6 + RustFS 1.0.4
   without Docker (`backend/scripts/services.ps1`) plus `docker-compose.yml`. Verified: 56 tests (40× repeat after a CREATE TABLE race fix),
   real-time runs with video on real Postgres + RustFS, Postgres/RustFS stopped mid-drive (live path unaffected, rows flushed once back).
+- 2026-11-06, Claude (alignment after the frontend pull, for Matija Vujić): model categories come from `risk_config.json`, so
+  `eyes_closed` → `drowsy`, `eating_drinking` is ignored, and the guessed names are gone (`services/camera.py` + `tests/test_camera_mapping.py`,
+  which fails on an unknown category). `hands_off_wheel` confirmed as "no hand on the wheel". Both apps re-copied §4 types, and
+  `eyes_off_road` got a tile. `.gitignore` now covers CV models, pipeline logs and cabin videos. Verified: 59 backend tests, mobile
+  typecheck + lint, dashboard `tsc -b` + lint + vite build (in a scratch copy with Node 22.11; see Known issues).

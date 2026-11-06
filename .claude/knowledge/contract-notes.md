@@ -48,6 +48,14 @@
    models during demos while CV isn't ready. API.md says telemetry is "not for the app", so this needs the team's OK.
 3. An optional `ack` from the phone ("I'm focused") for analytics.
 
+## Types re-copied (2026-11-06, after the camera + storage changes)
+
+- Both apps' `src/api/types.ts` = docs/API.md §4 as of `7d6e66b` (`eyes_off_road`, `CameraView`, `speed_kmh` / `speed_source`,
+  report and speed types). `eyes_off_road` has a tile in both apps. Nothing *shows* `camera`, `speed_kmh` or the report yet.
+- `camera.categories` keys are the **model's** names (`phone_use`, `eyes_off_road`, `hands_off_wheel`, `eating_drinking`, `drowsiness`,
+  `eyes_closed`), not `Behavior`. `eating_drinking` arrives there but is never scored.
+- Hand-built `TripState` objects (mobile `fakeState` in `state/live.ts`) need the new required fields: `camera`, `speed_kmh`, `speed_source`.
+
 ## Backend storage + speed (2026-11-06, backend session; verified with real Postgres + RustFS)
 
 All additive. Nothing the apps already use changed shape.
