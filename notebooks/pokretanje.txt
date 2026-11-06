@@ -1,0 +1,3 @@
+- pokrenuti bat skriptu na windows ili sh skriptu na linux da bi se instalirali modeli
+- video snimak iz cabin camera staviti tamo gde je risk_pipeline.py fajl
+- pokrenuti: python risk_pipeline.py --video snimak.mp4 --show
