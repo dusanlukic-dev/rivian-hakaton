@@ -1,0 +1,16 @@
+@use '../utils/css/functions';
+@use '../utils/css/mediaqueries' as mq;
+
+.showcase-fluid {
+    font-size: functions.mapped(14px, 40px);
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.showcase-mq::after {
+    content: 'desktop layout (> 768px)';
+
+    @media #{mq.$phone} {
+        content: 'phone layout (≤ 768px)';
+    }
+}

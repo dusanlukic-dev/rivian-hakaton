@@ -1,0 +1,11 @@
+.modal {
+    position: fixed;
+    z-index: 9988;
+    inset: 0;
+    backdrop-filter: blur(4px);
+}
+
+// Replaces the scrollbar that disappears while scroll is locked (see Modal.tsx)
+.modal-open #root {
+    padding-right: var(--scrollbar-width);
+}

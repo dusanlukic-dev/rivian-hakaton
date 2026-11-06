@@ -1,0 +1,17 @@
+@use 'sass:math';
+
+/// Fluid value that scales linearly with the viewport between $min-vw and $max-vw
+/// (defaults: 402px Figma phone → 1440px Figma desktop) and is clamped outside that range.
+/// Usage: font-size: functions.mapped(16px, 32px);
+@function mapped($min-value, $max-value, $min-vw: 402px, $max-vw: 1440px) {
+    $min-numeric: math.div($min-value, ($min-value * 0 + 1));
+    $max-numeric: math.div($max-value, ($max-value * 0 + 1));
+    $min-vw-numeric: math.div($min-vw, ($min-vw * 0 + 1));
+    $max-vw-numeric: math.div($max-vw, ($max-vw * 0 + 1));
+
+    $slope: math.div($max-numeric - $min-numeric, $max-vw-numeric - $min-vw-numeric);
+    $lower: math.min($min-numeric, $max-numeric);
+    $upper: math.max($min-numeric, $max-numeric);
+
+    @return clamp(#{$lower}px, calc(#{$min-numeric}px + (100vw - #{$min-vw-numeric}px) * #{$slope}), #{$upper}px);
+}

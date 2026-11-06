@@ -1,0 +1,11 @@
+.qr-scanner-viewport video {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+}
+
+/* Hide the default border/shadow the lib adds to the container */
+.qr-scanner-viewport {
+  border: none !important;
+  box-shadow: none !important;
+}
