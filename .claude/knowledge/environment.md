@@ -1,0 +1,47 @@
+# Dev environment (Matija's laptop = the "car computer")
+
+Recorded 2026-11-06. Update it when something changes. Other teammates' machines will differ; the repo itself is machine-independent.
+
+## Toolchain
+
+| tool | version | where / notes |
+|---|---|---|
+| Windows | 11 Pro (26300) | PowerShell 5.1 + Git Bash. PS 5.1 has no `&&`, and `>` corrupts binary output |
+| Node / npm | 26.13.0 / 12.2.1 | nvm4w (`C:\nvm4w\nodejs`). **npm 12 blocks dependency install scripts** unless allowed (`npm install-scripts ls/approve`). Only `@parcel/watcher` was blocked (prebuilt binary, harmless) |
+| git | 2.56 | identity "Matija Radović" <radovic1918@gmail.com>. SSH to GitHub works |
+| Python | 3.15.2 | not used by the frontend. Backend teammate: very new Python, wheels (pydantic-core…) may lag. 3.12/3.13 is safer |
+| Java (global) | Temurin **25** | `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-25.0.5.8-hotspot\`, untouched |
+| Java (Android toolchain) | Temurin **17.0.21+9**, portable | `C:\Users\matija\.jdks\jdk-17.0.21+9`, registered only as a Gradle toolchain candidate in `~/.gradle/gradle.properties` (`org.gradle.java.installations.paths`). Not on PATH |
+| Android SDK | — | `C:\Users\matija\AppData\Local\Android\Sdk` (Android Studio's default location, so a later Studio install reuses it) |
+| ├ cmdline-tools | 23.0.0 (`latest`) | ships the new **`android` CLI** (`android sdk install …`, `android screen capture`, `android layout`, `android input`, `android device hub`). `sdkmanager` is deprecated and delegates to it |
+| ├ platform-tools | 37.0.1 | adb |
+| ├ platforms | android-37.0 | compileSdk 37 |
+| ├ build-tools | 37.0.0 | |
+| ├ NDK | 27.1.12297006 | RN 0.88's version catalog |
+| └ CMake | 3.30.5 | RN 0.88 default (`CMAKE_VERSION` env overrides) |
+| Expo / RN / React | SDK 58.0.23 / 0.88.1 / 19.3.0 | TypeScript 6.0, React Compiler on, New Architecture only, Hermes |
+| Gradle / AGP / Kotlin | 9.4.1 / 9.2.1 / 2.2.0 | from the generated `android/`; minSdk 24, targetSdk 36, compileSdk 37 |
+| Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe` | headless screenshots (dashboard-dev skill) |
+
+User env vars set by setup: `ANDROID_HOME`, plus PATH entries `%ANDROID_HOME%\platform-tools` and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
+**Shells or VS Code windows opened before setup don't see them**: restart VS Code, or set them in-session (mobile-dev skill).
+
+## Test phone
+
+| fact | value |
+|---|---|
+| model | Samsung Galaxy A54 5G, **SM-A546B** |
+| OS | **Android 16 (API 36), One UI 8.0**, build A546BXXSFEYJ9, patch 2025-10-01 |
+| ABI / screen | arm64-v8a · 1080×2340, density 450 (override 420) |
+| adb serial | `RZCW60AY39Y`. USB debugging authorized for this PC (2026-11-06). Windows shows "ADB Interface" (Samsung driver OK) |
+| hotspot | interface `swlan0`, **randomized subnet**: on 2026-11-06 the phone was `10.190.62.95/24` |
+
+Android 16 means full-screen intents need the special-access toggle for non-alarm/call apps, and foreground-service types are mandatory.
+
+## Network (when the laptop is on the phone's hotspot)
+
+- Laptop adapter `WiFi`: `10.190.62.27`, gateway (= the phone) `10.190.62.95`. Both change between hotspot sessions.
+- Windows classed the hotspot as **Public**, so inbound to 8000/8081 is blocked until a firewall rule exists or the profile is set
+  to Private (`networking.md` § Windows gotchas; the adapter alias here is `WiFi`, not `Wi-Fi`).
+- Extra adapters exist: VirtualBox host-only `192.168.56.1` ("Ethernet 2"), Hyper-V `192.168.16.1`, Npcap loopback. Code that guesses the
+  "LAN IP" must pick the adapter with the default route (the UDP-connect trick in `backend/run.py` does). Never take the first adapter.

@@ -1,0 +1,47 @@
+# Repo-wide ignores (each app also has its own .gitignore)
+
+# Node
+node_modules/
+npm-debug.log*
+.npm/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.jks
+*.keystore
+!debug.keystore
+
+# Python (backend / notebooks)
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Build outputs
+dist/
+build/
+*.tsbuildinfo
+
+# Generated native projects (Expo CNG)
+frontend/mobile/android/
+frontend/mobile/ios/
+
+# Local-only reference copy of the Expo template demo
+frontend/mobile/example/
+
+# Claude Code personal files
+.claude/settings.local.json
+CLAUDE.local.md
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
