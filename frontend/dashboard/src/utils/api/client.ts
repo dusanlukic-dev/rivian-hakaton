@@ -4,7 +4,7 @@ export const TOKEN_KEY = 'auth_token'
 /** Fired on window when an authenticated request gets a 401 — AuthProvider listens and logs out */
 export const UNAUTHORIZED_EVENT = 'auth:unauthorized'
 
-/** '' in dev (requests go through the Vite proxy), VITE_API_URL in prod. Use it for SignalR hub URLs too. */
+/** '' in dev (requests go through the Vite proxy), VITE_API_URL in prod. The live WebSocket URL is derived from it too (useLive). */
 export const API_BASE_URL = import.meta.env.DEV ? '' : (import.meta.env.VITE_API_URL ?? '')
 
 const api = axios.create({

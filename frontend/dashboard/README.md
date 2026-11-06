@@ -33,7 +33,7 @@ You can add more shadcn components when you need them, e.g. `npx shadcn@latest a
 | `context/AuthContext` | JWT in localStorage, decoded claims and roles, `login(token)` / `logout()`, auto-logout on 401 |
 | `utils/api/client` | axios instance: base URL, Bearer token, 401 handling, ngrok header. `API_BASE_URL` |
 | `utils/jwt` | `decodeJwt` (UTF-8 safe), `isJwtExpired`, `getJwtRoles` (understands ASP.NET's role claim URI) |
-| `hooks/useSignalR` | SignalR hub connection that keeps retrying until the backend is back. Re-joins groups after a reconnect |
+| `hooks/useLive` | Backend WebSocket (`/api/v1/ws`) that keeps retrying until the backend is back. `onOpen` runs after every reconnect |
 | `hooks/useLocalStorage` | `useState` persisted to localStorage, synced across components and tabs |
 | `hooks/useDebounce`, `useVisibility` | Debounced value, and whether the tab is visible |
 | `pages/ErrorPage` | Router `errorElement`: 404 page with an animated link, plus a generic error page |
@@ -48,12 +48,9 @@ Every component has its own folder (component, private child components, `.scss`
 ## Snippets
 
 ```tsx
-// SignalR (with the .NET backend we used last time)
-const { state, connection } = useSignalR({
-  url: `${API_BASE_URL}/hubs/queue`,
-  accessToken: token,
-  onConnected: (conn) => conn.invoke('JoinQueue', String(queueId)),
-  handlers: { TicketCalled: (e: TicketCallEvent) => toast(e.ticketNumber) },
+// Live backend WebSocket (/api/v1/ws), reconnects forever
+const { status } = useLive({
+  onMessage: (msg: LiveMessage) => { if (msg.type === 'state') setTrip(msg.data) },
 })
 
 // Table

@@ -15,7 +15,26 @@
   }
 }
 
+/* Car alarm flashing: 1 Hz. D14 caps flashing at 3 Hz and the alarm overlays at 2 Hz, so never go below 0.5s per cycle */
+@theme {
+  --animate-alarm-pulse: alarm-pulse 1s ease-in-out infinite;
+
+  @keyframes alarm-pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}
+
 @theme inline {
+  --color-lamp-green: var(--lamp-green);
+  --color-lamp-green-yellow: var(--lamp-green-yellow);
+  --color-lamp-yellow: var(--lamp-yellow);
+  --color-lamp-red: var(--lamp-red);
   --font-heading: var(--font-sans);
   --font-sans: 'IBM Plex Sans Variable', sans-serif;
   --color-sidebar-ring: var(--sidebar-ring);
@@ -91,6 +110,11 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  /* The car's dashboard lamp (`response.dashboard_light`, colours from docs/API.md §7). Same in both themes */
+  --lamp-green: #22c55e;
+  --lamp-green-yellow: #a3e635;
+  --lamp-yellow: #facc15;
+  --lamp-red: #ef4444;
 }
 
 .dark {

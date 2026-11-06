@@ -2,8 +2,7 @@ import { useState } from 'react'
 import useDebounce from '@/hooks/useDebounce'
 import useVisibility from '@/hooks/useVisibility'
 import useLocalStorage from '@/hooks/useLocalStorage'
-import { useSignalR, type HubConnectionState } from '@/hooks/useSignalR'
-import { API_BASE_URL } from '@/utils/api/client'
+import { liveUrl, useLive, type LiveStatus } from '@/hooks/useLive'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -26,33 +25,30 @@ const CounterCard = ({ name }: { name: string }) => {
   )
 }
 
-const stateColor: Record<HubConnectionState, string> = {
-  disconnected: 'bg-muted text-muted-foreground',
+const statusColor: Record<LiveStatus, string> = {
+  idle: 'bg-muted text-muted-foreground',
   connecting: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400',
-  reconnecting: 'bg-yellow-500/15 text-yellow-700 dark:text-yellow-400',
-  connected: 'bg-green-500/15 text-green-700 dark:text-green-400',
-  error: 'bg-destructive/10 text-destructive',
+  reconnecting: 'bg-destructive/10 text-destructive',
+  open: 'bg-green-500/15 text-green-700 dark:text-green-400',
 }
 
-const SignalRDemo = () => {
-  const [url, setUrl] = useState(`${API_BASE_URL}/hubs/queue`)
+const LiveDemo = () => {
   const [enabled, setEnabled] = useState(false)
   const [events, setEvents] = useState<string[]>([])
-  const { state } = useSignalR({
-    url,
+  const { status } = useLive({
     enabled,
-    handlers: { TicketCalled: (data: unknown) => setEvents((e) => [JSON.stringify(data), ...e].slice(0, 5)) },
+    onMessage: (msg) => setEvents((e) => [`${new Date().toLocaleTimeString()} ${msg.type}`, ...e].slice(0, 5)),
   })
 
   return (
     <Demo className="flex-col items-stretch">
       <div className="flex flex-wrap items-center gap-3">
-        <Input className="max-w-xs font-mono" value={url} onChange={(e) => setUrl(e.target.value)} />
+        <code className="font-mono text-[11px]">{liveUrl()}</code>
         <Label className="gap-2"><Switch checked={enabled} onCheckedChange={setEnabled} />enabled</Label>
-        <Badge className={stateColor[state]}>{state}</Badge>
+        <Badge className={statusColor[status]}>{status}</Badge>
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Without a backend it cycles between connecting and error while it retries, which is expected. With a hub running at that URL it goes to connected, and <code>TicketCalled</code> events show up here.
+        Without a backend it cycles between connecting and reconnecting, which is expected. With the backend up it goes to open, and messages (<code>state</code>, <code>trip_started</code>…) show up here while a trip runs.
       </p>
       {events.map((e, i) => <code key={i} className="font-mono text-[11px]">{e}</code>)}
     </Demo>
@@ -76,8 +72,8 @@ const HooksPage = () => {
   return (
     <DocPage
       title="Hooks"
-      intro={<>From <code>@/hooks/*</code>. <code>useDebounce</code>, <code>useVisibility</code> and <code>useLocalStorage</code> are default exports. <code>useSignalR</code> is a named export.</>}
-      toc={[['use-debounce', 'useDebounce'], ['use-visibility', 'useVisibility'], ['use-local-storage', 'useLocalStorage'], ['use-signalr', 'useSignalR']]}
+      intro={<>From <code>@/hooks/*</code>. <code>useDebounce</code>, <code>useVisibility</code> and <code>useLocalStorage</code> are default exports. <code>useLive</code> is a named export.</>}
+      toc={[['use-debounce', 'useDebounce'], ['use-visibility', 'useVisibility'], ['use-local-storage', 'useLocalStorage'], ['use-live', 'useLive']]}
     >
       <DocSection id="use-debounce" title="useDebounce" importLine="import useDebounce from '@/hooks/useDebounce'">
         <P>Returns <code>value</code> once it has stopped changing for <code>delay</code> ms. Use it for search-as-you-type, so you send one request instead of one per keystroke.</P>
@@ -135,33 +131,27 @@ const HooksPage = () => {
         ]} />
       </DocSection>
 
-      <DocSection id="use-signalr" title="useSignalR" importLine="import { useSignalR } from '@/hooks/useSignalR'">
+      <DocSection id="use-live" title="useLive" importLine="import { useLive, liveUrl } from '@/hooks/useLive'">
         <P>
-          Connects to an ASP.NET Core SignalR hub and never gives up. A dropped connection retries after 0, 2 and 5 s, then every 10 s, and so does a first connect that fails (e.g. the backend isn't up yet).
-          <code>onConnected</code> runs after every connect <em>and reconnect</em>. Join groups and refetch state there, because the server forgets group membership when the connection drops and anything sent while you were offline is lost. Handlers can be inline functions; only changing the set of event names reconnects.
+          The backend's receive-only WebSocket (<code>/api/v1/ws</code>, docs/API.md §6). It never gives up: a dropped or failed connection retries after 1, 2, 4 and 8 s, then every 10 s.
+          <code>onOpen</code> runs after every connect <em>and reconnect</em>; the server sends the current <code>state</code> right away if a trip is active. Handlers can be inline functions; only <code>url</code> or <code>enabled</code> reconnect.
         </P>
-        <SignalRDemo />
+        <LiveDemo />
         <Code>{`
-          const { state, connection } = useSignalR({
-            url: \`\${API_BASE_URL}/hubs/queue\`,   // dev: '/hubs/queue' via the Vite proxy (ws: true)
-            accessToken: token,                 // sent as ?access_token= (configure JwtBearerEvents.OnMessageReceived on the server)
-            enabled: !!queueId,
-            onConnected: (conn) => conn.invoke('JoinQueue', String(queueId)),
-            handlers: {
-              TicketCalled: (e: TicketCallEvent) => toast(\`Ticket \${e.ticketNumber} → counter \${e.counterId}\`),
+          const { status } = useLive({
+            onOpen: () => setAwaitingState(true),
+            onMessage: (msg: LiveMessage) => {
+              if (msg.type === 'state') setTrip(msg.data)
+              if (msg.type === 'trip_ended') setSummary(msg.data)
             },
           })
-
-          // client → server (invoke throws while reconnecting)
-          if (state === 'connected') await connection?.invoke('SendMessage', 'hi')
         `}</Code>
         <Props rows={[
-          ['url', 'string', '', 'Full hub URL'],
-          ['accessToken', 'string | null', '', 'JWT for [Authorize] hubs'],
-          ['handlers', 'Record<string, (...args) => void>', '{}', 'Server → client events'],
-          ['onConnected', '(conn) => void | Promise', '', 'Runs after connect and every reconnect: join groups, refetch'],
+          ['url', 'string', 'liveUrl()', "Dev: same-origin /api/v1/ws via the Vite proxy (ws: true). Build: VITE_API_URL's host"],
+          ['onMessage', '(msg: LiveMessage) => void', '', 'Every server message, parsed (types in @/api/types)'],
+          ['onOpen', '() => void', '', 'After every connect and reconnect'],
           ['enabled', 'boolean', 'true', 'false = no connection'],
-          ['returns', '{ connection, state }', '', "state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting' | 'error' ('error' = failed, retrying)"],
+          ['returns', '{ status }', '', "status: 'idle' | 'connecting' | 'open' | 'reconnecting'"],
         ]} />
       </DocSection>
     </DocPage>

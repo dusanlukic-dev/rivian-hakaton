@@ -41,7 +41,9 @@ and Read the PNG. `--dump-dom` gives the rendered HTML instead.
 | `components/layout/` (barrel) | `PhoneFrame/`, `MobileNav/`, `RequireAuth/`, `SidebarLayout/` (also exports `SidebarButton`; private `SidebarLink` + `sidebarItemClass.ts`) |
 | `components/shared/` (barrel) | `LoginForm/`, `DataTable/`, `QrScanner/` (private `QrBoxOutline`), `Modal/`, `Onboarding/`, `SplashScreen/`, `Section/`, `BackButton/` |
 | `context/AuthContext/` (barrel, also `@/context`) | `AuthProvider`, `useAuth()`, `type AuthContextValue`; files `AuthContext.ts` (createContext), `AuthProvider.tsx`, `useAuth.ts` |
-| `hooks/` | `useDebounce` (default), `useVisibility` (default), `useLocalStorage` (default), `useSignalR` (named) |
+| `hooks/` | `useDebounce` (default), `useVisibility` (default), `useLocalStorage` (default), `useLive` (named: backend WebSocket `/api/v1/ws`, never-give-up reconnect, `liveUrl()`) |
+| `api/` | `types.ts` = docs/API.md §4 verbatim (identical to mobile). `trips.ts`: `startTrip`, `endTrip`, `postTelemetry`, `localIsoTimestamp`, `httpStatus`, `errorMessage` |
+| `pages/CarScreen/` | `/` = the car screen. `useCarScreen.ts` (live state + sound reactions), `audio.ts` (clips + remembered sound choice), `carMeta.ts` (labels, icons, lamp colours), private children (StatusPanel, BehaviorTiles, SimulatorPanel…). `?sim` opens the simulator |
 | `utils/api/client.ts` | default axios `api`; `API_BASE_URL`, `TOKEN_KEY='auth_token'`, `UNAUTHORIZED_EVENT='auth:unauthorized'` |
 | `utils/jwt.ts` | `decodeJwt`, `isJwtExpired`, `getJwtRoles` |
 | `utils/css/` | `_functions.scss` → `mapped($min, $max, $min-vw: 402px, $max-vw: 1440px)` (clamped fluid value); `_mediaqueries.scss` → `$phone`, `$tablet`, `$desktop`… |
@@ -50,7 +52,7 @@ and Read the PNG. `--dump-dom` gives the rendered HTML instead.
 | `pages/` (barrel: `import { ErrorPage, LoginPage } from '@/pages'`) | |
 | `pages/ErrorPage/` | 404 (private `PageNotFound`) via `isRouteErrorResponse(...).status === 404`, else `DefaultError`. Logs the error in DEV. Styles in `ErrorPage.scss` |
 | `pages/LoginPage/` | Example: posts `/api/auth/login`, expects `{ token }`, calls `login()`, redirects to `state.from` |
-| `types/declarations/` | `env.d.ts` (`VITE_API_URL`), `imagetools.d.ts` (`?defaultopt` → `Picture`) |
+| `types/declarations/` | `env.d.ts` (`VITE_API_URL`), `imagetools.d.ts` (`?defaultopt` → `Picture`), `globals.d.ts` (`__BRAND__` from repo-root `config/brand.json`, `__LAN_IP__`, `__BACKEND_PORT__`: injected by `vite.config.ts` `define`) |
 | `showcase/` | Living docs. See below |
 
 ## API cheat sheet
@@ -73,7 +75,7 @@ const { token, claims, roles, isAuthenticated, login, logout } = useAuth()
 const debounced = useDebounce(value, 500)
 const isVisible = useVisibility()
 const [value, setValue, remove] = useLocalStorage<T>(key, initial)    // setValue(v | prev => v); syncs across components + tabs
-const { connection, state } = useSignalR({ url, accessToken?, handlers?: { Event: fn }, onConnected?: (conn) => conn.invoke('JoinGroup', id), enabled? })
+const { status } = useLive({ onMessage: (msg: LiveMessage) => …, onOpen?, url?=liveUrl(), enabled? })   // 'idle' | 'connecting' | 'open' | 'reconnecting'
 ```
 
 ## Non-obvious behaviour and gotchas
@@ -84,10 +86,9 @@ const { connection, state } = useSignalR({ url, accessToken?, handlers?: { Event
 - **Don't add `<Route path="*">` for 404s.** Unmatched URLs already reach the root `errorElement` as a 404 route error. A normal `*` route would render ErrorPage with no route error, so it would show the generic page instead.
 - **Lazy routes need `hydrateFallbackElement={<></>}`** (or a `HydrateFallback` somewhere in the match). Otherwise React Router warns "No HydrateFallback element provided" when the first page load hits the lazy route.
 - **Auth expiry:** `isJwtExpired` is only checked when the app loads (`readStoredToken`). During a session, expiry relies on the backend returning 401. The axios interceptor then clears the token and dispatches `UNAUTHORIZED_EVENT`, and AuthProvider logs out. The frontend never verifies signatures, so fake unsigned JWTs work (see `showcase/_kit/fakeJwt.ts`).
-- **Dev vs prod URLs:** `API_BASE_URL` is `''` in dev (Vite proxy, no CORS) and `VITE_API_URL` in prod (the backend must allow CORS). Use it for SignalR too: `${API_BASE_URL}/hubs/x`. The proxy has `ws: true` for `/hubs`.
+- **Dev vs prod URLs:** `API_BASE_URL` is `''` in dev (Vite proxy, no CORS) and `VITE_API_URL` in prod (the backend must allow CORS). `liveUrl()` derives the WebSocket URL from it. The proxy has `ws: true` for `/api` and `/hubs`.
 - **ngrok:** both the axios client and the proxy send `ngrok-skip-browser-warning: true`.
-- **SignalR:** it never gives up. Dropped connections retry after 0, 2 and 5 s, then every 10 s (custom retry policy; SignalR's default stops after 4 tries). A failed first `start()` gets the same retries from its own timer, since `withAutomaticReconnect` doesn't cover it. `state: 'error'` means "failed, retrying". `onConnected` runs after every connect and reconnect (groups are lost on reconnect, so join them and refetch there). Every state write goes through a `cancelled` guard, so late callbacks from a torn-down connection (e.g. url or token changed mid-`JoinQueue`) can't overwrite the new connection's state. Start is deferred one tick, so StrictMode's double mount doesn't start and then abort a throwaway connection. It sends `ngrok-skip-browser-warning` on negotiate; browsers can't set headers on the WebSocket itself. Handlers are read through a ref. Only changing the *set* of event names, `url`, `accessToken` or `enabled` reconnects. `connection` stays set while reconnecting, so check `state === 'connected'` before `invoke`.
-- **Testing SignalR without .NET:** a ~60-line Node fake hub using `ws` (already in node_modules via @microsoft/signalr) works. Negotiate POST → `{ negotiateVersion: 1, connectionId, connectionToken, availableTransports: [{ transport: 'WebSockets', transferFormats: ['Text'] }] }`, then handshake reply `{}`; messages are JSON + `` (1 = invocation, 3 = completion, 6 = ping). Allow CORS with credentials when the page connects directly.
+- **useLive:** plain WebSocket, receive-only. It never gives up: retries after 1, 2, 4, 8 s, then every 10 s (the docs/API.md §6 pattern). The first connect is deferred one tick, so StrictMode's double mount doesn't open a throwaway socket. Handlers are read through a ref; only `url` or `enabled` reconnect. `onOpen` runs after every (re)connect, and the server sends the current `state` right away if a trip is active (CarScreen treats silence after a reconnect as "no trip").
 - **Modal:** locks scroll through documentManager and pads `#root` by the measured scrollbar width (`.modal-open #root`). Only the first open modal measures. There's no Escape key handling or focus trap; for that, suggest `npx shadcn add dialog`.
 - **PhoneFrame, LoginForm and ErrorPage** are `position: fixed` full-screen, so they can't be previewed inline (the showcase gives them their own routes).
 - **SidebarLayout** has no mobile drawer. It's `h-dvh`, sidebar `w-56`, shell `max-w-360`.
@@ -97,7 +98,7 @@ const { connection, state } = useSignalR({ url, accessToken?, handlers?: { Event
 ## Showcase (`/usage-examples`)
 
 - Mounted by **one line** in `App.tsx`: `<Route path='/usage-examples/*' lazy={() => import('@/showcase')} hydrateFallbackElement={<></>} />`. Deleting that line removes it entirely (verified: the main bundle went back to the same size). `src/showcase/` can then be deleted; nothing else imports it.
-- It's lazy, so it's a separate chunk (~820 KB, which includes the QrScanner, SignalR and TanStack code) that only downloads when visited.
+- It's lazy, so it's a separate chunk (~760 KB, which includes the QrScanner and TanStack code) that only downloads when visited.
 - `showcase/index.tsx` exports `Component` (what React Router's `lazy` expects) and renders descendant `<Routes>`. Links are absolute, built from `BASE` in `showcase/base.ts`; keep it in sync with the App.tsx path.
 - Pages: `pages/{Overview,UiPage,LayoutPage,ComponentsPage,HooksPage,AuthApiPage,UtilsPage,ErrorsPage}.tsx`. Full-screen demos: `demos/{PhoneDemo,LoginDemo,CrashDemo}.tsx` (registered outside the sidebar shell).
 - Doc kit, `showcase/_kit/Doc.tsx`: `DocPage { title, intro?, toc?: [id, label][] }` (scrolls to `#hash` once mounted), `DocSection { id, title, importLine? }`, `P`, `Demo { label?, className? }`, `Code` (template string, auto-dedented, copy button), `Props { rows: [name, type, default, description][] }`, `Readout { label }`.

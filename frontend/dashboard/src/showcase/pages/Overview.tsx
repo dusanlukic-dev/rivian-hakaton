@@ -7,7 +7,7 @@ const pages: [string, string, string][] = [
   ['ui', 'UI (shadcn)', 'Button, Badge, Card, inputs, Checkbox, Switch, Select, DropdownMenu, Skeleton, toasts'],
   ['layout', 'Layout', 'PhoneFrame, MobileNav, SidebarLayout + SidebarButton, RequireAuth'],
   ['components', 'Components', 'LoginForm, DataTable, QrScanner, Modal, Onboarding, SplashScreen, Section, BackButton'],
-  ['hooks', 'Hooks', 'useDebounce, useVisibility, useLocalStorage, useSignalR'],
+  ['hooks', 'Hooks', 'useDebounce, useVisibility, useLocalStorage, useLive'],
   ['auth', 'Auth & API', 'AuthProvider / useAuth, axios client, JWT helpers'],
   ['utils', 'Utils & SCSS', 'cn, round / adjust, SVG path parser (morph demo), documentManager, SCSS functions + media queries'],
   ['errors', 'Error pages', 'ErrorPage: 404 and generic error'],
