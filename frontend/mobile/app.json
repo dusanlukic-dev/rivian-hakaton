@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Driver Alert",
-    "slug": "driver-alert",
+    "name": "Safety Reviewer",
+    "slug": "safety-reviewer",
     "version": "0.1.0",
     "orientation": "default",
     "icon": "./assets/images/icon.png",

@@ -1,4 +1,4 @@
-# Driver Alert (phone app)
+# Safety Reviewer (phone app)
 
 Expo SDK 58 · React Native 0.88 · Android **development build** (not Expo Go).
 
