@@ -1,15 +1,14 @@
 import Constants from 'expo-constants';
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { ActivityIndicator, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import {
-  ensureNotificationPermission,
-  getPermissionState,
+  allowNotifications,
+  openAppSettings,
   openBatterySettings,
   openDndSettings,
   openFullScreenSettings,
-  type PermissionState,
 } from '@/alerts/notifications';
 import { normalizeAddress } from '@/api/address';
 import { api } from '@/api/client';
@@ -17,15 +16,35 @@ import { StatusPill } from '@/components/dashboard';
 import { Button, Card, Icon, Screen, ScreenHeader, SectionLabel, TextField, ToggleRow, Txt, type IconName } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { errorText } from '@/lib/format';
-import { runTestAlert } from '@/state/live';
+import { runTestAlert, stopTestAlert, useLive } from '@/state/live';
+import { refreshPermissions, usePermissions, watchPermissions } from '@/state/permissions';
 import { DEFAULT_ADDRESS, settingsStore, useSettings, type Settings } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
 export default function SettingsScreen() {
   const ready = useSettings((s) => s.ready);
   const address = useSettings((s) => s.address);
+  const [refreshing, setRefreshing] = useState(false);
+  const previewing = useLive((s) => s.preview !== null);
+
+  async function onRefresh() {
+    setRefreshing(true);
+    await refreshPermissions();
+    setRefreshing(false);
+  }
+
   return (
-    <Screen>
+    <Screen
+      refreshControl={
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => void onRefresh()}
+          tintColor={colors.foreground}
+          colors={[colors.primaryForeground]}
+          progressBackgroundColor={colors.primary}
+        />
+      }
+    >
       <ScreenHeader title={strings.settings.title} right={<StatusPill />} />
       {/* keyed by the saved address so a QR scan / USB preset refreshes the draft */}
       {ready ? <ConnectionCard key={address} saved={address} /> : null}
@@ -36,7 +55,11 @@ export default function SettingsScreen() {
           {strings.settings.tryHint}
         </Txt>
         <View style={styles.row}>
-          <Button label={strings.settings.testWarning} icon="alarm-light" variant="secondary" style={styles.flex} onPress={() => runTestAlert('warning')} />
+          {previewing ? (
+            <Button label={strings.settings.stopTest} icon="stop-circle" variant="secondary" style={styles.flex} onPress={stopTestAlert} />
+          ) : (
+            <Button label={strings.settings.testWarning} icon="alarm-light" variant="secondary" style={styles.flex} onPress={() => runTestAlert('warning')} />
+          )}
           <Button label={strings.settings.testEmergency} icon="alert-octagon" variant="danger" style={styles.flex} onPress={() => runTestAlert('emergency')} />
         </View>
       </Card>
@@ -149,26 +172,41 @@ function AlertToggles() {
   );
 }
 
-function Permissions() {
-  const [state, setState] = useState<PermissionState | null>(null);
-  const refresh = useCallback(() => {
-    getPermissionState()
-      .then(setState)
-      .catch(() => setState(null));
-  }, []);
-  useFocusEffect(refresh);
+type PermissionRow = {
+  key: string;
+  icon: IconName;
+  label: string;
+  /** null = unknown (Android doesn't tell apps, e.g. DND access) */
+  ok: boolean | null;
+  note?: string;
+  action: () => Promise<unknown>;
+};
 
-  const rows: { icon: IconName; label: string; ok: boolean | null; action: () => unknown }[] = [
-    {
-      icon: 'bell-ring',
-      label: strings.settings.notifications,
-      ok: state?.notifications ?? null,
-      action: () => void ensureNotificationPermission().then(refresh),
-    },
-    { icon: 'cellphone-lock', label: strings.settings.fullScreen, ok: state?.fullScreen ?? null, action: openFullScreenSettings },
-    { icon: 'battery-heart-variant', label: strings.settings.battery, ok: state?.batteryUnrestricted ?? null, action: openBatterySettings },
-    { icon: 'minus-circle-off-outline', label: strings.settings.dnd, ok: null, action: openDndSettings },
+function Permissions() {
+  const state = usePermissions((s) => s.value);
+  const checking = usePermissions((s) => s.checking);
+  // Rows whose Android page was opened: they get a small refresh button next to "Open".
+  const [opened, setOpened] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(watchPermissions, []);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshPermissions();
+    }, []),
+  );
+
+  const rows: PermissionRow[] = [
+    { key: 'notifications', icon: 'bell-ring', label: strings.settings.notifications, ok: state?.notifications ?? null, action: allowNotifications },
+    { key: 'fullScreen', icon: 'cellphone-lock', label: strings.settings.fullScreen, ok: state?.fullScreen ?? null, action: openFullScreenSettings },
+    { key: 'battery', icon: 'battery-heart-variant', label: strings.settings.battery, ok: state?.batteryUnrestricted ?? null, action: openBatterySettings },
+    { key: 'dnd', icon: 'minus-circle-off-outline', label: strings.settings.dnd, ok: null, note: strings.settings.dndNote, action: openDndSettings },
   ];
+
+  async function open(row: PermissionRow) {
+    setOpened((prev) => new Set(prev).add(row.key));
+    await row.action().catch((e: unknown) => console.warn(`[settings] open ${row.key}`, e));
+    await refreshPermissions(); // the Android page was closed again (startActivityAsync waits for it)
+  }
 
   return (
     <>
@@ -178,16 +216,38 @@ function Permissions() {
           {strings.settings.permissionsHint}
         </Txt>
         {rows.map((r) => (
-          <View key={r.label} style={styles.permRow}>
+          <View key={r.key} style={styles.permRow}>
             <Icon name={r.icon} size={20} color={colors.muted} />
-            <Txt style={styles.flex}>{r.label}</Txt>
+            <View style={styles.flex}>
+              <Txt>{r.label}</Txt>
+              {r.note ? (
+                <Txt size="xs" tone="subtle">
+                  {r.note}
+                </Txt>
+              ) : null}
+            </View>
             {r.ok ? (
               <Icon name="check-circle" size={22} color={colors.ok} />
             ) : (
-              <Button label={r.ok === false ? strings.settings.allow : strings.settings.open} variant="secondary" onPress={() => void r.action()} />
+              <>
+                {opened.has(r.key) && r.ok !== null ? (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityLabel={strings.settings.recheck}
+                    hitSlop={10}
+                    disabled={checking}
+                    onPress={() => void refreshPermissions()}
+                    style={styles.recheck}
+                  >
+                    {checking ? <ActivityIndicator size="small" color={colors.muted} /> : <Icon name="refresh" size={20} color={colors.muted} />}
+                  </Pressable>
+                ) : null}
+                <Button label={r.ok === false ? strings.settings.allow : strings.settings.open} variant="secondary" onPress={() => void open(r)} />
+              </>
             )}
           </View>
         ))}
+        <Button label={strings.settings.appInfo} icon="cog-outline" variant="ghost" onPress={() => void openAppSettings()} />
       </Card>
     </>
   );
@@ -197,5 +257,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   permRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 52 },
+  recheck: { width: 32, height: 32, alignItems: 'center', justifyContent: 'center' },
   tightCard: { gap: 4 },
 });

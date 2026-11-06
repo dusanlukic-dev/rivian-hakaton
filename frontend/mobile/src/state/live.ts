@@ -17,8 +17,11 @@ export interface LiveState {
   emergency: TripState | null;
   /** Last finished trip (`trip_ended` or POST /end). */
   summary: TripSummary | null;
-  /** True while a local test alert runs (Settings → Try the alerts). */
-  simulated: boolean;
+  /**
+   * Local test alert (Settings → Try the alerts). Shown and played instead of `trip` while set, but never
+   * written into `trip`: a test can't leave a fake trip behind (that used to keep the red flash on forever).
+   */
+  preview: TripState | null;
 }
 
 export const liveStore = createStore<LiveState>({
@@ -28,7 +31,7 @@ export const liveStore = createStore<LiveState>({
   lastMessageAt: 0,
   emergency: null,
   summary: null,
-  simulated: false,
+  preview: null,
 });
 
 export function useLive<S>(select: (state: LiveState) => S): S {
@@ -47,7 +50,6 @@ function onMessage(message: LiveMessage) {
         tick: s.tick + 1,
         lastMessageAt: now,
         summary: started ? null : s.summary,
-        simulated: false,
       }));
       break;
     }
@@ -104,10 +106,12 @@ export const setActiveTrip = (trip: TripState) => liveStore.set({ trip, summary:
 /** After POST /trips/{id}/end. */
 export const setEndedTrip = (summary: TripSummary) => liveStore.set({ trip: null, emergency: null, summary });
 
+const TEST_TRIP_ID = 'test-alert';
+
 function fakeState(level: SafetyLevel): TripState {
   const emergency = level === 'emergency';
   return {
-    trip_id: 'test-alert',
+    trip_id: TEST_TRIP_ID,
     driver_id: 'test',
     status: 'active',
     score: emergency ? 6.4 : 41.8,
@@ -128,25 +132,34 @@ function fakeState(level: SafetyLevel): TripState {
   };
 }
 
-let testTimer: ReturnType<typeof setInterval> | undefined;
+const PREVIEW_TICKS = 5;
+let previewTimer: ReturnType<typeof setInterval> | undefined;
 
-/** Local preview of the alerts, no backend needed. Warning = 5 fake ticks; emergency stays until "I'm OK". */
+/** Ends a running test alert right away (the warning preview, or a test emergency screen). */
+export function stopTestAlert() {
+  clearInterval(previewTimer);
+  previewTimer = undefined;
+  liveStore.set((s) => ({
+    preview: null,
+    emergency: s.emergency?.trip_id === TEST_TRIP_ID ? null : s.emergency,
+  }));
+}
+
+/**
+ * Local preview of the alerts, no backend needed. Warning = 5 fake ticks, one per second (pressing it again
+ * restarts the 5 s); emergency stays until "I'm OK". The real trip is never touched.
+ */
 export function runTestAlert(kind: 'warning' | 'emergency') {
   if (kind === 'emergency') {
-    liveStore.set({ emergency: fakeState('emergency'), simulated: true });
+    liveStore.set({ emergency: fakeState('emergency') });
     return;
   }
-  clearInterval(testTimer);
-  const real = liveStore.get().trip;
+  clearInterval(previewTimer);
   let ticks = 0;
-  liveStore.set((s) => ({ trip: fakeState('high_risk'), tick: s.tick + 1, lastMessageAt: Date.now(), simulated: true }));
-  testTimer = setInterval(() => {
+  liveStore.set((s) => ({ preview: fakeState('high_risk'), tick: s.tick + 1 }));
+  previewTimer = setInterval(() => {
     ticks += 1;
-    if (ticks >= 5) {
-      clearInterval(testTimer);
-      liveStore.set({ trip: real, simulated: false });
-      return;
-    }
-    liveStore.set((s) => ({ tick: s.tick + 1, lastMessageAt: Date.now() }));
+    if (ticks >= PREVIEW_TICKS) stopTestAlert();
+    else liveStore.set((s) => ({ tick: s.tick + 1 }));
   }, 1000);
 }

@@ -58,7 +58,7 @@ function startEmergency(state: TripState) {
 function stopEmergency() {
   sounds.stop('siren');
   Vibration.cancel();
-  void Speech.stop();
+  Speech.stop().catch(() => {});
   Brightness.restoreSystemBrightnessAsync().catch(() => {});
   void notify.cancelEmergency();
 }
@@ -73,7 +73,8 @@ export function startAlertEngine() {
 
     if (s.tick !== lastTick) {
       lastTick = s.tick;
-      if (s.trip && !emergencyOn) onTick(s.trip);
+      const shown = s.preview ?? s.trip; // a running test alert plays instead of the live trip
+      if (shown && !emergencyOn) onTick(shown);
     }
 
     if ((s.emergency !== null) !== emergencyOn) {
@@ -82,7 +83,7 @@ export function startAlertEngine() {
       else stopEmergency();
     }
 
-    const wantService = s.trip !== null && !s.simulated;
+    const wantService = s.trip !== null; // real trips only: test alerts live in `preview`
     if (wantService !== driveServiceOn) {
       driveServiceOn = wantService;
       void (wantService ? notify.startDriveService() : notify.stopDriveService());

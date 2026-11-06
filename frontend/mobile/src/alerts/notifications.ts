@@ -181,12 +181,45 @@ export async function getPermissionState(): Promise<PermissionState> {
   };
 }
 
+// Every "Open" goes to THIS app's own page (verified on the A54, One UI 8 / Android 16). The generic
+// pages (all apps' battery list, all apps' DND list) were what notify-kit's helpers and the first version
+// opened; that was our code, not the dev build. The fallback is always this app's "App info" page.
+const APP = `package:${PACKAGE}`;
+
+/** This app's system "App info" page: every setting is one tap from there. */
+export const openAppSettings = () =>
+  IntentLauncher.startActivityAsync(IntentLauncher.ActivityAction.APPLICATION_DETAILS_SETTINGS, { data: APP }).catch(
+    (e: unknown) => console.warn('[settings] app info', e),
+  );
+
+async function openOrFallBack(action: string, data?: string, fallback: () => Promise<unknown> = openAppSettings) {
+  try {
+    await IntentLauncher.startActivityAsync(action, data ? { data } : undefined);
+  } catch {
+    await fallback();
+  }
+}
+
+/** Ask for the notification permission; if Android won't show the prompt anymore, open the app's notification page. */
+export async function allowNotifications() {
+  if (await ensureNotificationPermission()) return;
+  await notifee.openNotificationSettings().catch(() => openAppSettings());
+}
+
+/** Android 14+: per-app "Full screen alerts" switch. */
 export const openFullScreenSettings = () =>
-  IntentLauncher.startActivityAsync('android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT', {
-    data: `package:${PACKAGE}`,
-  }).catch(() => notifee.openNotificationSettings());
+  openOrFallBack('android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT', APP, () =>
+    notifee.openNotificationSettings().catch(() => openAppSettings()),
+  );
 
-export const openBatterySettings = () => notifee.openBatteryOptimizationSettings().catch(() => {});
+/**
+ * System dialog "Let the app always run in the background?" for this app only (the manifest declares
+ * REQUEST_IGNORE_BATTERY_OPTIMIZATIONS). If the app is already unrestricted, the dialog closes by itself.
+ */
+export const openBatterySettings = () => openOrFallBack('android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', APP);
 
+/** This app's "Do not disturb permission" switch, else the list of all apps with DND access. */
 export const openDndSettings = () =>
-  IntentLauncher.startActivityAsync('android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS').catch(() => {});
+  openOrFallBack('android.settings.NOTIFICATION_POLICY_ACCESS_DETAIL_SETTINGS', APP, () =>
+    openOrFallBack('android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS'),
+  );

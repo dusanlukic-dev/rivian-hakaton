@@ -8,7 +8,12 @@ import { ackEmergency } from './src/state/live';
 // stays alive until notifee.stopForegroundService() is called when the trip ends.
 notifee.registerForegroundService(() => new Promise(() => {}));
 
-// "I'm OK" pressed on the emergency notification while the app is in the background.
+// "I'm OK" pressed on the emergency notification while the app is in the background. Also runs headless
+// (no Activity, e.g. after the app was swiped away during a trip), so it must never reject.
 notifee.onBackgroundEvent(async ({ type, detail }) => {
-  if (type === EventType.ACTION_PRESS && detail.pressAction?.id === 'ack') ackEmergency();
+  try {
+    if (type === EventType.ACTION_PRESS && detail?.pressAction?.id === 'ack') ackEmergency();
+  } catch (e) {
+    console.warn('[notify] background event failed', e);
+  }
 });

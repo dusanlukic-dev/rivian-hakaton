@@ -37,9 +37,11 @@ export default function DriveScreen() {
   const tripActive = trip !== null;
   useEffect(() => {
     if (!tripActive || !keepAwake) return;
-    void activateKeepAwakeAsync(KEEP_AWAKE_TAG);
+    // Both need the Activity. Swiping the app away during a trip unmounts this screen after Android
+    // destroyed the Activity (the foreground service keeps JS alive), and the call then rejects.
+    activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
     return () => {
-      void deactivateKeepAwake(KEEP_AWAKE_TAG);
+      deactivateKeepAwake(KEEP_AWAKE_TAG).catch(() => {});
     };
   }, [tripActive, keepAwake]);
 

@@ -12,6 +12,7 @@ import Animated, {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { strings } from '@/config/strings';
+import { useNow } from '@/hooks/useNow';
 import { formatScore } from '@/lib/format';
 import { ackEmergency, useLive } from '@/state/live';
 import { useProfile } from '@/state/profile';
@@ -22,11 +23,19 @@ import { Button, Icon, Txt } from './ui';
 
 // 250 ms up + 250 ms down = 2 Hz. Never faster than 3 Hz (photosensitivity, D14).
 const HALF_PERIOD_MS = 250;
+// `state` arrives ~2/s while driving. Older than this = the stream stalled (camera side stopped, socket
+// dropped), so the last "loud alarm" state must not keep the screen flashing.
+const STALE_MS = 3000;
 
 /** Red full-screen pulse while the backend asks for the loud alarm (response.sound === "high"). */
 function FlashOverlay() {
-  const active = useLive((s) => s.trip?.response.sound === 'high' && s.emergency === null);
+  const previewAlarm = useLive((s) => s.preview?.response.sound === 'high');
+  const liveAlarm = useLive((s) => s.trip?.response.sound === 'high');
+  const lastMessageAt = useLive((s) => s.lastMessageAt);
+  const emergency = useLive((s) => s.emergency !== null);
   const enabled = useSettings((s) => s.flash);
+  const now = useNow(1000);
+  const active = !emergency && (previewAlarm || (liveAlarm && now - lastMessageAt < STALE_MS));
   const opacity = useSharedValue(0);
 
   useEffect(() => {
@@ -97,7 +106,9 @@ function EmergencyOverlay() {
               variant="secondary"
               style={styles.flex}
               onPress={() =>
-                void Linking.openURL(`sms:${contactPhone}?body=${encodeURIComponent(strings.emergency.smsBody(driver))}`)
+                Linking.openURL(`sms:${contactPhone}?body=${encodeURIComponent(strings.emergency.smsBody(driver))}`).catch(
+                  (e: unknown) => console.warn('[emergency] sms', e),
+                )
               }
             />
             <Button
@@ -105,7 +116,7 @@ function EmergencyOverlay() {
               icon="phone"
               variant="secondary"
               style={styles.flex}
-              onPress={() => void Linking.openURL(`tel:${contactPhone}`)}
+              onPress={() => Linking.openURL(`tel:${contactPhone}`).catch((e: unknown) => console.warn('[emergency] call', e))}
             />
           </View>
         ) : null}
