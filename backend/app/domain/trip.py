@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from app.domain.enums import Behavior, DashboardLight, SoundLevel, TripStatus
+from app.domain.enums import Behavior, DashboardLight, SoundLevel, SpeedSource, TripStatus
 
 MAX_SCORE = 100.0
 
@@ -76,6 +76,8 @@ class Trip:
 
     response: CarResponse = field(default_factory=CarResponse)
     camera: CameraView | None = None  # from the latest tick; None if it carried no model frame
+    speed_kmh: float = 0.0  # speed used for the latest tick
+    speed_source: SpeedSource | None = None  # None until the first tick
     emergency_alert_sent: bool = False
 
     @property

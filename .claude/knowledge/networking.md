@@ -28,6 +28,8 @@
 | 8000 | FastAPI backend: REST `/api/v1/*`, WS `/api/v1/ws`, Swagger `/docs` | `0.0.0.0` (`run.py`) |
 | 8081 | Metro bundler (mobile dev only) | over USB via `adb reverse` (automatic with `expo run:android`) |
 | 5173 | dashboard Vite dev server | `localhost` by default. `npm run dev -- --host` exposes it on the LAN |
+| 5433 | Postgres for the trip recording (`backend/scripts/services.ps1`) | `127.0.0.1` only. 5432 is taken by a system PostgreSQL 18 service on this laptop |
+| 9000 / 9001 | RustFS S3 API / web console (clips) | `127.0.0.1` only. The phone gets clips through the backend (`/api/v1/media/...` on 8000), so no firewall rule is needed |
 
 ## Development without hotspot hassle: USB + adb reverse
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from app.domain.enums import Behavior, SafetyLevel
+from app.domain.enums import Behavior, SafetyLevel, SpeedSource
 from app.domain.trip import EmergencyContact, Trip
 from app.repositories.trips import InMemoryTripRepository
 from app.schemas.trip import BehaviorSummary, TelemetryTick, TripCreate, TripState, TripSummary
@@ -38,15 +38,19 @@ def start_trip(repo: InMemoryTripRepository, data: TripCreate) -> tuple[Trip, Tr
     return trip, previous
 
 
-def process_tick(trip: Trip, tick: TelemetryTick) -> bool:
-    """Apply one telemetry tick. Returns True if this tick triggered the emergency alert."""
+def process_tick(trip: Trip, tick: TelemetryTick, speed_kmh: float, speed_source: SpeedSource) -> bool:
+    """Apply one telemetry tick at the given speed (see services/speed.py for where it comes from).
+
+    Returns True if this tick triggered the emergency alert.
+    """
     behaviors = set(tick.behaviors)
     trip.camera = None
     if tick.frame is not None:
         behaviors |= behaviors_from_frame(tick.frame)
         trip.camera = to_view(tick.frame)
-    apply_tick(trip, tick.timestamp, tick.speed_kmh, behaviors)
-    trip.response = evaluate_response(trip, tick.speed_kmh)
+    trip.speed_kmh, trip.speed_source = speed_kmh, speed_source
+    apply_tick(trip, tick.timestamp, speed_kmh, behaviors)
+    trip.response = evaluate_response(trip, speed_kmh)
     if level_for(trip.score) is SafetyLevel.EMERGENCY and not trip.emergency_alert_sent:
         notify_emergency_contact(trip)
         trip.emergency_alert_sent = True
@@ -72,6 +76,8 @@ def to_state(trip: Trip) -> TripState:
         active_behaviors={b: round(s, 1) for b, s in trip.active.items()},
         response=trip.response,
         camera=trip.camera,
+        speed_kmh=trip.speed_kmh,
+        speed_source=trip.speed_source,
         emergency_alert_sent=trip.emergency_alert_sent,
     )
 

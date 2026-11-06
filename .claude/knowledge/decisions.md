@@ -70,3 +70,23 @@ The package id stays `dev.hakaton.driveralert` and the scheme stays `driveralert
 260-char limit (`ninja: error: mkdir(CMakeFiles/rnscreens.dir/C_/Users/...)`). Long paths were already enabled in the registry, but
 Ninja 1.10.2 isn't long-path-aware. Swapping the binary in every SDK CMake (3.22.1 + 3.30.5) needs no admin rights and keeps the user's folder layout.
 Alternatives: move or `subst` the repo (disruptive; subst risks mixed real/virtual paths in CMake). 2026-11-06.
+
+**D19: Trip report storage is Postgres + S3-compatible object storage (RustFS), not a vector database.** The report asks "where was it
+worst, what was the worst thing, show charts and clips". Those are plain SQL queries over per-second samples and per-moment rows, plus
+files in a bucket. A vector DB only pays off for similarity search over embeddings. If that's ever needed, use pgvector in the same Postgres.
+MinIO was rejected because its Community Edition went source-only in Oct 2025 and its repo was archived in Feb 2026. RustFS 1.0.4 is
+Apache-2.0, S3-compatible and has a Windows build. 2026-11-06.
+
+**D20: One sample row per second, not per 0.5 s.** Ticks arrive ~2/s, so 0.5 s windows would store raw ticks. Each 1 s row keeps both the
+average and the maximum (p, risk, light, sound), so a short glance isn't averaged away. Exact moments live in `risk_events`. 2026-11-06.
+
+**D21: The backend owns the speed.** The camera can't know it, and asking the CV team to fake it makes no sense. The default is a mocked drive:
+six keyframe scenarios with cubic Bezier easing, picked per trip and including real 0 km/h stops. The phone's GPS (`POST /speed`) is an
+opt-in feature (`PHONE_SPEED_ENABLED`), meant for cars without their own compute. Precedence: fresh phone reading > tick's `speed_kmh`
+(simulator) > mock. 2026-11-06.
+
+**D22: Clips reach the app through the backend (`/api/v1/media/...`), and the services run portable on the demo laptop.** Port 8000 is
+already allowed through the Windows firewall and follows the hotspot IP. A direct S3 URL on :9000 would need a firewall rule and a
+host that changes per session. The bucket is still public-read for the demo, as asked. Docker isn't installed on the demo laptop, so
+`backend/scripts/services.ps1` runs Postgres 18.6 + RustFS from `%LOCALAPPDATA%` without admin rights (outside OneDrive, so the database
+files never sync). `docker-compose.yml` mirrors it for teammates. Postgres uses 5433 because a system Postgres holds 5432. 2026-11-06.

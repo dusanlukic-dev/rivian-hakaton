@@ -43,8 +43,22 @@
 
 ## Proposals for the backend (not agreed yet, don't build against them)
 
-1. **Phone GPS speed → backend.** Both sides suggested it (root CLAUDE.md open question 1). It needs a client→server WS message or a
-   REST endpoint. `expo-location` is already in the dev build.
+1. ~~**Phone GPS speed → backend.**~~ **Built (2026-11-06) as an opt-in REST feature**, see "Backend storage + speed" below.
 2. **Dashboard "sim panel"** posting to the existing `POST /telemetry` (behaviour toggles + speed slider), standing in for the camera
    models during demos while CV isn't ready. API.md says telemetry is "not for the app", so this needs the team's OK.
 3. An optional `ack` from the phone ("I'm focused") for analytics.
+
+## Backend storage + speed (2026-11-06, backend session; verified with real Postgres + RustFS)
+
+All additive. Nothing the apps already use changed shape.
+- `TripState` gained `speed_kmh` (the speed the tick was scored with; < 5 = standing, no penalty) and `speed_source`
+  (`mock` | `phone` | `telemetry`, null before the first tick). The backend **mocks the speed** by default (a Bezier drive per trip),
+  so it moves and stops on its own even when the sim panel / `tools/sim.py` send nothing. Explicit `speed_kmh` in a tick still wins.
+- Report endpoints (Postgres-backed, they survive backend restarts): `GET /trips/{id}/timeline` (one `TripSample` per second) and
+  `GET /trips/{id}/events?order=worst` (`RiskEvent` with `video_url` + `thumbnail_url`). Both return **`503` when recording is
+  down**: hide the report button then, don't show an error. They also work for the active trip.
+- `video_url` / `thumbnail_url` are **absolute URLs through the backend** (`http://<laptop-ip>:8000/api/v1/media/...`), built
+  from the request's host. They work over the hotspot (port 8000 only) and over `adb reverse` (localhost). The MP4 is H.264 yuv420p with
+  faststart, and the endpoint supports `Range`, so `expo-video` / `<video>` can stream and seek it.
+- Phone GPS: `GET /speed` → `phone_enabled`. Only if true, `POST /speed {speed_kmh, lat?, lon?}` ~1/s (Android gives m/s, ×3.6).
+  Otherwise the backend answers `409`. Off by default (`PHONE_SPEED_ENABLED`).

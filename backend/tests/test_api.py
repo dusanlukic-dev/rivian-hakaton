@@ -1,40 +1,6 @@
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
-import pytest
-from fastapi.testclient import TestClient
-
-from app.main import app
-from app.repositories.trips import InMemoryTripRepository, get_trip_repository
-from app.services.live import LiveHub, get_live_hub
-
-API = "/api/v1"
-NIGHT = datetime(2026, 11, 6, 23, 0, 0, tzinfo=timezone(timedelta(hours=1)))
-DAY = datetime(2026, 11, 6, 14, 0, 0, tzinfo=timezone(timedelta(hours=1)))
-CONTACT = {"name": "Ana", "phone": "+381600000000"}
-
-
-@pytest.fixture
-def client():
-    repo, hub = InMemoryTripRepository(), LiveHub()
-    app.dependency_overrides[get_trip_repository] = lambda: repo
-    app.dependency_overrides[get_live_hub] = lambda: hub
-    # Context manager = one event loop shared by HTTP calls and WebSocket sessions.
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
-
-
-def start_trip(client, **body):
-    res = client.post(f"{API}/trips", json={"driver_id": "driver-1", **body})
-    assert res.status_code == 201, res.text
-    return res.json()
-
-
-def send_tick(client, ts, speed, behaviors=()):
-    body = {"timestamp": ts.isoformat(), "speed_kmh": speed, "behaviors": list(behaviors)}
-    res = client.post(f"{API}/telemetry", json=body)
-    assert res.status_code == 200, res.text
-    return res.json()
+from tests.conftest import API, CONTACT, DAY, MODEL_FRAME, NIGHT, send_tick, start_trip
 
 
 def test_health(client):
@@ -121,25 +87,6 @@ def test_telemetry_without_active_trip_is_rejected(client):
 
 def test_unknown_trip_returns_404(client):
     assert client.get(f"{API}/trips/nope").status_code == 404
-
-
-# A record from the camera model's frames.jsonl, as the CV team writes it.
-MODEL_FRAME = {
-    "t": 38.6,
-    "frame": 1158,
-    "dt": 0.033,
-    "categories": {
-        "phone_use": {"p": 0.715, "p_hat": 0.7, "active": True, "run_s": 3.2, "D_s": 3.5, "h": 1.2, "r": 0.534},
-        "eyes_off_road": {"p": 0.905, "active": True, "run_s": 3.4, "r": 0.767},
-        "drowsiness": {"p": 0.05, "active": False, "run_s": 0.0, "r": 0.0},
-    },
-    "groups": {"visual": 0.767, "manual": 0.374, "fatigue": 0.0},
-    "risk": {"raw": 0.854, "smoothed": 0.84, "floor": 0.5, "final": 0.819},
-    "rules_triggered": ["long_distraction", "phone_sustained"],
-    "alert": {"level": "red", "code": 2},
-    "top_contributors": [["eyes_off_road", 0.767], ["phone_use", 0.534]],
-    "perception": {"head": {"yaw": -31.2, "pitch": -18.0}, "eyes": {"ear": 0.21}, "objects": ["cell phone"]},
-}
 
 
 def send_frame(client, ts, speed, frame):

@@ -2,7 +2,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.domain.enums import Behavior, SafetyLevel, TripStatus
+from app.domain.enums import Behavior, SafetyLevel, SpeedSource, TripStatus
 from app.domain.trip import CameraView, CarResponse
 from app.schemas.camera import ModelFrame
 
@@ -18,12 +18,17 @@ class TripCreate(BaseModel):
 
 
 class TelemetryTick(BaseModel):
-    """One sample from the car, sent roughly every second. Only labels - never images."""
+    """One sample from the camera side, ~2/s. Labels and model numbers only: video goes to POST /video/frames."""
 
     timestamp: datetime = Field(
         description="Local time with UTC offset, e.g. 2026-11-06T22:15:00+01:00 (used for night penalties)."
     )
-    speed_kmh: float = Field(ge=0)
+    speed_kmh: float | None = Field(
+        default=None,
+        ge=0,
+        description="Leave it out: the backend provides the speed (mock drive, or the phone's GPS). "
+        "The simulator and tests send it to force a value.",
+    )
     behaviors: set[Behavior] = Field(
         default_factory=set, description="Risky behaviors visible in this sample."
     )
@@ -48,6 +53,8 @@ class TripState(BaseModel):
         default=None,
         description="The camera model's own view from the latest tick; null if it sent no model frame.",
     )
+    speed_kmh: float = Field(description="Speed used for the latest tick (0 before the first tick).")
+    speed_source: SpeedSource | None = Field(description="Where that speed came from; null before the first tick.")
     emergency_alert_sent: bool
 
 

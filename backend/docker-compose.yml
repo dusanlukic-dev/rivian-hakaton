@@ -1,0 +1,39 @@
+# Postgres + RustFS (S3) for the backend, for anyone with Docker:
+#
+#     docker compose up -d        (from backend/)
+#
+# Same ports and keys as the defaults in app/core/config.py and scripts/services.ps1 (the no-Docker
+# way used on the demo laptop). Postgres is on 5433 because 5432 is often taken by a local install.
+services:
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: safety
+      POSTGRES_PASSWORD: safety
+      POSTGRES_DB: safety
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql  # Postgres 18 images keep their data under this directory
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "safety", "-d", "safety"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    environment:
+      RUSTFS_ACCESS_KEY: safety
+      RUSTFS_SECRET_KEY: safety-secret
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "127.0.0.1:9000:9000"  # S3 API
+      - "127.0.0.1:9001:9001"  # web console
+    volumes:
+      - rustfs:/data
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  rustfs:

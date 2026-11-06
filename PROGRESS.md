@@ -2,15 +2,15 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, session 2 (Claude, for Matija Radović).
+> Last updated: 2026-11-06, backend storage session (Claude, for Matija Vujić).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 32 tests pass. **Accepts the CV model's frame records** and forwards them to the app as `TripState.camera` (docs/API.md §4–7). Postgres + MinIO in progress (Docker expected) |
-| Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame` (the backend maps categories → labels). Not yet called live from the pipeline |
+| Backend (FastAPI) | ✅ working (teammate Matija Vujić). 56 tests pass. Accepts the CV model's frame records (`TripState.camera`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips → `GET /trips/{id}/timeline`, `/events`, `/media/...`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
+| Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
 | **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
@@ -20,6 +20,7 @@
 ## How to see it
 
 ```bash
+cd backend && powershell -File scripts/services.ps1 start     # Postgres :5433 + RustFS :9000 (portable, no Docker; `install` once)
 cd backend && .venv/Scripts/python.exe run.py                 # backend :8000
 cd frontend/mobile && npm start                               # Metro; app already installed on the A54 (dev build)
 adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8081 tcp:8081
@@ -29,17 +30,20 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Re-copy API.md §4 types into both apps** (2026-11-06 backend change): new label `eyes_off_road` + `TripState.camera` (model risk,
-   colour, categories). Add `eyes_off_road` to the behaviour tables/icons/strings, optionally show the model's risk colour.
-2. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
+1. **Re-copy API.md §4 types into both apps** (2026-11-06 backend changes): new label `eyes_off_road` + `TripState.camera` (model risk,
+   colour, categories), then **`TripState.speed_kmh` / `speed_source`** and the report types (`TripTimeline`, `TripSample`, `RiskEvent`,
+   `SpeedStatus`, `PhoneSpeedIn`). Add `eyes_off_road` to the behaviour tables/icons/strings; show `speed_kmh` (speedometer, "standing: no penalty").
+2. **Trip report screen** (API.md §5 + §7 "Izveštaj"): score/speed chart from `GET /trips/{id}/timeline`, "worst moments" from
+   `GET /trips/{id}/events?order=worst` with thumbnail + `video_url` playback (expo-video). Hide the button on `503` (recording down).
+3. **Background/locked alerts on the device:** grant notifications (Settings → Phone setup → Allow), then verify that the foreground service keeps
    the socket alive with the screen off, that the full-screen intent wakes the A54 on `emergency`, and the alarm-channel sound in vibrate mode.
    Log the results in `android-alerting.md` → To verify.
-3. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
-4. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
-5. **Team alignment:** proposals in `contract-notes.md`: phone GPS speed → backend, dashboard sim panel posting `/telemetry`, SMS on emergency.
-   Check what the Postgres/MinIO work changes in `docs/API.md` (trips may survive restarts; images in MinIO?).
-6. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level, a trip timeline/score chart on the summary.
-7. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+4. **First-run onboarding:** profile + permissions walkthrough (notifications, battery Unrestricted), so a fresh phone is demo-ready in 1 minute.
+5. **Release APK** (`npm run android:release`) on the A54, then the demo-phone prep checklist.
+6. **Team alignment:** proposals in `contract-notes.md`: dashboard sim panel posting `/telemetry`, SMS on emergency. Phone GPS speed now
+   exists as an **opt-in** backend feature (`GET /speed` → `phone_enabled`, then `POST /speed` ~1/s); the app may implement it behind that flag.
+7. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level.
+8. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
 
 ## In progress
 
@@ -55,14 +59,19 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - **Windows long paths:** the SDK CMake Ninja was swapped to 1.13.2 (D18). **Android Studio's setup may reinstall CMake**, so re-check
   `cmake/*/bin/ninja.exe --version` afterwards (loop in `environment.md`).
 - In-app sounds use media volume (expo-audio has no alarm usage). Only the background notification uses the alarm stream (silent-mode safe).
-- Trips live in backend memory until the DB lands. After a backend restart, old trip ids give 404.
+- Active trips and `GET /trips` / `/summary` still live in backend memory: after a restart, old trip ids give 404 there. The report
+  (`/timeline`, `/events`, clips) is in Postgres + S3 and survives.
+- This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
+  (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
 
 ## Open questions
 
-- **Speed:** the camera doesn't know it. The models currently send a fixed value. Proposal: phone GPS through the backend (`expo-location` is ready). Needs a backend endpoint/message.
-- **CV:** confirm the model's category names. Only `phone_use` and `eyes_off_road` have been seen. `turned_around`, `hands_off`,
-  `drowsiness`, `microsleep` are guesses in `CATEGORY_TO_BEHAVIOR` (`backend/app/services/camera.py`). Is there a separate `looking_behind`?
-  Does `hands_off_wheel` mean both hands or at least one? Do the models run live, or only offline into `frames.jsonl`?
+- **CV:** `notebooks/risk_config.json` names the categories: `phone_use`, `eyes_off_road`, `hands_off_wheel`, `eating_drinking`,
+  `drowsiness`, `eyes_closed`. **`eyes_closed` is not in `CATEGORY_TO_BEHAVIOR`** (`backend/app/services/camera.py`), so it is shown but
+  not scored (map it to `drowsy`?). `microsleep` is a rule (`rules_triggered`), not a category; `turned_around` / `hands_off` don't exist.
+  Is there a separate `looking_behind`? Does `hands_off_wheel` mean both hands or at least one? Do the models run live?
+- **Production storage:** split the in-car compute server from a report server the driver can reach away from the car? Clip access
+  (signed URLs instead of the demo's public bucket) and retention are still open.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
 - **DB work:** will trips get user accounts (real login), or stay keyed by `driver_id`? (Profile is a local stand-in.)
@@ -72,7 +81,7 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - [x] Authorize USB debugging on the A54 · [x] Allow Python through the firewall
 - [ ] On the A54: Settings tab → Phone setup → **Notifications: Allow**, **Unrestricted battery: Allow**, **DND: Open → allow**
 - [ ] Android Studio install: when asked for the SDK location, choose the existing `%LOCALAPPDATA%\Android\Sdk`
-- [ ] Docker Desktop + WSL (for the teammate's Postgres/MinIO). The new `vEthernet (WSL)` adapter is fine, because `run.py` picks the default-route IP
+- [x] ~~Docker Desktop + WSL~~ not needed: Postgres + RustFS run portable from `%LOCALAPPDATA%\safety-reviewer` (`backend/scripts/services.ps1`)
 - [ ] Optional (admin): remove the `node.exe` Block firewall rules (`networking.md`)
 
 ## Session log
@@ -87,3 +96,9 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   Active categories are mapped to labels and scored, and risk/alert/categories go to the app as `TripState.camera`. The model's red alert
   forces vibration + loud sound at any level while moving. New label `eyes_off_road` (weight 1.0). `safety_client.py`: `send_frame`,
   `--replay frames.jsonl`. Verified: 32 tests, plus a synthetic replay → WS (40/42 messages carried `camera`, no `perception`). docs/API.md updated.
+- 2026-11-06, Claude (backend storage, for Matija Vujić): trip recording next to the live path. Postgres (`trips`, `trip_samples` per 1 s
+  with the model's numbers + speed, `risk_events`) and RustFS S3 (H.264 clip 3 s before / 2 s after each risky moment + thumbnail, public
+  bucket for the demo). New routes `/trips/{id}/timeline`, `/trips/{id}/events`, `/media/{key}`, `/video/frames`, `/speed`. Speed is
+  mocked by the backend (6 Bezier scenarios, random per trip); phone GPS is opt-in (`PHONE_SPEED_ENABLED`). Portable Postgres 18.6 + RustFS 1.0.4
+  without Docker (`backend/scripts/services.ps1`) plus `docker-compose.yml`. Verified: 56 tests (40× repeat after a CREATE TABLE race fix),
+  real-time runs with video on real Postgres + RustFS, Postgres/RustFS stopped mid-drive (live path unaffected, rows flushed once back).

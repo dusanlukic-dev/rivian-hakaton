@@ -6,14 +6,16 @@ Tim komunicira na srpskom (latinica). Kod, identifikatori, API i labele su na en
 
 Kamera u kabini prati vozača. Backend računa **koeficijent pažnje 0–100** (100 = potpuno usredsređen,
 0 = opasnost po život), a kola reaguju: svetlo na dashboardu, vibracija sedišta, zvučni signal, poruka
-kontaktu za hitne slučajeve. Na kraju vožnje vozač dobija statistiku i savete. Kompanija vidi samo
-koeficijente i vrste grešaka, **nikad slike** (privatnost).
+kontaktu za hitne slučajeve. Na kraju vožnje vozač dobija statistiku, savete i izveštaj: grafik vožnje
+i video klipove svojih najgorih momenata. Kompanija vidi samo koeficijente i vrste grešaka, **nikad
+slike** (privatnost).
 
 ## Delovi repoa
 
 | Putanja | Šta je |
 |---|---|
-| `backend/` | FastAPI: računa score, šalje događaje aplikaciji. Detalji u `backend/CLAUDE.md` |
+| `backend/` | FastAPI: računa score, šalje događaje aplikaciji, snima vožnju za izveštaj. Detalji u `backend/CLAUDE.md` |
+| `backend/scripts/services.ps1` | Postgres + RustFS (S3) za snimanje vožnji, portabl (bez Dockera i admin prava). Sa Dockerom: `backend/docker-compose.yml` |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
 | `notebooks/safety_client.py` | most modeli → backend, plus simulator cele vožnje |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
@@ -26,8 +28,10 @@ koeficijente i vrste grešaka, **nikad slike** (privatnost).
 
 ```
 laptop: notebooks (modeli) ──POST 127.0.0.1:8000/api/v1/telemetry (~2/s, frejm modela ili labele)──► backend
+                           ──POST 127.0.0.1:8000/api/v1/video/frames (~8/s, JPEG)──────────────────► backend
+        backend ──► Postgres 127.0.0.1:5433 (uzorci po 1 s, rizični momenti) + RustFS S3 127.0.0.1:9000 (klipovi)
 telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backend
-                                    ──REST /trips (start, kraj, istorija)──►
+                                    ──REST /trips (start, kraj, istorija, izveštaj, klipovi)──►
 ```
 
 - Za demo **nema servera ni DNS-a**. Laptop pokreće backend i modele, telefon pravi hotspot, a laptop
@@ -39,6 +43,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   bez `perception` i bez slika. Backend preslikava aktivne kategorije modela na labele
   (`CATEGORY_TO_BEHAVIOR` u `backend/app/services/camera.py`), a rizik i kategorije modela
   prosleđuje aplikaciji u polju `camera`.
+- Video ide posebno: `SafetyClient.send_video_frame(frame)` šalje JPEG frejmove. Backend drži samo
+  par sekundi u memoriji, a klip (3 s pre i 2 s posle) čuva samo oko **rizičnog momenta**.
+- Snimanje (`backend/app/services/recording.py`) radi pored živog toka i nikad ga ne usporava. Ako
+  Postgres ili S3 nisu dostupni, score i reakcije kola rade normalno, a redovi čekaju u memoriji.
 
 ## Pravila domena (sažetak)
 
@@ -53,6 +61,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   `emergency` < 10. Reakcija kola po nivou je opisana u `docs/API.md`, sekcija 7.
 - Alarm modela: kad model javi crveno (`alert.level == "red"`), kola u pokretu odmah vibriraju i
   glasno pište, na bilo kom nivou.
+- Brzinu daje backend (`backend/app/services/speed.py`), redom: GPS telefona (ako je uključen i
+  svež) > `speed_kmh` iz ticka (simulator) > mock vožnja.
+- Rizičan momenat = kola se kreću (≥ 5 km/h), a vidi se bodovano ponašanje ili je model dao crveni
+  alarm. Detekcije razmaknute manje od 2 s su isti momenat, a duži od 30 s se seče.
 
 ## Odluke (tumačenje prvog nacrta ideje)
 
@@ -67,18 +79,30 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
 - (2026-11-06) `eyes_off_road` je vraćen kao labela sa malom težinom (1.0), jer ga model sada daje.
   Kad ide zajedno sa `phone_use`, penali se sabiraju.
 - `perception` (uglovi glave, oči, šake) ne ide na backend, jer aplikaciji ne treba.
+- (2026-11-06) **Skladište: Postgres + S3 (RustFS)**, bez vektorske baze. Izveštaj (gde je bilo
+  najgore, šta je najgore uradio, grafici) su obični SQL upiti. MinIO je odbačen jer je Community
+  Edition arhiviran (februar 2026) i deli se samo kao izvorni kod. RustFS je Apache 2.0 i ima Windows build.
+- (2026-11-06) Tickovi stižu ~2/s, pa se u bazu upisuje **jedan red po sekundi** (prosek i
+  maksimum, da kratki skokovi ne nestanu). Prozor od 0.5 s ne bi ništa sabrao.
+- (2026-11-06) **Brzina je mock na backendu**: šest scenarija (`city`, `highway`, `stop_and_go`,
+  `country_road`, `cruise`, `parked`), nasumično po vožnji (`SPEED_SCENARIO`). Između tačaka je
+  kubna Bezier kriva, a stajanje je tačno 0 km/h. GPS telefona (`POST /speed`) postoji kao zaseban
+  feature, podrazumevano isključen (`PHONE_SPEED_ENABLED`), npr. za kola bez računarske snage.
+- (2026-11-06) Klipovi su za demo u **javnom** lokalnom bucketu. Kompanija (`/analytics`) ih nikad ne
+  dobija. Produkcija (poseban server za izveštaje) se dogovara kasnije.
 
 ## Otvorena pitanja (ažuriraj kad se dogovori)
 
-1. **Brzina:** kamera je ne zna. Sada je šalje strana sa modelima (za demo zakucana). Predlog je
-   GPS telefona preko WebSocket-a.
-2. **Imena kategorija modela:** viđeni su samo `phone_use` i `eyes_off_road`. Za ostale je
-   pretpostavka `turned_around`, `hands_off`, `drowsiness`, `microsleep` (`CATEGORY_TO_BEHAVIOR`).
-   Treba potvrditi sa CV timom. Nepoznatu kategoriju backend loguje i ne boduje. Takođe: da li
-   postoji poseban izlaz za `looking_behind` ili samo `turned_around`?
-3. `hands_off_wheel`: obe ruke ili bar jedna? Ako je jedna, težinu treba spustiti na 0.3–0.5.
-4. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
+1. **Imena kategorija modela:** `notebooks/risk_config.json` kaže `phone_use`, `eyes_off_road`,
+   `hands_off_wheel`, `eating_drinking`, `drowsiness`, `eyes_closed`. **`eyes_closed` nije u
+   `CATEGORY_TO_BEHAVIOR`**, pa se prikazuje, ali ne boduje (predlog: → `drowsy`). `microsleep` je
+   pravilo (`rules_triggered`), a ne kategorija. `turned_around` i `hands_off` ne postoje. Da li
+   postoji poseban izlaz za `looking_behind`?
+2. `hands_off_wheel`: obe ruke ili bar jedna? Ako je jedna, težinu treba spustiti na 0.3–0.5.
+3. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
    događaj `emergency`.
+4. **Produkcija:** odvojiti server za računanje (u kolima) od servera za izveštaje (dostupan i van
+   kola)? Pristup klipovima (potpisani URL-ovi umesto javnog bucketa) i koliko dugo se čuvaju.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 
@@ -87,3 +111,5 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   `notebooks/safety_client.py`, `CATEGORY_TO_BEHAVIOR` u `services/camera.py` (ako se ime
   kategorije modela razlikuje) i `docs/API.md`.
 - Frontend ne izmišlja endpointe ni polja. Ako nešto fali, to je izmena backenda.
+- Promena tabela (`backend/app/repositories/recordings.py`): migracija još nema, pa u dev-u
+  `.\scripts\services.ps1 reset` (prazna baza), pa restart backenda, koji napravi tabele.

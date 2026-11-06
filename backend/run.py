@@ -33,6 +33,9 @@ if __name__ == "__main__":
         "\n  Mobile app:\n"
         f"    REST       http://{ip}:{args.port}/api/v1\n"
         f"    WebSocket  ws://{ip}:{args.port}/api/v1/ws\n"
-        f"  Camera models (same laptop): http://127.0.0.1:{args.port}/api/v1/telemetry\n"
+        "  Camera models (same laptop):\n"
+        f"    telemetry  http://127.0.0.1:{args.port}/api/v1/telemetry\n"
+        f"    video      http://127.0.0.1:{args.port}/api/v1/video/frames\n"
+        "  Recording needs Postgres + RustFS: .\\scripts\\services.ps1 start (or docker compose up -d)\n"
     )
     uvicorn.run("app.main:app", host="0.0.0.0", port=args.port, reload=True, reload_dirs=["app"])

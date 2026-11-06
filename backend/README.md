@@ -2,6 +2,7 @@
 
 Računa koeficijent bezbednosti vozača (0–100) iz rezultata modela za kameru i uživo javlja mobilnoj
 aplikaciji kako kola treba da reaguju (svetlo na dashboardu, vibracija sedišta, zvuk, poruka kontaktu).
+Usput snima vožnju za izveštaj vozaču: grafik po sekundama i video klipove rizičnih momenata.
 
 ## Arhitektura
 
@@ -9,10 +10,14 @@ aplikaciji kako kola treba da reaguju (svetlo na dashboardu, vibracija sedišta,
  laptop                                                         telefon (hotspot)
 ┌─────────────────────────────────────────────────────────┐    ┌──────────────────┐
 │ notebooks/  YOLO · MediaPipe · OpenCV                   │    │ React Native app │
-│     │  safety_client.send_frame(record, speed_kmh)      │    │                  │
-│     ▼  POST 127.0.0.1:8000/api/v1/telemetry  (~2/s)     │    │                  │
+│     │  safety_client.send_frame(record)        ~2/s     │    │                  │
+│     │  safety_client.send_video_frame(frame)   ~8/s     │    │                  │
+│     ▼  POST 127.0.0.1:8000/api/v1/telemetry, /video/... │    │                  │
 │ backend/  FastAPI ── računa score ── WS /api/v1/ws ─────┼───►│ live dashboard   │
-│                     ◄── POST /trips, /trips/{id}/end ───┼────│ start / kraj     │
+│     │               ◄── POST /trips, /trips/{id}/end ───┼────│ start / kraj     │
+│     │               ── /timeline, /events, /media ──────┼───►│ izveštaj, klipovi│
+│     ▼  snimanje u pozadini                              │    │                  │
+│ Postgres :5433 (uzorci, momenti) · RustFS S3 :9000      │    │                  │
 └─────────────────────────────────────────────────────────┘    └──────────────────┘
 ```
 
@@ -22,6 +27,50 @@ aplikaciji kako kola treba da reaguju (svetlo na dashboardu, vibracija sedišta,
   modela prosleđuje aplikaciji u polju `camera`, a crveni alarm modela odmah pali vibraciju i zvuk.
 - U jednom trenutku je aktivna **jedna vožnja** (jedan auto). Aplikacija je pokreće i završava,
   a telemetrija modela automatski ide u aktivnu vožnju.
+- **Brzinu daje backend**, jer je kamera ne zna: mock vožnja (scenario po vožnji), ili GPS telefona
+  ako je uključen (`PHONE_SPEED_ENABLED=true`). Modeli ne šalju brzinu.
+
+## Snimanje vožnje (Postgres + RustFS)
+
+Dok vožnja traje, backend u pozadini upisuje:
+
+| Tabela / bucket | Šta | Za izveštaj |
+|---|---|---|
+| `trips` | početak, pa na kraju rezime (final/prosek/min score, ponašanja) | istorija |
+| `trip_samples` | **jedan red po sekundi**: brzina, score, nivo, ponašanja, svi brojevi modela (`p`, `p_max`, `r`, `run_s` po kategoriji, `risk`, `alert`, grupe), reakcija kola, GPS | grafici |
+| `risk_events` | jedan red po **rizičnom momentu**: ponašanja i koliko su trajala, pad score-a, najveći rizik, brzina, ključevi klipa | "najgore što je uradio" |
+| S3 `safety-media/clips/<trip>/<moment>.mp4` + `.jpg` | H.264 klip (3 s pre, 2 s posle) i najrizičniji frejm | video i slika |
+
+- Rizičan momenat: kola se kreću, a vidi se bodovano ponašanje ili je model dao crveni alarm.
+  Detekcije razmaknute < 2 s su isti momenat. Klip se pravi za momente od ≥ 1 s (ili sa crvenim alarmom).
+- Čitanje: `GET /trips/{id}/timeline`, `GET /trips/{id}/events?order=worst`, klip preko `GET /media/...`
+  (sve u [docs/API.md](../docs/API.md)). Radi i posle restarta backenda.
+- Ako Postgres ili S3 nisu podignuti, **score i reakcije kola rade normalno**. Redovi čekaju u memoriji,
+  a klipovi se preskaču, uz upozorenje u konzoli.
+- Bucket je za demo **javan** (`http://127.0.0.1:9000/safety-media/...`). Kompanija (`/analytics`) slike nikad ne dobija.
+
+Pokretanje servisa (jednom `install`, posle samo `start`):
+```powershell
+.\scripts\services.ps1 install   # portabl Postgres 18.6 + RustFS 1.0.4 u %LOCALAPPDATA%\safety-reviewer, bez admin prava
+.\scripts\services.ps1 start     # Postgres 127.0.0.1:5433, RustFS 127.0.0.1:9000 (konzola :9001, safety / safety-secret)
+.\scripts\services.ps1 psql      # SQL nad bazom, npr. select t, speed_kmh, score from trip_samples order by id desc limit 20;
+.\scripts\services.ps1 reset     # prazna baza (posle promene tabela, jer migracija još nema)
+docker compose up -d             # ili sve ovo sa Dockerom (iste adrese i ključevi)
+```
+Adrese i ključevi se menjaju u `.env` (primer: [.env.example](.env.example)). `RECORDING_ENABLED=false` gasi snimanje.
+
+## Brzina
+
+| Izvor | Kada |
+|---|---|
+| GPS telefona (`POST /speed`) | samo uz `PHONE_SPEED_ENABLED=true` i očitavanje mlađe od 5 s |
+| `speed_kmh` u ticku | simulator i testovi, da vožnja kroz nivoe bude ista svaki put |
+| mock vožnja | sve ostalo: scenario iz [app/services/speed.py](app/services/speed.py), `SPEED_SCENARIO=random` bira po vožnji |
+
+Scenariji: `city` (30–50 km/h, tri semafora), `highway` (do 130), `stop_and_go` (gužva, dugo stajanje),
+`country_road` (60–90), `cruise` (nikad ne staje, dobar za demo na bini), `parked` (stalno 0). Između
+tačaka je kubna Bezier kriva sa ravnim ručkama: auto glatko ubrzava i koči, a stoji na tačno 0 km/h
+(tada nema penala).
 
 ## Pokretanje
 
@@ -63,30 +112,42 @@ from safety_client import SafetyClient
 
 client = SafetyClient()  # http://127.0.0.1:8000/api/v1
 while True:
-    record = ...                 # isti dict koji upisujete u frames.jsonl
-    client.send_frame(record, speed_kmh=60)  # sme svaki frejm, sam se ograniči na ~2/s
+    ok, frame = cap.read()          # BGR frejm iz OpenCV-a
+    record = ...                    # isti dict koji upisujete u frames.jsonl
+    client.send_frame(record)       # sme svaki frejm, sam se ograniči na ~2/s
+    client.send_video_frame(frame)  # sme svaki frejm, sam se ograniči na ~8/s (JPEG)
 ```
 
 - `send_frame` šalje zapis neizmenjen, samo izbaci `perception`. numpy brojevi i nizovi su u redu.
-- Ne ruši petlju za kameru ako backend nije podignut ili vožnja još nije počela (vraća `None`).
-- Ako imate samo labele: `client.send({"looking_at_phone"}, speed_kmh=60)`. Za nepoznatu labelu
-  odmah baca `ValueError`.
+  **Brzinu ne šaljite**, jer je backend zna (mock ili telefon). `speed_kmh=...` samo ako hoćete da je zakucate.
+- `send_video_frame` prima BGR numpy frejm (kodira ga u JPEG kvaliteta 70) ili gotove JPEG bajtove.
+  Backend drži samo poslednjih par sekundi, a čuva klip samo oko rizičnog momenta.
+- Ni jedno ni drugo ne ruši petlju za kameru ako backend nije podignut ili vožnja još nije počela
+  (vraća `None` / `False`).
+- Ako imate samo labele: `client.send({"looking_at_phone"})`. Za nepoznatu labelu odmah baca `ValueError`.
 - Simulacija cele vožnje bez modela, korisno za front: `python notebooks/safety_client.py`
-  (sa `--interval 0.3` ide brže od realnog vremena).
+  (sa `--interval 0.3` ide brže od realnog vremena). `--video 0` usput strimuje web kameru (ili
+  `--video snimak.mp4`), pa rizični momenti dobijaju klipove. `--backend-speed` prepušta brzinu mock vožnji.
 - Replay snimljenog izlaza modela, kao da kamera radi uživo:
-  `python notebooks/safety_client.py --replay frames.jsonl` (`--speedup 2`, `--speed-kmh 90`).
+  `python notebooks/safety_client.py --replay frames.jsonl` (`--speedup 2`, `--speed-kmh 90`, `--video run.mp4`).
 
 Kategorije modela → labele (`CATEGORY_TO_BEHAVIOR` u [app/services/camera.py](app/services/camera.py)).
+Kategorije modela su u [notebooks/risk_config.json](../notebooks/risk_config.json) (`categories`).
 Kategorija koja nije u tabeli ide aplikaciji, ali se ne boduje, a server jednom ispiše warning.
+Test `tests/test_camera_mapping.py` pada ako model doda kategoriju koju backend ne zna.
 
 | Kategorija modela | Labela |
 |---|---|
 | `phone_use` | `looking_at_phone` |
 | `eyes_off_road` | `eyes_off_road` |
-| `turned_around` | `turning_around` |
-| `hands_off` | `hands_off_wheel` |
-| `drowsiness`, `microsleep` | `drowsy` |
+| `hands_off_wheel` | `hands_off_wheel` (aktivna kad su obe ruke van volana) |
+| `drowsiness`, `eyes_closed` | `drowsy` |
+| `eating_drinking` | ne boduje se (`IGNORED_CATEGORIES`, odluka u root `CLAUDE.md`) |
 | ime same labele (npr. `looking_behind`) | ta labela |
+
+`microsleep`, `long_distraction`, `phone_sustained` i `vats` su tvrda pravila modela, a ne
+kategorije. Stižu u `rules_triggered` i dižu crveni alarm modela. Model nema izlaz za
+`looking_behind` ni `turning_around`, pa njih za sada šalje samo simulator.
 
 Labele (moraju se poklapati sa `Behavior` u [app/domain/enums.py](app/domain/enums.py)):
 
@@ -143,11 +204,13 @@ backend/
   app/
     main.py            FastAPI app, CORS, router
     core/config.py     podešavanja iz .env
-    api/routes/        HTTP i WebSocket rute (live.py = telemetrija + /ws)
+    api/routes/        HTTP i WebSocket rute (live.py = telemetrija + video + /ws, recording.py = izveštaj, speed.py)
     schemas/           Pydantic modeli (ugovor sa frontom)
     domain/            enumi i stanje vožnje
-    services/          scoring, alerts, trips, live (WebSocket), analytics, notifications
-    repositories/      in-memory skladište (gubi se na restart)
+    services/          scoring, alerts, trips, live (WebSocket), recording (snimanje), speed, video, analytics, notifications
+    repositories/      aktivne vožnje u memoriji, Postgres tabele (recordings.py), S3 (media.py)
+  scripts/services.ps1 Postgres + RustFS bez Dockera
+  docker-compose.yml   Postgres + RustFS sa Dockerom
   tests/
 notebooks/
   safety_client.py     most između modela i backenda, plus simulacija vožnje

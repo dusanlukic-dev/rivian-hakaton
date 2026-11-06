@@ -1,6 +1,6 @@
 from fastapi import APIRouter, status
 
-from app.api.deps import Hub, TripDep, TripRepo
+from app.api.deps import Hub, Recorder, Speed, TripDep, TripRepo
 from app.domain.enums import LiveEvent
 from app.schemas.trip import TripCreate, TripState, TripSummary
 from app.services import trips as trip_service
@@ -9,11 +9,14 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_trip(body: TripCreate, repo: TripRepo, hub: Hub) -> TripState:
+async def create_trip(body: TripCreate, repo: TripRepo, hub: Hub, speed: Speed, recorder: Recorder) -> TripState:
     """Called by the app when the drive starts. Ends any trip still in progress."""
     trip, previous = trip_service.start_trip(repo, body)
     if previous is not None:
+        recorder.trip_ended(previous)
+        speed.end_trip(previous.id)
         await hub.broadcast(LiveEvent.TRIP_ENDED, trip_service.to_summary(previous))
+    recorder.trip_started(trip, speed_scenario=speed.scenario_for(trip.id).name)
     state = trip_service.to_state(trip)
     await hub.broadcast(LiveEvent.TRIP_STARTED, state)
     return state
@@ -30,10 +33,12 @@ def get_trip_state(trip: TripDep) -> TripState:
 
 
 @router.post("/{trip_id}/end")
-async def end_trip(trip: TripDep, hub: Hub) -> TripSummary:
+async def end_trip(trip: TripDep, hub: Hub, speed: Speed, recorder: Recorder) -> TripSummary:
     ended_now = trip_service.end_trip(trip)
     summary = trip_service.to_summary(trip)
     if ended_now:
+        recorder.trip_ended(trip)
+        speed.end_trip(trip.id)
         await hub.broadcast(LiveEvent.TRIP_ENDED, summary)
     return summary
 

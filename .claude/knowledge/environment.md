@@ -23,6 +23,9 @@ Recorded 2026-11-06. Update it when something changes. Other teammates' machines
 | Expo / RN / React | SDK 58.0.23 / 0.88.1 / 19.3.0 | TypeScript 6.0, React Compiler on, New Architecture only, Hermes |
 | Gradle / AGP / Kotlin | 9.4.1 / 9.2.1 / 2.2.0 | from the generated `android/`; minSdk 24, targetSdk 36, compileSdk 37 |
 | Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe` | headless screenshots (dashboard-dev skill) |
+| Postgres + RustFS | **18.6** (EDB binaries zip, no pgAdmin) + **1.0.4** | portable in `%LOCALAPPDATA%\safety-reviewer` (data, logs, downloads), installed and started by `backend/scripts/services.ps1` (no admin, no Docker). Postgres `127.0.0.1:5433` user/db `safety` (trust auth), RustFS `127.0.0.1:9000` key `safety` / `safety-secret`. Docker is **not** installed |
+| PostgreSQL 18 (system service) | `postgresql-x64-18`, Automatic | someone's earlier EDB install, `C:\Program Files\PostgreSQL\18`, listening on `0.0.0.0:5432`, credentials unknown. Left alone; our database is on 5433 |
+| OpenCV (system Python) | `cv2` 5.0.0 in `py -3.13` and `py` | lets `notebooks/safety_client.py --video` stream a webcam or file. Not in `backend/.venv` |
 
 User env vars set by setup: `ANDROID_HOME`, plus PATH entries `%ANDROID_HOME%\platform-tools` and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
 **Shells or VS Code windows opened before setup don't see them**: restart VS Code, or set them in-session (mobile-dev skill).

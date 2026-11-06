@@ -39,6 +39,14 @@ class TripStatus(StrEnum):
     ENDED = "ended"
 
 
+class SpeedSource(StrEnum):
+    """Where the speed used for a tick came from (the camera itself doesn't know it)."""
+
+    MOCK = "mock"            # the backend's simulated drive (default)
+    PHONE = "phone"          # the phone's GPS via POST /speed (only with PHONE_SPEED_ENABLED=true)
+    TELEMETRY = "telemetry"  # sent in the tick itself (simulator, tests, a car that knows its speed)
+
+
 class LiveEvent(StrEnum):
     """Message types pushed to the mobile app over the WebSocket."""
 
