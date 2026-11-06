@@ -54,7 +54,8 @@ Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#F
 | `sound: "high"` | `alarm_warning` per message + red pulse overlay (≤ 2 Hz) | alarm-stream notification; full-screen intent if locked | `alarm_warning.wav` + red pulse |
 | `emergency` event | full-screen red + `alarm_siren` loop + vibration + TTS + max brightness + Text/Call contact | full-screen intent wakes the phone, insistent `alarm_critical` (alarm channel) | full red pulse + `alarm_siren` loop until Dismiss |
 | `active_behaviors` | chips: icon + label + seconds | notification body | icon row, lit while active |
-| `trip_ended` | summary screen (final/avg/min score + tips) | notification "Trip ended" | summary card |
+| `section` (every 2 s) | "last minute" strip (30 bars: height = score, colour = danger) + what was seen in the last 2 s | – | – |
+| `trip_ended` | summary screen (final/avg/min score + tips + drive chart) | notification "Trip ended" | summary card + drive chart |
 
 - Flashing stays ≤ 3 Hz (D14). Sound is the primary channel.
 - Pitch angle: if the driver is looking at the phone, the phone itself becomes the warning.
@@ -64,3 +65,15 @@ Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#F
 `python notebooks/safety_client.py [--interval 0.3]` with the backend running. It starts a trip and goes safe → hands off (caution) → phone
 (warning) → looking behind + turning (high_risk) → phone at 60 km/h (critical) → drowsy at 130 km/h (emergency) → phone while stopped
 at a light (no penalty) → 40 s clean → ends the trip and prints a summary with tips.
+
+## Sections and danger (coordinator, every 2 s; docs/ARCHITECTURE.md)
+
+| `danger` | when (only while moving, ≥ 5 km/h) | chart |
+|---|---|---|
+| `critical` | model red alert, loud alarm (`sound: high`) or the emergency | red shading; its moment gets a node **and a picture box** |
+| `dangerous` | a scored behaviour, model yellow alert, or the seat vibrated | amber shading; its moment gets a node |
+| `none` | everything else, and always while standing | – |
+
+Moments = back-to-back dangerous sections (one quiet section bridged), built by the server when it reads the report. The picture
+is the frame the model analysed at the section's riskiest tick (danger, then model risk, then score lost), scaled to 960 px.
+With the model path, `state` reaches the phone ~2/s (at once on any change), not at the model's 5–10 detections/s.

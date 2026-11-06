@@ -1,68 +1,71 @@
 # Personal Safety Reviewer – backend (FastAPI)
 
-Računa koeficijent bezbednosti vozača (0–100) iz rezultata modela za kameru i uživo javlja mobilnoj
+Računa koeficijent bezbednosti vozača (0–100) iz onoga što model vidi na kameri i uživo javlja mobilnoj
 aplikaciji kako kola treba da reaguju (svetlo na dashboardu, vibracija sedišta, zvuk, poruka kontaktu).
-Usput snima vožnju za izveštaj vozaču: grafik po sekundama i video klipove rizičnih momenata.
+Usput pravi izveštaj vožnje: na svake 2 s rezime (score, šta je viđeno, opasnost) i sliku opasnih momenata.
 
-## Arhitektura
+## Arhitektura: koordinator, server i model
+
+Detalji (tok podataka, ugovori između delova, keš, pouzdanost): **[docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md)**.
 
 ```
- laptop                                                         telefon (hotspot)
-┌─────────────────────────────────────────────────────────┐    ┌──────────────────┐
-│ notebooks/  YOLO · MediaPipe · OpenCV                   │    │ React Native app │
-│     │  safety_client.send_frame(record)        ~2/s     │    │                  │
-│     │  safety_client.send_video_frame(frame)   ~8/s     │    │                  │
-│     ▼  POST 127.0.0.1:8000/api/v1/telemetry, /video/... │    │                  │
-│ backend/  FastAPI ── računa score ── WS /api/v1/ws ─────┼───►│ live dashboard   │
-│     │               ◄── POST /trips, /trips/{id}/end ───┼────│ start / kraj     │
-│     │               ── /timeline, /events, /media ──────┼───►│ izveštaj, klipovi│
-│     ▼  snimanje u pozadini                              │    │                  │
-│ Postgres :5433 (uzorci, momenti) · RustFS S3 :9000      │    │                  │
-└─────────────────────────────────────────────────────────┘    └──────────────────┘
+ laptop = računar u kolima                                                    telefon (hotspot)
+┌───────────────────────────────────────────────────────────────────────┐    ┌──────────────────┐
+│ kamera ── JPEG ──► KOORDINATOR (app/coordinator) ── WS /api/v1/ws ─────┼───►│ uživo: score,    │
+│ (tools/camera_stream.py)  │  ▲                         state, section  │    │ alarmi, sekcije  │
+│                frejm      ▼  │ dokaz po kategoriji                     │    │                  │
+│            model worker (model/worker.py, svoj proces)                 │    │                  │
+│                           │ sekcije od 2 s + slike (POST /internal/...)│    │                  │
+│                           ▼                                            │    │                  │
+│            SERVER (app/server) ── /auth, /trips, /report, /media ──────┼───►│ istorija,        │
+│            Postgres :5433 (trips, trip_sections) · RustFS S3 :9000     │    │ grafik vožnje    │
+└───────────────────────────────────────────────────────────────────────┘    └──────────────────┘
 ```
 
-- Modeli i backend rade na **istom laptopu**, pa modeli gađaju `127.0.0.1`.
-- Modeli šalju svoj **zapis frejma** (isti kao red u `frames.jsonl`), bez `perception` i nikad
-  slike. Backend preslikava aktivne kategorije na labele i iz njih računa score. Rizik i kategorije
-  modela prosleđuje aplikaciji u polju `camera`, a crveni alarm modela odmah pali vibraciju i zvuk.
-- U jednom trenutku je aktivna **jedna vožnja** (jedan auto). Aplikacija je pokreće i završava,
-  a telemetrija modela automatski ide u aktivnu vožnju.
-- **Brzinu daje backend**, jer je kamera ne zna: mock vožnja (scenario po vožnji), ili GPS telefona
-  ako je uključen (`PHONE_SPEED_ENABLED=true`). Modeli ne šalju brzinu.
+- **Koordinator** prima video, šalje frejmove modelu i od njegovog dokaza računa rizik (izdvojen
+  `RiskEngine` CV tima), score i reakciju kola, šalje stanje telefonu, drži 5 min videa u kešu i na svake
+  2 s šalje rezime sekcije serveru (sa slikom najrizičnijeg frejma kad je sekcija opasna) i telefonu.
+  Nikad ne dira bazu.
+- **Server** čuva naloge, vožnje, sekcije i slike i služi istoriju i izveštaj. Ne zna ništa o kameri.
+- **Model** (`model/worker.py`) radi u svom okruženju (kasnije Docker) i samo detektuje.
+- U demo-u koordinator i server rade u **jednom procesu** na portu 8000 (`python run.py`), pa telefon ima
+  jednu adresu. Jedan drugom se i tada obraćaju samo preko HTTP-a.
+- U jednom trenutku je aktivna **jedna vožnja** (jedan auto). Aplikacija je pokreće i završava.
+- **Brzinu daje koordinator**, jer je kamera ne zna: mock vožnja (scenario po vožnji), ili GPS telefona
+  ako je uključen (`PHONE_SPEED_ENABLED=true`).
+- Simulator bez kamere i modela i dalje radi: `POST /telemetry` (`notebooks/safety_client.py`, `tools/sim.py`).
 
-## Snimanje vožnje i nalozi (Postgres + RustFS)
+## Čuvanje vožnje i nalozi (server: Postgres + RustFS)
 
 Cela struktura baze, šta se šalje frontu i review su u **[docs/DATABASE.md](../docs/DATABASE.md)**.
-Dok vožnja traje, backend u pozadini upisuje:
 
 | Tabela / bucket | Šta | Za izveštaj |
 |---|---|---|
 | `users`, `user_sessions` | nalog (korisničko ime, scrypt heš lozinke, ime, kontakt) i prijave (samo SHA-256 tokena) | ko je vozio |
-| `trips` | početak, rezime na ~10 s i konačan na kraju (final/prosek/min score, ponašanja) | istorija, statistika |
-| `trip_samples` | **jedan red po sekundi**: brzina, score, nivo, ponašanja, svi brojevi modela (`p`, `p_max`, `r`, `run_s` po kategoriji, `risk`, `alert`, grupe), reakcija kola, GPS | grafici |
-| `risk_events` | jedan red po **rizičnom momentu**: ponašanja i koliko su trajala, pad score-a, najveći rizik, brzina, ključevi klipa | "najgore što je uradio" |
-| S3 `safety-media/clips/<trip>/<moment>.mp4` + `.jpg` | H.264 klip (3 s pre, 2 s posle) i najrizičniji frejm | video i slika |
+| `trips` | početak, rezime sa svakom sekcijom i konačan na kraju (final/prosek/min score, ponašanja) | istorija, statistika |
+| `trip_sections` | **jedan red na 2 s vožnje**: score, opasnost, ponašanja u sekundama, svi brojevi modela, brzina, reakcija kola, ključ slike | grafik vožnje, momenti |
+| S3 `safety-media/sections/<trip>/<sekcija>.jpg` | najrizičniji frejm opasne sekcije (960 px) | slika na grafiku |
 
-- Rizičan momenat: kola se kreću, a vidi se bodovano ponašanje ili je model dao crveni alarm.
-  Detekcije razmaknute < 2 s su isti momenat. Klip se pravi za momente od ≥ 1 s (ili sa crvenim alarmom).
-- Čitanje: **`GET /trips/{id}/report`** vraća sve o jednoj vožnji (rezime, korisnik, sirovi uzorci za
-  grafike, momenti sa slikama i klipovima). Postoje i `/timeline`, `/events`, istorija `GET /trips` i
-  klip preko `GET /media/...` (sve u [docs/API.md](../docs/API.md)). Radi i posle restarta backenda.
+- Opasnost sekcije (samo u vožnji): `critical` = crveni alarm modela, glasan alarm ili uzbuna; `dangerous` =
+  vidi se bodovano ponašanje, žuti alarm ili vibracija. Uzastopne opasne sekcije su jedan **momenat**.
+- Čitanje: **`GET /trips/{id}/report`** vraća sve o jednoj vožnji (rezime, korisnik, sekcije, momenti sa
+  slikama). Postoje i `/sections`, istorija `GET /trips` i slika preko `GET /media/...` (sve u
+  [docs/API.md](../docs/API.md)). Radi i posle restarta.
 - Nalozi: `POST /auth/register`, `POST /auth/login` → token (`Authorization: Bearer ...`). Vožnja
   pokrenuta sa tokenom pripada nalogu i vidi je samo on. Bez prijave sve radi kao ranije (`driver_id`).
-- Ako Postgres ili S3 nisu podignuti, **score i reakcije kola rade normalno**. Redovi čekaju u memoriji,
-  a klipovi se preskaču, uz upozorenje u konzoli.
-- Bucket je za demo **javan** (`http://127.0.0.1:9000/safety-media/...`). Kompanija (`/analytics`) slike nikad ne dobija.
+- Ako Postgres ili S3 nisu podignuti, **score i reakcije kola rade normalno**. Sekcije čekaju u
+  koordinatoru i stignu kad se server vrati; bez S3 se čuvaju bez slike.
+- Bucket je za demo **javan**. Kompanija (`/analytics`) slike nikad ne dobija.
 
-Pokretanje servisa (jednom `install`, posle samo `start`):
+Pokretanje servisa:
 ```powershell
-.\scripts\services.ps1 install   # portabl Postgres 18.6 + RustFS 1.0.4 u %LOCALAPPDATA%\safety-reviewer, bez admin prava
-.\scripts\services.ps1 start     # Postgres 127.0.0.1:5433, RustFS 127.0.0.1:9000 (konzola :9001, safety / safety-secret)
-.\scripts\services.ps1 psql      # SQL nad bazom, npr. select t, speed_kmh, score from trip_samples order by id desc limit 20;
-.\scripts\services.ps1 reset     # prazna baza (posle promene tabela, jer migracija još nema)
-docker compose up -d             # ili sve ovo sa Dockerom (iste adrese i ključevi)
+docker compose up -d             # Postgres 127.0.0.1:5433, RustFS 127.0.0.1:9000 (konzola :9001, safety / safety-secret)
+.\scripts\services.ps1 install   # ...ili bez Docker-a: portabl Postgres 18.6 + RustFS 1.0.4 (jednom)
+.\scripts\services.ps1 start     # ...pa posle samo start
+.\scripts\services.ps1 psql      # SQL nad bazom, npr. select seq, score_end, danger from trip_sections order by started_at desc limit 20;
+.\scripts\services.ps1 reset     # prazna baza (posle promene tabela, jer migracija još nema); Docker: docker compose down -v
 ```
-Adrese i ključevi se menjaju u `.env` (primer: [.env.example](.env.example)). `RECORDING_ENABLED=false` gasi snimanje.
+Adrese i ključevi se menjaju u `.env` (primer: [.env.example](.env.example)). `RECORDING_ENABLED=false` gasi čuvanje.
 
 ## Brzina
 
@@ -70,7 +73,7 @@ Adrese i ključevi se menjaju u `.env` (primer: [.env.example](.env.example)). `
 |---|---|
 | GPS telefona (`POST /speed`) | samo uz `PHONE_SPEED_ENABLED=true` i očitavanje mlađe od 5 s |
 | `speed_kmh` u ticku | simulator i testovi, da vožnja kroz nivoe bude ista svaki put |
-| mock vožnja | sve ostalo: scenario iz [app/services/speed.py](app/services/speed.py), `SPEED_SCENARIO=random` bira po vožnji |
+| mock vožnja | sve ostalo: scenario iz [app/coordinator/services/speed.py](app/coordinator/services/speed.py), `SPEED_SCENARIO=random` bira po vožnji |
 
 Scenariji: `city` (30–50 km/h, tri semafora), `highway` (do 130), `stop_and_go` (gužva, dugo stajanje),
 `country_road` (60–90), `cruise` (nikad ne staje, dobar za demo na bini), `parked` (stalno 0). Između
@@ -85,8 +88,12 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 
-python run.py        # za demo preko hotspota, ispisuje adresu za aplikaciju
+python run.py        # za demo preko hotspota, ispisuje adresu za aplikaciju (koordinator + server)
 fastapi dev app/main.py   # samo lokalno, http://127.0.0.1:8000/docs
+
+# kamera i model (iz korena repoa, isti venv; pravi model ima svoj: ../model/README.md)
+python ..\tools\camera_stream.py      # test slika 10 fps (--video snimak.mp4, --webcam "ime")
+python ..\model\worker.py --fake      # skriptovane detekcije, bez CV paketa
 ```
 
 Testovi: `pytest`
@@ -110,7 +117,15 @@ Testovi: `pytest`
 6. U Expo Go / dev buildu `http://` i `ws://` rade odmah. Za samostalni Android build treba uključiti
    cleartext saobraćaj (`usesCleartextTraffic` preko `expo-build-properties`).
 
-## Za tim sa modelima ([notebooks/safety_client.py](../notebooks/safety_client.py))
+## Za tim sa modelima
+
+**Novi put (kamera → koordinator → model):** model ne čita kameru i ne računa rizik. `model/worker.py` uvozi
+vaše klase iz `notebooks/risk_pipeline.py` (`FacePerception`, `HandPerception`, `ObjectPerception`,
+`FeatureExtractor`) bez izmena, prima frejmove od koordinatora i vraća dokaz po kategoriji. `RiskEngine` je
+izdvojen u koordinator (`app/coordinator/services/risk_engine.py`, test ga poredi sa vašim). Pragove i dalje
+menjate u `notebooks/risk_config.json`. Uputstvo: [model/README.md](../model/README.md).
+
+**Stari put ([notebooks/safety_client.py](../notebooks/safety_client.py)) i dalje radi**, npr. za replay:
 
 ```python
 from safety_client import SafetyClient
@@ -126,17 +141,17 @@ while True:
 - `send_frame` šalje zapis neizmenjen, samo izbaci `perception`. numpy brojevi i nizovi su u redu.
   **Brzinu ne šaljite**, jer je backend zna (mock ili telefon). `speed_kmh=...` samo ako hoćete da je zakucate.
 - `send_video_frame` prima BGR numpy frejm (kodira ga u JPEG kvaliteta 70) ili gotove JPEG bajtove.
-  Backend drži samo poslednjih par sekundi, a čuva klip samo oko rizičnog momenta.
+  Frejm ide u video keš koordinatora, iz kog se uzima slika opasne sekcije.
 - Ni jedno ni drugo ne ruši petlju za kameru ako backend nije podignut ili vožnja još nije počela
   (vraća `None` / `False`).
 - Ako imate samo labele: `client.send({"looking_at_phone"})`. Za nepoznatu labelu odmah baca `ValueError`.
 - Simulacija cele vožnje bez modela, korisno za front: `python notebooks/safety_client.py`
   (sa `--interval 0.3` ide brže od realnog vremena). `--video 0` usput strimuje web kameru (ili
-  `--video snimak.mp4`), pa rizični momenti dobijaju klipove. `--backend-speed` prepušta brzinu mock vožnji.
+  `--video snimak.mp4`), pa opasne sekcije dobijaju slike. `--backend-speed` prepušta brzinu mock vožnji.
 - Replay snimljenog izlaza modela, kao da kamera radi uživo:
   `python notebooks/safety_client.py --replay frames.jsonl` (`--speedup 2`, `--speed-kmh 90`, `--video run.mp4`).
 
-Kategorije modela → labele (`CATEGORY_TO_BEHAVIOR` u [app/services/camera.py](app/services/camera.py)).
+Kategorije modela → labele (`CATEGORY_TO_BEHAVIOR` u [app/coordinator/services/camera.py](app/coordinator/services/camera.py)).
 Kategorije modela su u [notebooks/risk_config.json](../notebooks/risk_config.json) (`categories`).
 Kategorija koja nije u tabeli ide aplikaciji, ali se ne boduje, a server jednom ispiše warning.
 Test `tests/test_camera_mapping.py` pada ako model doda kategoriju koju backend ne zna.
@@ -166,7 +181,7 @@ Labele (moraju se poklapati sa `Behavior` u [app/domain/enums.py](app/domain/enu
 | `eyes_off_road` | pogled van puta (obično ide zajedno sa `looking_at_phone`, pa se sabiraju) | 1.0 |
 
 Više labela u istom ticku je u redu i penali se sabiraju. Novo ponašanje se dodaje na tri mesta:
-`Behavior` u `enums.py`, težina u `scoring.py` i savet u `TIPS` u `services/trips.py`.
+`Behavior` u `domain/enums.py`, težina u `coordinator/services/scoring.py` i savet u `TIPS` u `domain/tips.py`.
 Test će pasti ako nešto od toga fali. Ako se kategorija modela zove drugačije, dodaj je i u `CATEGORY_TO_BEHAVIOR`.
 
 ## Za mobilnu aplikaciju
@@ -177,8 +192,8 @@ Ceo ugovor (rute, WebSocket poruke, TypeScript tipovi, primeri, pravila prikaza)
 ## Kako radi koeficijent
 
 Sve se podešava na jednom mestu:
-- [app/services/scoring.py](app/services/scoring.py) (`ScoringConfig`): težine ponašanja, množioci za brzinu i noć, oporavak
-- [app/services/alerts.py](app/services/alerts.py) (`LEVEL_BANDS`, `POLICIES`): opsezi i reakcija kola po nivou
+- [app/coordinator/services/scoring.py](app/coordinator/services/scoring.py) (`ScoringConfig`): težine ponašanja, množioci za brzinu i noć, oporavak
+- [app/domain/levels.py](app/domain/levels.py) (`LEVEL_BANDS`) i [app/coordinator/services/alerts.py](app/coordinator/services/alerts.py) (`POLICIES`): opsezi i reakcija kola po nivou
 
 Po ticku:
 - svako vidljivo ponašanje skida `težina × sekunde` poena, plus jednokratni udar kad počne (pada brzo na početku)
@@ -199,7 +214,7 @@ njega određuje noćne penale.
 | < 10 | emergency | crveno | + `emergency` događaj i poruka kontaktu (jednom po vožnji) |
 | bilo koji | model javi crveno | prati score | vibracija + glasan zvuk odmah (alarm modela) |
 
-Slanje poruke kontaktu je za sada stub koji samo loguje: [app/services/notifications.py](app/services/notifications.py).
+Slanje poruke kontaktu je za sada stub koji samo loguje: [app/coordinator/services/notifications.py](app/coordinator/services/notifications.py).
 
 ## Struktura
 

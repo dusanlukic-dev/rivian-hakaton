@@ -102,3 +102,45 @@ it's the car's own network. 2026-11-06.
 (summary, user, samples, moments with images) in one call, so the backend never has to know what charts the app wants. "Raw" means the
 1 s rows of D20. If every tick (~2/s) is ever needed, set `sample_window_s = 0.5`. The `trips` row also gets a running summary every ~10 s,
 so a crash mid-trip still leaves a usable summary, and the next start closes such trips. 2026-11-06.
+
+**D27: The backend is split into a coordinator (in the car) and a server (storage/report); the model is its own process.**
+Requested by the user (2026-11-06 evening). The coordinator owns everything live: the phone WS, the camera stream, the model link,
+risk + score + car response, a 5 min video cache, and 2 s section summaries. The server owns Postgres + S3, accounts, history and
+the report. They talk only over HTTP (`/internal/trips/{id}/sync`, `GET /auth/me`); in one process via `httpx.ASGITransport`, split
+via `SERVER_URL`, so separating them is configuration, not code. The demo keeps one process on :8000 so the phone keeps one address.
+Alternatives: two processes now (two ports through the firewall and hotspot, and the app would need two addresses) or a direct
+in-process call (no real boundary). Supersedes the in-process `TripRecorder` that wrote to Postgres from the live process. 2026-11-06.
+
+**D28: The model worker dials into the coordinator over a WebSocket (`/api/v1/model/ws`), one frame in flight, newest frame wins.**
+Dialing in needs no new port or firewall rule (port 8000 is already open, which matters for a GPU laptop or a container), and
+either side can restart. Binary frames (uint32 header length + JSON header + JPEG), JSON detections back. A slow model never builds
+a queue, so detections are at most one frame old. Alternatives: the model as a server the coordinator calls (new port), gRPC,
+ZeroMQ or Redis queues (extra dependencies). 2026-11-06.
+
+**D29: Sections of 2 s replace the 1 s samples and the clip-based risk events; moments are derived on read.** The user asked for a
+summary every 2–3 s, an image for dangerous parts, and a chart with nodes and pictures for the ultra-dangerous parts. 2 s keeps
+10–20 model detections per section, gives 900 points per half hour, and gets a dangerous moment to the phone and server within
+~2 s. Danger is decided by the coordinator (critical = model red alert, loud alarm or emergency; dangerous = scored behavior, yellow
+alert or vibration; only while moving). Back-to-back dangerous sections (bridging one quiet section) become a moment when the server
+reads the report, so there is no second table to keep consistent. Clips are dropped for now (the user scoped "video of the whole
+section" as a future fix; `VideoCache.frames_between` + `encode_mp4` are kept for it). 2026-11-06.
+
+**D30: The video cache is diskcache on disk (5 min, 1 GB, 10 fps max), not Redis.** At 10 fps of ~50–300 KB JPEGs, 5 min is
+150–900 MB: too much for memory, while diskcache keeps a bounded, FIFO-evicted cache in a temp folder with no extra service. Writes
+go through one worker thread so the event loop never waits for the disk; the frame the model analysed is always kept (it may become
+the section image). Section aggregation stays in memory (tiny, per trip). Redis Streams would be the next step if several
+coordinators ever need a shared cache. 2026-11-06.
+
+**D31: The CV team's `RiskEngine` is copied into the coordinator, not imported, and a test keeps the copy identical.** The user
+asked to extract the final-score logic without editing the CV code. The coordinator must not depend on numpy/OpenCV or on
+`notebooks/` at runtime, so `coordinator/services/risk_engine.py` is a verbatim copy with plain Python instead of numpy (same
+arithmetic order). `tests/test_risk_engine.py` replays 5 × 4000 random evidence steps through both and requires equal records,
+events and summaries. The worker imports the CV detectors (`FeatureExtractor` etc.) straight from `risk_pipeline.py`. 2026-11-06.
+
+**D32: The drive chart on the phone uses `react-native-svg` (native rebuild), not plain Views.** A line + gradient area + shaded
+sections + nodes + dashed connectors is natural in SVG and impractical with Views. Expo SDK 58 pins `react-native-svg` 15.16.0;
+the incremental dev build took 1 min 50 s. The image boxes are RN `expo-image` views over the SVG (caching, tap targets). The web
+dashboard draws the same chart with plain inline SVG. 2026-11-06.
+
+**D33: On this laptop Postgres + RustFS run in Docker (`backend/docker-compose.yml`).** Docker Desktop is installed now (D22
+assumed it wasn't); the portable `services.ps1` stays for the backend teammate's laptop. Same ports and keys either way. 2026-11-06.

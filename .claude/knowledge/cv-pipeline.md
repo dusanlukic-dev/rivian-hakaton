@@ -82,3 +82,20 @@ head pose vs baseline, eye blendshapes, PERCLOS, hands, phone components, and a 
 - So **never rename or add a category** in `risk_config.json` without the backend: `backend/tests/test_camera_mapping.py` fails on an
   unknown one. The keys `hands`, `phone`, `head_roi` etc. are outside `categories`, so they're safe.
 - `risk_pipeline.py` doesn't call `send_frame` live yet. `safety_client.py --replay logs/<run>/frames.jsonl` replays a recorded run.
+
+## Extraction into the coordinator + the model worker (2026-11-06 evening)
+
+- `RiskEngine` (smoothing, durations, groups, rules, alert, trip summary) is **copied** into
+  `backend/app/coordinator/services/risk_engine.py`, numpy replaced by plain Python with the same arithmetic order.
+  `backend/tests/test_risk_engine.py` imports the original from `notebooks/risk_pipeline.py` and requires identical records,
+  events and summaries over 5 × 4000 random steps. If the CV team changes `RiskEngine`, port it and the test tells you.
+- `model/worker.py` runs the body of `risk_pipeline.run()` per frame on frames the coordinator sends: `FacePerception`,
+  `HandPerception`, `ObjectPerception` (if `models/yolo11s_640.onnx` exists), `FeatureExtractor` → `evidence` back. The schedule
+  (`face_every_n`, `hands_every_n`, `objects_every_n`, `max_result_age_s`) is kept; the coordinator decides which frames go
+  (newest wins), so "every 3rd frame" becomes "whatever the model keeps up with".
+- MediaPipe VIDEO mode needs strictly increasing timestamps across trips, so the worker keeps a base offset instead of
+  restarting at 0; `FeatureExtractor` (head-pose calibration, PERCLOS, phone memory) is recreated on every `reset` (new trip).
+- **Not run with the real models on this laptop** (no `notebooks/models/`, no dataset drive). The fake mode is verified end to end.
+- **`notebooks/setup_models.bat` and `.sh` in commit 6985249 contain unresolved merge-conflict markers** (`<<<<<<< HEAD` ...
+  `>>>>>>> 0c36827`), so they fail as committed. The HEAD side exports `yolo11s_640` (what `risk_config.json` uses), the other side
+  `yolo11n_320`. Left for the CV team to resolve (their file).

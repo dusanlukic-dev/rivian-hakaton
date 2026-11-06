@@ -7,47 +7,54 @@ Tim komunicira na srpskom (latinica). Kod, identifikatori, API i labele su na en
 Kamera u kabini prati vozača. Backend računa **koeficijent pažnje 0–100** (100 = potpuno usredsređen,
 0 = opasnost po život), a kola reaguju: svetlo na dashboardu, vibracija sedišta, zvučni signal, poruka
 kontaktu za hitne slučajeve. Na kraju vožnje vozač dobija statistiku, savete i izveštaj: grafik vožnje
-i video klipove svojih najgorih momenata. Kompanija vidi samo koeficijente i vrste grešaka, **nikad
+sa opasnim delovima i slikom najopasnijih momenata. Kompanija vidi samo koeficijente i vrste grešaka, **nikad
 slike** (privatnost).
 
 ## Delovi repoa
 
 | Putanja | Šta je |
 |---|---|
-| `backend/` | FastAPI: računa score, šalje događaje aplikaciji, snima vožnju za izveštaj. Detalji u `backend/CLAUDE.md` |
-| `backend/scripts/services.ps1` | Postgres + RustFS (S3) za snimanje vožnji, portabl (bez Dockera i admin prava). Sa Dockerom: `backend/docker-compose.yml` |
+| `backend/` | FastAPI u dva dela: **koordinator** (`app/coordinator/`, u kolima: uživo, kamera, model, score, sekcije) i **server** (`app/server/`: nalozi, čuvanje, izveštaj). Detalji u `backend/CLAUDE.md` |
+| `backend/docker-compose.yml` | Postgres + RustFS (S3) za server. Bez Docker-a: `backend/scripts/services.ps1` (portabl) |
+| `model/` | **model worker**: svoj proces i okruženje (kasnije Docker), prima frejmove od koordinatora i vraća detekcije. Koristi kod CV tima bez izmena |
+| `tools/camera_stream.py` | kamera za demo: snimak, test slika ili web kamera → koordinator |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
-| `notebooks/safety_client.py` | most modeli → backend, plus simulator cele vožnje |
+| `notebooks/safety_client.py` | stari most modeli → backend, plus simulator cele vožnje (i dalje radi) |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
+| `docs/ARCHITECTURE.md` | **koordinator, server i model**: tok podataka, ugovori između delova, keš, pouzdanost |
 | `docs/API.md` | **ugovor backend ↔ aplikacija, izvor istine.** Pročitaj ga pre bilo kakvog rada na frontendu |
-| `docs/DATABASE.md` | struktura baze (nalozi, vožnje, uzorci, momenti, klipovi), šta se šalje frontu, review |
+| `docs/DATABASE.md` | struktura baze (nalozi, vožnje, sekcije od 2 s, slike), šta se šalje frontu, review |
 | `PROGRESS.md` | stanje projekta, bagovi, sledeći koraci. Pročitaj na početku, ažuriraj na kraju |
 | `.claude/` | pravila, skillovi i knowledge za agente (frontend, alati, mreža, Android). Indeks: `.claude/CLAUDE.md` |
 
 ## Arhitektura i mreža
 
+Celo objašnjenje: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ```
-laptop: notebooks (modeli) ──POST 127.0.0.1:8000/api/v1/telemetry (~2/s, frejm modela ili labele)──► backend
-                           ──POST 127.0.0.1:8000/api/v1/video/frames (~8/s, JPEG)──────────────────► backend
-        backend ──► Postgres 127.0.0.1:5433 (nalozi, vožnje, uzorci po 1 s, rizični momenti) + RustFS S3 127.0.0.1:9000 (klipovi)
-telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backend
-                                    ──REST /auth (login), /trips (start, kraj, istorija, izveštaj, klipovi)──►
+laptop: kamera (tools/camera_stream.py) ──WS 127.0.0.1:8000/api/v1/camera/ws (JPEG, ~10 fps)──► KOORDINATOR
+        model worker (model/worker.py)  ◄─WS 127.0.0.1:8000/api/v1/model/ws: frejm → dokaz po kategoriji─►
+        simulator (safety_client.py)    ──POST /api/v1/telemetry (labele ili zapis modela)──────────────►
+        KOORDINATOR ──POST /api/v1/internal/trips/{id}/sync (sekcije od 2 s + slike)──► SERVER
+        SERVER ──► Postgres 127.0.0.1:5433 (nalozi, vožnje, sekcije) + RustFS S3 127.0.0.1:9000 (slike)
+telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergency, section na 2 s── KOORDINATOR
+                                    ──REST /auth, /trips (start, kraj [K]; istorija, izveštaj [S]), /media [S]──►
 ```
 
-- Za demo **nema servera ni DNS-a**. Laptop pokreće backend i modele, telefon pravi hotspot, a laptop
-  je povezan na njega. Aplikacija gađa IP laptopa, koji `python backend/run.py` ispiše pri
-  pokretanju. IP se menja pri svakom ponovnom povezivanju.
-- **Jedan auto = jedna aktivna vožnja.** Telemetrija ide u aktivnu vožnju, a nova vožnja završava
-  prethodnu.
-- Model šalje svoj zapis frejma (isti kao red u `frames.jsonl`) preko `SafetyClient.send_frame`,
-  bez `perception` i bez slika. Backend preslikava aktivne kategorije modela na labele
-  (`CATEGORY_TO_BEHAVIOR` u `backend/app/services/camera.py`), a rizik i kategorije modela
-  prosleđuje aplikaciji u polju `camera`.
-- Video ide posebno: `SafetyClient.send_video_frame(frame)` šalje JPEG frejmove. Backend drži samo
-  par sekundi u memoriji, a klip (3 s pre i 2 s posle) čuva samo oko **rizičnog momenta**.
-- Snimanje (`backend/app/services/recording.py`) radi pored živog toka i nikad ga ne usporava. Ako
-  Postgres ili S3 nisu dostupni, score i reakcije kola rade normalno, a redovi čekaju u memoriji.
+- Za demo **nema servera ni DNS-a**. Laptop pokreće backend (koordinator + server u jednom procesu,
+  port 8000), kameru i model, telefon pravi hotspot, a laptop je povezan na njega. Aplikacija gađa IP
+  laptopa, koji `python backend/run.py` ispiše pri pokretanju. IP se menja pri svakom ponovnom povezivanju.
+- **Jedan auto = jedna aktivna vožnja.** Detekcije i telemetrija idu u aktivnu vožnju, a nova vožnja
+  završava prethodnu.
+- **Koordinator** prima video, šalje frejmove modelu, od dokaza modela računa rizik (`RiskEngine` CV tima,
+  izdvojen u `backend/app/coordinator/services/risk_engine.py`), pa naš score i reakciju kola. Telefonu
+  šalje stanje i na svake 2 s **sekciju** (šta je viđeno, score, opasnost). Drži 5 min videa u kešu i za
+  opasnu sekciju uzima sliku najrizičnijeg frejma. Sekcije sa slikama šalje serveru. Nikad ne dira bazu.
+- **Server** čuva naloge, vožnje, sekcije i slike i služi istoriju i izveštaj (grafik vožnje sa opasnim
+  momentima). Ne zna ništa o kameri.
+- **Model** samo detektuje (perception + `FeatureExtractor` CV tima). Kod CV tima se ne menja.
+- Ako server, Postgres ili S3 ne rade, score i reakcije kola rade normalno, a sekcije čekaju u koordinatoru.
 
 ## Pravila domena (sažetak)
 
@@ -64,8 +71,9 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   glasno pište, na bilo kom nivou.
 - Brzinu daje backend (`backend/app/services/speed.py`), redom: GPS telefona (ako je uključen i
   svež) > `speed_kmh` iz ticka (simulator) > mock vožnja.
-- Rizičan momenat = kola se kreću (≥ 5 km/h), a vidi se bodovano ponašanje ili je model dao crveni
-  alarm. Detekcije razmaknute manje od 2 s su isti momenat, a duži od 30 s se seče.
+- Sekcija = 2 s vožnje. Opasnost sekcije (samo dok se kola kreću): `critical` ("ultra opasno") = crveni
+  alarm modela, glasan alarm kola ili uzbuna; `dangerous` = bodovano ponašanje, žuti alarm modela ili
+  vibracija; inače `none`. Uzastopne opasne sekcije su jedan **momenat** (jedna mirna sekcija se premošćuje).
 
 ## Odluke (tumačenje prvog nacrta ideje)
 
@@ -101,9 +109,15 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   SHA-256). Login nije obavezan: vožnja sa tokenom pripada nalogu i vidi je samo vlasnik (ostali dobijaju 404),
   a vožnja bez tokena radi kao ranije (`driver_id`) i vidi je svako. Živi kanal (WS, telemetrija,
   kraj vožnje) ostaje otvoren, jer je to mreža kola. Detalji i review: `docs/DATABASE.md`.
-- (2026-11-06) Za izveštaj backend šalje **sirove podatke jedne vožnje** (`GET /trips/{id}/report`:
-  rezime, korisnik, uzorci po sekundi, momenti sa slikama), a grafike računa aplikacija. Rezime vožnje
-  se upisuje na ~10 s, pa pad servera ne briše vožnju.
+- (2026-11-06) Za izveštaj backend šalje **podatke jedne vožnje** (`GET /trips/{id}/report`: rezime,
+  korisnik, sekcije od 2 s, opasni momenti sa slikama), a grafik crta aplikacija.
+- (2026-11-06, kasnije) **Podela backenda na koordinator i server** (docs/ARCHITECTURE.md). Koordinator
+  (u kolima) prima video, šalje ga modelu, računa rizik, score i reakciju, šalje stanje telefonu i na
+  svake **2 s** rezime sekcije serveru i telefonu; za opasnu sekciju uz rezime ide slika najrizičnijeg
+  frejma iz video keša (5 min, diskcache). Server samo čuva i služi. Model je zaseban proces koji samo
+  detektuje. Sekcije zamenjuju uzorke po sekundi i momente sa klipovima; video momenta je planiran.
+- (2026-11-06) `RiskEngine` CV tima je **izdvojen** u koordinator bez izmene matematike (test ga poredi sa
+  originalom). `notebooks/risk_pipeline.py` se ne dira; CV tim ga čisti kasnije.
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
@@ -112,22 +126,29 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
 1. **`looking_behind` / `turning_around`:** da li CV tim pravi te izlaze? Do tada dolaze samo iz simulatora.
 2. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
    događaj `emergency`.
-3. **Produkcija:** odvojiti server za računanje (u kolima) od servera za izveštaje (dostupan i van
-   kola)? Pristup klipovima (potpisani URL-ovi umesto javnog bucketa) i koliko dugo se čuvaju.
-4. **Model → backend uživo:** `risk_pipeline.py` još ne zove `SafetyClient.send_frame`. To je
-   jedna linija u petlji, ali je fajl CV tima.
+3. **Produkcija:** podela na koordinator (u kolima) i server (izveštaji) je urađena u kodu
+   (docs/ARCHITECTURE.md). Otvoreno: reverse proxy da telefon i u odvojenom režimu ima jednu adresu,
+   pristup slikama (potpisani URL-ovi umesto javnog bucketa), koliko dugo se čuvaju, više kola (`car_id`).
+4. **Model → backend uživo:** rešeno drugačije: `model/worker.py` uvozi detektore CV tima i radi uživo
+   preko koordinatora. Ostaje: da li CV tim prebacuje `RiskEngine` iz `risk_pipeline.py` (sada je kopija u
+   koordinatoru) i popravlja merge konflikte u `notebooks/setup_models.*`.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 
 - Promena ruta, šema ili enuma u backendu → **ažuriraj `docs/API.md` u istoj izmeni**.
-- Promena labela → `Behavior` enum, težina u `scoring.py`, savet u `TIPS`, `BEHAVIORS` u
-  `notebooks/safety_client.py`, `CATEGORY_TO_BEHAVIOR` u `services/camera.py` (ako se ime
-  kategorije modela razlikuje) i `docs/API.md`. Na frontendu: kopiraj §4 iz `docs/API.md` u
+- Promena labela → `Behavior` enum, težina u `coordinator/services/scoring.py`, savet u `domain/tips.py`,
+  `BEHAVIORS` u `notebooks/safety_client.py`, `CATEGORY_TO_BEHAVIOR` u `coordinator/services/camera.py`
+  (ako se ime kategorije modela razlikuje) i `docs/API.md`. Na frontendu: kopiraj §4 iz `docs/API.md` u
   `src/api/types.ts` obe aplikacije i dodaj labelu u `BEHAVIORS` (`frontend/mobile/src/config/behaviors.ts`
   + `strings.ts`, `frontend/dashboard/src/pages/CarScreen/carMeta.ts`).
 - Nova kategorija u `notebooks/risk_config.json` → `CATEGORY_TO_BEHAVIOR` ili `IGNORED_CATEGORIES`
-  u `services/camera.py`.
+  u `backend/app/coordinator/services/camera.py`.
 - Frontend ne izmišlja endpointe ni polja. Ako nešto fali, to je izmena backenda.
-- Promena tabela (`backend/app/repositories/recordings.py`, `users.py`): migracija još nema, pa u dev-u
-  `.\scripts\services.ps1 reset` (prazna baza), pa restart backenda, koji napravi tabele. Backend u
-  logu kaže koje kolone fale. Opis tabela drži ažurnim u `docs/DATABASE.md`.
+- Promena tabela (`backend/app/server/repositories/recordings.py`, `users.py`): migracija još nema, pa u
+  dev-u prazna baza (`.\scripts\services.ps1 reset` ili `docker compose down -v`), pa restart backenda,
+  koji napravi tabele. Backend u logu kaže koje kolone fale. Opis tabela drži ažurnim u `docs/DATABASE.md`.
+- Koordinator i server se ne uvoze međusobno: koordinator serveru pristupa samo preko HTTP-a
+  (`/internal/*`, `GET /auth/me`). Promena tog ugovora → `backend/app/schemas/sync.py` i docs/ARCHITECTURE.md.
+- Promena protokola sa modelom → `backend/app/coordinator/services/model_link.py` **i** `model/worker.py`.
+- Promena `RiskEngine` → prvo kod CV tima, pa kopija u `coordinator/services/risk_engine.py`
+  (`tests/test_risk_engine.py` pada ako se razlikuju).

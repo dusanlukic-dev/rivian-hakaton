@@ -49,3 +49,18 @@ Android 16 means full-screen intents need the special-access toggle for non-alar
   Public (Metro over Wi-Fi and the LAN dashboard are blocked; USB is fine). The fix is in `networking.md` § Windows firewall. The adapter alias is `WiFi`.
 - Extra adapters exist: VirtualBox host-only `192.168.56.1` ("Ethernet 2"), Hyper-V `192.168.16.1`, Npcap loopback. Code that guesses the
   "LAN IP" must pick the adapter with the default route (the UDP-connect trick in `backend/run.py` does). Never take the first adapter.
+
+## Session 4 additions (2026-11-06 evening)
+
+- **Docker Desktop is installed** (client/server 29.9.2). Postgres 18.6 + RustFS 1.0.4 run from `backend/docker-compose.yml`
+  (`docker compose up -d` in `backend/`): containers `backend-postgres-1` (:5433) and `backend-rustfs-1` (:9000/:9001). The WSL
+  Ubuntu distro has a sudo password; nothing here needs WSL directly.
+- Backend venv now also has `diskcache`, `Pillow` (coordinator) and `numpy` (risk-engine test). It was missing even the storage
+  requirements (`sqlalchemy`, `asyncpg`, `boto3`, `imageio-ffmpeg`): the backend that was running was the very first version.
+- **uvicorn `--reload` on Windows leaves an orphan:** killing the reloader doesn't kill its `multiprocessing.spawn` worker, which keeps
+  listening on :8000 next to the new one (Windows allows it), so stale code answers at random. Kill the whole tree (`taskkill /T /F`)
+  and check `Get-NetTCPConnection -LocalPort 8000`. The backend now runs in its own minimized console window (`Start-Process`).
+- The A54's USB link dropped twice in this session (`adb reverse` list emptied, then `offline`, then gone; Windows still showed
+  "ADB Interface"). `adb kill-server` didn't bring it back: replug the cable / re-allow USB debugging. Re-apply `adb reverse` after.
+- Do NOT swipe in the recents screen blindly: One UI centres the *previous* app there. Remove one task with
+  `adb shell am stack remove <taskId>` (task id from `dumpsys activity recents`), which is what "swipe away" does.

@@ -2,57 +2,63 @@
 
 **Personal Safety Reviewer.** An in-cabin camera watches the driver, the backend computes an **attention coefficient 0–100**, and the
 car reacts: dashboard light, seat vibration, sound, and a message to an emergency contact. At the end of a trip the driver gets
-statistics and tips. The company only ever sees coefficients and behaviour types, **never images**. Domain rules: root `CLAUDE.md`.
-Contract: `docs/API.md`.
+statistics, tips and a **drive chart** (score over time, dangerous parts shaded, a picture of the worst moments). The company only
+ever sees coefficients and behaviour types, **never images**. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
+The backend split (coordinator / server / model) is explained in full in **`docs/ARCHITECTURE.md`** (Serbian); this is the summary.
 
 ```
- laptop = car computer ─────────────────────────────────────────────────────────────────┐
- │ camera models (notebooks/, CV team)                                                   │
- │   detections → labels → SafetyClient ──POST 127.0.0.1:8000/api/v1/telemetry (~1/s)──┐ │
- │   (or simulators: notebooks/safety_client.py full drive · tools/sim.py exact states)│ │
- │                                                                                     ▼ │
- │ backend/ FastAPI (python run.py → 0.0.0.0:8000)                                       │
- │   scoring.py: score 0–100 · alerts.py: level → response (light, vibrate, sound, msg)  │
- │   in-memory trips · WS hub broadcast {type, data}                                     │
- │        │ ws://localhost:8000/api/v1/ws                  ▲ REST /trips (start/end)      │
- │        ▼                                                │                             │
- │ frontend/dashboard (browser) = car screen mock: lamp, score, behaviour icons,         │
- │   seat-vibration icon, sounds, QR for the phone, sim panel → POST /telemetry (proposal)│
- └────────┬──────────────────────────────────────────────────────────────────────────────┘
-          │ phone's mobile hotspot (laptop IP printed by run.py, changes every session) or USB + adb reverse
+ laptop = car computer ─────────────────────────────────────────────────────────────────────────────┐
+ │ tools/camera_stream.py (test pattern / clip / webcam) ──JPEG per WS message──► /api/v1/camera/ws   │
+ │ model/worker.py (own venv; CV detectors imported unchanged) ◄──frames── /api/v1/model/ws ──evidence──►│
+ │ notebooks/safety_client.py, tools/sim.py (simulators) ──POST /api/v1/telemetry──────────────────────►│
+ │                                                                                                    │
+ │ backend/ (python run.py → 0.0.0.0:8000, one process, two parts)                                     │
+ │   COORDINATOR app/coordinator: video cache (5 min, diskcache) · ModelLink · RiskEngine (CV copy)      │
+ │     → scoring.py/alerts.py (score, level, response) → WS state ~2/s, emergency                      │
+ │     → SectionRecorder: every 2 s a section (+ image of the riskiest frame if dangerous)             │
+ │         → WS `section` · ServerOutbox ──POST /internal/trips/{id}/sync (in-process HTTP)──┐         │
+ │   SERVER app/server: Postgres :5433 (trips, trip_sections) + RustFS :9000 (images) ◄─────┘         │
+ │     → /auth, GET /trips, /trips/{id}/summary|report|sections, /media, /analytics                   │
+ │        │ ws://localhost:8000/api/v1/ws                    ▲ REST                                   │
+ │        ▼                                                  │                                        │
+ │ frontend/dashboard (browser) = car screen mock: lamp, score, behaviour icons, seat/sound,           │
+ │   QR for the phone, sim panel, end-of-trip summary + drive chart                                   │
+ └────────┬───────────────────────────────────────────────────────────────────────────────────────────┘
+          │ phone's hotspot (laptop IP printed by run.py) or USB + adb reverse
           ▼
  Galaxy A54: frontend/mobile (Expo dev build)
-   Settings (address, Test → GET /health, QR scan) · Profile (driver id, emergency contact)
-   Drive: Start trip (POST /trips) → live lamp/score/behaviours (WS) + alerts (flash, sound, vibration, voice,
-   emergency screen, foreground service, full-screen notification) → End (POST /trips/{id}/end) → Summary · History
+   Settings (address, Test, QR, alert toggles, test alerts, phone setup) · Profile
+   Drive: Start (POST /trips) → lamp/score/behaviours + "last minute" strip from `section` (WS) + alerts → End → Summary
+   Summary: stats + drive chart (sections, moments, image boxes) from GET /trips/{id}/report · History
 ```
 
 ## Ownership
 
 | part | owner | status (see PROGRESS.md) |
 |---|---|---|
-| `notebooks/` CV models | CV team | manual and slow. `safety_client.py` is the bridge + simulator |
-| `backend/`, `docs/API.md`, root `CLAUDE.md` | backend teammate Matija Vujić (`vujicmatija04@gmail.com`) | working, 27 tests (commit `903df76`). Adding Postgres + MinIO |
+| `notebooks/` CV models | CV team (ttcpavle, Djolekapppp) | `risk_pipeline.py` is imported by the worker, **never edited by us** |
+| `model/` worker, `tools/camera_stream.py` | us (2026-11-06 evening) | fake mode verified end to end; real mode written, not run here (no models/dataset on this laptop) |
+| `backend/`, `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, root `CLAUDE.md` | backend teammate Matija Vujić **and us** since the user asked us to work on the backend | coordinator/server split done, 81 tests |
 | repo / initial structure | `dusanlukic-dev` (GitHub owner) | |
-| `frontend/mobile`, `frontend/dashboard`, `.claude/`, `PROGRESS.md`, `tools/`, `config/` | Matija Radović + agents | mobile core works on the A54 |
+| `frontend/mobile`, `frontend/dashboard`, `.claude/`, `PROGRESS.md`, `config/` | Matija Radović + agents | report chart added |
 
-## Mobile app layout (`frontend/mobile`, implemented and verified on the A54 2026-11-06)
+## Mobile app layout (`frontend/mobile`)
 
 ```
 index.js                 entry: registers notify-kit foreground-service runner + background "I'm OK" action, then expo-router
 app.config.ts            reads repo-root config/brand.json → app name + extra.brand (single source of the name)
-src/api/                 types.ts (verbatim API.md §4) · client.ts (REST, ApiError, timeouts) · live.ts (WS, reconnect, kick) · address.ts
+src/api/                 types.ts (verbatim API.md §4) · client.ts (REST incl. getReport) · live.ts (WS, reconnect, kick) · address.ts
 src/lib/                 store.ts (createStore/useStore on useSyncExternalStore) · persist.ts (AsyncStorage) · format.ts
-src/state/               settings.ts (address, alert toggles) · profile.ts (local "account") · live.ts (socket status, active trip,
-                         tick counter, emergency, last summary, local test alerts)
-src/alerts/              engine.ts executes `response` per message: vibration, chime/alarm, voice, background notifications;
-                         emergency: siren loop + vibration + max brightness + full-screen notification · sounds.ts (expo-audio)
-                         · notifications.ts (channels, foreground service, permissions, settings deep links)
-src/components/          ui.tsx (Txt, Screen, Card, Button, TextField, ToggleRow, Pill, Banner, Icon) · dashboard.tsx (Lamp,
-                         LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge) · AlertOverlays.tsx (global 2 Hz red flash + emergency screen)
+src/state/               settings.ts · profile.ts · live.ts (socket status, active trip, tick, emergency, last summary,
+                         `preview` = local test alert, `sections` = last 30 WS sections) · permissions.ts (re-check on foreground)
+src/alerts/              engine.ts executes `response` per message (vibration, sounds, voice, background notifications, emergency)
+                         · sounds.ts (expo-audio) · notifications.ts (channels, foreground service, app-specific settings intents)
+src/components/          ui.tsx · dashboard.tsx (Lamp, LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge)
+                         · AlertOverlays.tsx (2 Hz red flash only while state is fresh, emergency screen)
+                         · report.tsx (DriveChart on react-native-svg, ChartLegend, MomentList, MomentSheet, RecentSections)
 src/config/              strings.ts (ALL UI copy) · brand.ts · behaviors.ts (label → icon)
-src/app/                 (tabs)/index (Drive) · history · profile · settings · trip/[id] (summary) · scan (QR)
+src/app/                 (tabs)/index (Drive) · history · profile · settings · trip/[id] (summary + drive chart) · scan (QR)
 ```
 
-**Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels. Alerts are global (root layout), so they
-show on every tab. The web dashboard mirrors the same `api/` shape.
+**Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels and unknown WS message types. The
+backend decides levels and danger; the app only colours them. Alerts are global (root layout), so they show on every tab.

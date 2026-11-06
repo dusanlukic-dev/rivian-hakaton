@@ -6,10 +6,13 @@ This file **adds to** the root `CLAUDE.md` (the team's domain rules, written in 
 
 ## In one paragraph
 
-**Personal Safety Reviewer.** Camera models label risky behaviours (phone, looking behind, turning around, hands off the wheel, drowsy)
-→ `POST /telemetry` ~1/s → the FastAPI backend computes an attention score 0–100 and the car's response (light, seat vibration,
-sound, message) → pushes it over a WebSocket → the **phone app** (Expo, Android) and a **web dashboard** (car screen mock) react.
-The laptop plays the car's computer, and the phone's hotspot is the in-car network. Diagram: `.claude/knowledge/architecture.md`.
+**Personal Safety Reviewer.** A cabin camera streams to the backend's **coordinator** (in the car), which sends frames to the
+**model worker** (`model/`, its own process) and gets per-category evidence back, computes risk (the CV team's `RiskEngine`,
+extracted), the 0–100 score and the car's response (light, seat vibration, sound, message), pushes it over a WebSocket to the
+**phone app** (Expo, Android) and the **web dashboard** (car screen mock), and every 2 s sends a **section summary** (+ the image of
+the riskiest frame when dangerous) to the backend's **server**, which stores it (Postgres + RustFS) and serves history and the drive
+report. The laptop plays the car's computer, and the phone's hotspot is the in-car network. Diagrams: `docs/ARCHITECTURE.md`,
+`.claude/knowledge/architecture.md`.
 
 ## Repo map
 
@@ -17,16 +20,18 @@ The laptop plays the car's computer, and the phone's hotspot is the in-car netwo
 |---|---|---|
 | `CLAUDE.md` (root) | domain rules, levels, cross-cutting change rules (Serbian) | backend teammate |
 | `docs/API.md` | **contract**: routes, TS types, WS events, how to display state | backend teammate |
-| `backend/` | FastAPI app + tests. `backend/CLAUDE.md` has its layers and gotchas | backend teammate. **Run it, don't edit it** |
-| `notebooks/` | CV models; `safety_client.py` = models→backend bridge + **drive simulator** | CV team / backend |
+| `backend/` | FastAPI: `app/coordinator/` (live, camera, model link, score, sections) + `app/server/` (accounts, storage, report). `backend/CLAUDE.md` has the layers and gotchas | backend teammate + us (since 2026-11-06 evening, user's request) |
+| `model/` | model worker: camera frames → evidence, its own venv (later Docker). Uses the CV code unchanged | us |
+| `docs/ARCHITECTURE.md` | coordinator / server / model split, internal contracts, caching | us + backend teammate |
+| `notebooks/` | CV models (**never edit `risk_pipeline.py`**: the worker imports it, the coordinator has a copy of `RiskEngine`); `safety_client.py` = old bridge + **drive simulator** | CV team / backend |
 | `frontend/mobile/` | Expo SDK 58 / RN 0.88 **dev build** for the driver's phone | us |
 | `frontend/dashboard/` | Vite 8 + React 19 + Tailwind v4 + shadcn car-screen mock | us |
-| `tools/` | `gen-sounds.mjs` (alert WAVs for both apps) | us |
+| `tools/` | `gen-sounds.mjs` (alert WAVs for both apps), `camera_stream.py` (camera stand-in → coordinator), `sim.py` (exact states) | us |
 | `.claude/knowledge/`, `.claude/rules/`, `.claude/skills/` | knowledge books, auto-loaded rules, workflows | everyone |
 
 ## Knowledge books (read the relevant one before working in an area)
 
-- `architecture.md`: diagram, ownership, planned frontend module layout (`src/api/` is the only place that knows the wire format)
+- `architecture.md`: diagram, ownership, frontend module layout (`src/api/` is the only place that knows the wire format). Backend split: `docs/ARCHITECTURE.md`
 - `contract-notes.md`: what we **verified** about `docs/API.md`, the frontend implications, and proposals for the backend
 - `metrics-and-scoring.md`: behaviour labels, score math, the levels → response table, **field → phone/dashboard effect table**, demo drive
 - `android-alerting.md`: sound on the alarm stream, flash, vibration, waking the phone, foreground service, permissions, Samsung quirks
@@ -37,7 +42,7 @@ The laptop plays the car's computer, and the phone's hotspot is the in-car netwo
 
 ## Skills
 
-- `backend-local`: run the backend + simulator, probe the WS, check that the phone can reach it
+- `backend-local`: run the backend (Docker Postgres + RustFS), the camera stream + model worker or the simulator, probe the WS and the coordinator status, check that the phone can reach it
 - `android-device`: adb + Android CLI: connect, reverse ports, logs, **screenshots/layout tree/taps for visual checks**, sleep/wake tests, permission prep
 - `mobile-dev`: hot reload vs rebuild, prebuild (CNG), debug/release builds, toolchain, common errors
 - `dashboard-dev`: dev server/proxy, build/lint, headless-Chrome screenshots

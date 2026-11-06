@@ -100,3 +100,22 @@ adb shell cmd appops set $P RUN_ANY_IN_BACKGROUND allow
 - [ ] The foreground service (type `location`) keeps the WebSocket alive with the screen off for 10+ minutes on battery.
 - [ ] Background activity start via SYSTEM_ALERT_WINDOW pops the app over another app.
 - [ ] TTS works offline (Samsung TTS / Google TTS engine installed).
+
+## Settings intents, verified on the A54 (One UI 8 / Android 16), 2026-11-06 evening
+
+| row | intent (data `package:dev.hakaton.driveralert`) | opens |
+|---|---|---|
+| notifications | `notifee.requestPermission()`, else `notifee.openNotificationSettings()` | system prompt / the app's notification page |
+| full-screen alerts | `android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT` | the app's "Full screen alerts" switch |
+| battery | `android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` | system dialog for this app (manifest has the permission); closes at once if already unrestricted |
+| DND | `android.settings.NOTIFICATION_POLICY_ACCESS_DETAIL_SETTINGS` | the app's "Do not disturb permission" switch |
+| fallback | `android.settings.APPLICATION_DETAILS_SETTINGS` | App info |
+
+- The first version opened `IGNORE_BATTERY_OPTIMIZATION_SETTINGS` (notify-kit's helper: the list of all apps) and
+  `NOTIFICATION_POLICY_ACCESS_SETTINGS` (all apps' DND list). That was the "it opens only the default page" report: our code,
+  not the dev build. The package name is the same in dev and release.
+- `startActivityAsync` resolves when the settings page is closed, and the app also re-checks on every return to the foreground
+  (`state/permissions.ts`), so ticks update without leaving the tab. DND access can't be read by any installed library
+  (`isNotificationPolicyAccessGranted` would need a small native module), so that row always shows "Open".
+- `expo-keep-awake` activate/deactivate **reject** when the Activity is gone (swipe-away during a trip: the foreground service keeps
+  JS alive and the Drive screen unmounts later). The calls now have `.catch`.

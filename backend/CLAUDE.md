@@ -1,120 +1,141 @@
-# Backend (FastAPI)
+# Backend (FastAPI): koordinator + server
 
-Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2 (async, asyncpg), boto3. Zavisnosti su u `requirements.txt`,
-a virtuelno okruženje u `.venv/`.
+Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2 (async, asyncpg), boto3, diskcache, Pillow. Zavisnosti su u
+`requirements.txt`, a virtuelno okruženje u `.venv/`.
+
+Backend ima **dva dela** sa jasnom granicom. Celu sliku (tok podataka, ugovori, keš, pouzdanost) vidi u
+**`../docs/ARCHITECTURE.md`**:
+- `app/coordinator/`: **koordinator**, u kolima. WebSocket za telefon i dashboard, kamera, veza sa modelom,
+  izdvojen `RiskEngine` CV tima, score 0–100 i reakcija kola, 5 min video keša, sekcije od 2 s koje šalje
+  serveru i telefonu. **Nikad ne dira Postgres ni S3.**
+- `app/server/`: **server**. Nalozi, prijem sekcija od koordinatora (`/internal/*`), Postgres + S3,
+  istorija, izveštaj sa grafikom i slikama, analitika. Ne zna ništa o kameri, modelu ni WS-u.
+- `app/domain/`, `app/schemas/`, `app/core/`: zajedničko (enumi, nivoi, saveti, ko šta vidi, ugovori, podešavanja).
+
+Koordinator serveru pristupa **samo preko HTTP-a** (`coordinator/services/server_client.py`): u jednom
+procesu kroz `httpx.ASGITransport` (bez socket-a), a odvojeno preko `SERVER_URL`. Ne uvozi ništa iz
+`app/server/`, a server ništa iz `app/coordinator/`.
 
 ## Komande (iz `backend/`, Windows)
 
 ```powershell
 .venv\Scripts\activate                      # prvi put: python -m venv .venv; pip install -r requirements.txt
-.\scripts\services.ps1 install              # jednom: portabl Postgres 18.6 + RustFS 1.0.4 (~450 MB), bez admin prava
-.\scripts\services.ps1 start                # Postgres 127.0.0.1:5433 + RustFS (S3) 127.0.0.1:9000, konzola :9001
-.\scripts\services.ps1 status               # ...ili stop | psql (SQL nad bazom) | reset (prazna baza)
-docker compose up -d                        # isto to, ali sa Dockerom (docker-compose.yml)
-python run.py                               # 0.0.0.0:8000 + ispis IP-a za telefon (auto-reload)
-fastapi dev app/main.py                     # samo lokalno, http://127.0.0.1:8000/docs
-pytest                                      # testovi (SQLite + S3 u memoriji, ne trebaju servisi)
-python ..\notebooks\safety_client.py --interval 0.3   # simulirana vožnja (server mora da radi)
-python ..\notebooks\safety_client.py --video 0        # ...i web kamera: rizični momenti dobijaju klipove
-python ..\notebooks\safety_client.py --replay frames.jsonl --speedup 2   # snimljen izlaz modela
+docker compose up -d                        # Postgres 127.0.0.1:5433 + RustFS (S3) 127.0.0.1:9000 (konzola :9001)
+.\scripts\services.ps1 start                # ...isto bez Docker-a (portabl, jednom `install`)
+python run.py                               # koordinator + server na 0.0.0.0:8000 + ispis IP-a za telefon (reload)
+python run.py --role server --port 8001     # odvojeno: server...
+$env:SERVER_URL="http://127.0.0.1:8001/api/v1"; python run.py --role coordinator   # ...i koordinator
+pytest                                      # testovi (SQLite + S3 i video keš u memoriji, ne trebaju servisi)
+python ..\tools\camera_stream.py            # kamera: test slika (--video snimak.mp4, --webcam "ime")
+python ..\model\worker.py --fake            # model worker bez CV paketa (pravi: ../model/README.md)
+python ..\notebooks\safety_client.py --interval 0.3   # simulirana vožnja bez kamere i modela
+curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isporuka serveru
 ```
 
 ## Slojevi
 
-- `app/api/routes/`: tanke rute. Samo HTTP (status kodovi, 404/409/503), poziv servisa i slanje
-  događaja preko `hub.broadcast`. `live.py`: `POST /telemetry`, `POST /video/frames`, `WS /ws`.
-  `recording.py`: `GET /trips/{id}/report` (sve o vožnji), `/timeline`, `/events`, `/media/{key}`.
-  `auth.py`: `/auth/register`, `/login`, `/logout`, `/me`. `speed.py`: `GET/POST /speed`.
-  `deps.py`: `OptionalUser` (token nije obavezan, ali loš token je 401), `CurrentUser`, `VisibleTripDep`.
-- `app/schemas/`: Pydantic modeli, odnosno ugovor sa frontom. Svaku promenu prenesi u `../docs/API.md`.
-- `app/domain/`: enumi (`Behavior`, `SafetyLevel`, `LiveEvent`, `SpeedSource`...) i `Trip` dataclass (interno stanje).
-- `app/services/`: sva logika, bez FastAPI-ja (osim `live.py`, koji drži WebSocket konekcije).
-  - `recording.py`: `TripRecorder` snima vožnju pored živog toka: uzorke po 1 s, rizične momente i
-    klipove. Rute zovu samo memorijske hook-ove (`trip_started`, `on_tick`, `on_video_frame`,
-    `trip_ended`), a pozadinski task piše u Postgres svake 2 s.
-  - `auth.py`: nalozi. scrypt heš u pozadinskoj niti, nasumični token (u bazi samo SHA-256), 30 dana.
-  - `history.py`: istorija, statistika i izveštaj (živa vožnja iz memorije, ostalo iz Postgresa) i
-    pravilo vidljivosti `can_see` (vožnju sa nalogom vidi samo vlasnik).
-  - `speed.py`: brzina, redom telefon > tick > mock scenario (kubna Bezier kriva između tačaka).
-  - `video.py`: JPEG frejmovi → MP4 H.264 (ffmpeg dolazi u `imageio-ffmpeg` wheel-u).
-- `app/repositories/trips.py`: aktivne vožnje u memoriji (`add/get/active/list`).
-- `app/repositories/database.py`: `Database` (engine, pravljenje šeme, SQLite redom), `get_database()`.
-  `users.py`: tabele `users`, `user_sessions`. `recordings.py`: `trips`, `trip_samples`, `risk_events`.
-  `media.py`: S3 (boto3) i `MemoryMediaStore` za testove. Struktura i review: `../docs/DATABASE.md`.
+**Koordinator** (`app/coordinator/`):
+- `routes/`: tanke rute. `live.py`: `WS /ws` (telefon), `POST /telemetry` (simulator), `POST /video/frames`,
+  `WS /camera/ws` (kamera). `model.py`: `WS /model/ws` (model worker). `trips.py`: start, kraj, živo stanje.
+  `speed.py`: `GET/POST /speed`. `status.py`: `GET /coordinator/status`.
+- `services/coordinator.py`: **`Coordinator`**, ceo živi tok na jednom mestu: tick → brzina → score →
+  `state` (~2/s) → sekcija → slika iz keša → WS `section` + outbox. Frejm → keš + model. Detekcija →
+  `RiskEngine` → tick.
+- `services/risk_engine.py`: `RiskEngine` CV tima, **izdvojen** iz `notebooks/risk_pipeline.py` bez izmena
+  matematike (`tests/test_risk_engine.py` poredi sa originalom). Pragovi: `notebooks/risk_config.json`.
+- `services/model_link.py`: veza sa model worker-om (protokol, jedan frejm u letu, najnoviji pobeđuje).
+- `services/sections.py`: `SectionRecorder`, tickovi → sekcije od 2 s, opasnost, najrizičniji frejm.
+- `services/video_cache.py`: `VideoCache`, 5 min frejmova (diskcache na disku ili memorija).
+- `services/outbox.py` + `server_client.py`: isporuka serveru, redom, ponavlja dok server ne odgovori.
+- `services/scoring.py`, `alerts.py`, `camera.py`, `speed.py`, `trips.py`, `live.py`, `notifications.py`:
+  score, nivoi i reakcija, preslikavanje kategorija modela, brzina (mock), stanje vožnje, WS hub, SMS stub.
+- `repositories/trips.py`: aktivne vožnje u memoriji.
+
+**Server** (`app/server/`):
+- `routes/`: `auth.py` (`/auth/*`), `history.py` (`GET /trips`, `/summary`, `/report`, `/sections`),
+  `media.py` (`/media/{key}`, `Range`), `analytics.py`, `internal.py` (`/internal/*`, `X-Internal-Token`).
+- `services/storage.py`: `TripStore`, prijem paketa (slike u S3 pa redovi u Postgres) i čitanja.
+- `services/history.py`: istorija, rezime, izveštaj, **momenti** (`build_moments`). `auth.py`: nalozi.
+- `repositories/`: `database.py` (engine, šema, SQLite redom), `users.py`, `recordings.py` (`trips`,
+  `trip_sections`), `media.py` (S3, `MemoryMediaStore` za testove). Struktura: `../docs/DATABASE.md`.
+
+**Spajanje:** `app/main.py` pravi aplikaciju za ulogu `all` / `coordinator` / `server` (rute + lifespan).
+`app/coordinator/main.py` i `app/server/main.py` su odvojeni ulazi.
 
 ## Gde šta
 
 | Hoćeš da... | Fajl |
 |---|---|
-| podesiš penale, brzinu, noć, oporavak | `ScoringConfig` u `app/services/scoring.py` |
-| promeniš opsege ili reakciju kola | `LEVEL_BANDS` / `POLICIES` u `app/services/alerts.py` |
-| dodaš ponašanje | `Behavior` u `app/domain/enums.py`, `_default_weights` u `scoring.py`, `TIPS` u `app/services/trips.py`, `BEHAVIORS` u `notebooks/safety_client.py`, `docs/API.md` |
-| preslikaš kategoriju modela na labelu | `CATEGORY_TO_BEHAVIOR` u `app/services/camera.py` |
-| promeniš šta od frejma modela ide aplikaciji | `CameraView` u `app/domain/trip.py`, `to_view` u `app/services/camera.py`, ulaz u `app/schemas/camera.py`, `docs/API.md` |
-| promeniš alarm modela | `evaluate_response` i `CAMERA_ALARM_MESSAGE` u `app/services/alerts.py` |
-| dodaš WebSocket događaj | `LiveEvent` u `enums.py`, `hub.broadcast` u ruti, `LiveMessage` u `docs/API.md` |
-| podesiš snimanje (prozor, spajanje momenata, dužina klipa) | `RecordingConfig` u `app/services/recording.py` |
-| dodaš ili promeniš scenario brzine | `SCENARIOS` / `RANDOM_POOL` u `app/services/speed.py` (test proverava glatkoću i petlju) |
-| dodaš kolonu u izveštaj | model u `app/repositories/recordings.py`, `_Window.row` / `_Event.row` u `recording.py`, `app/schemas/recording.py`, `docs/API.md`, pa `services.ps1 reset` |
-| promeniš adresu ili ključeve Postgresa / S3 | `Settings` (`DATABASE_URL`, `S3_*`) u `app/core/config.py`, `.env` (primer: `.env.example`) |
-| pravi SMS ili push | `app/services/notifications.py` (sada stub) |
-| promeniš nalog (polja, trajanje tokena, pravila za ime/lozinku) | `UserRow` u `app/repositories/users.py`, `app/services/auth.py`, `app/schemas/auth.py`, `docs/API.md` |
-| promeniš ko šta vidi | `can_see` u `app/services/history.py` |
-| novo podešavanje | `Settings` u `app/core/config.py` i `.env` |
+| podesiš penale, brzinu, noć, oporavak | `ScoringConfig` u `coordinator/services/scoring.py` |
+| promeniš opsege ili reakciju kola | `LEVEL_BANDS` u `domain/levels.py`, `POLICIES` u `coordinator/services/alerts.py` |
+| dodaš ponašanje | `Behavior` u `domain/enums.py`, `_default_weights` u `scoring.py`, `TIPS` u `domain/tips.py`, `BEHAVIORS` u `notebooks/safety_client.py`, `docs/API.md` |
+| preslikaš kategoriju modela na labelu | `CATEGORY_TO_BEHAVIOR` u `coordinator/services/camera.py` |
+| promeniš dužinu sekcije ili pravila opasnosti | `SECTION_S` u `.env`, `tick_danger` u `coordinator/services/sections.py` |
+| promeniš video keš | `VIDEO_CACHE*` u `core/config.py`, `coordinator/services/video_cache.py` |
+| promeniš protokol sa modelom | `coordinator/services/model_link.py` **i** `../model/worker.py` |
+| promeniš šta koordinator šalje serveru | `schemas/sync.py`, `coordinator/services/outbox.py`, `server/routes/internal.py`, `server/services/storage.py` |
+| dodaš kolonu u sekciju | `SectionBase` u `schemas/report.py`, `_close` u `sections.py`, `SectionRow` u `server/repositories/recordings.py`, `docs/API.md` §4, `docs/DATABASE.md`, pa prazna baza |
+| promeniš momente | `build_moments` u `server/services/history.py` |
+| dodaš WebSocket događaj | `LiveEvent` u `domain/enums.py`, `hub.broadcast` u `Coordinator`, `LiveMessage` u `docs/API.md` |
+| promeniš adresu ili ključeve Postgresa / S3, token za `/internal` | `Settings` u `core/config.py`, `.env` (primer: `.env.example`) |
+| pravi SMS ili push | `coordinator/services/notifications.py` (sada stub) |
+| promeniš nalog ili ko šta vidi | `server/services/auth.py`, `schemas/auth.py`, `domain/access.py` |
 
 ## Zamke
 
-- Rute koje menjaju stanje (`POST /trips`, `/telemetry`, `/video/frames`, `/speed`, `/trips/{id}/end`) su
-  `async def`, pa se izvršavaju redom na event loop-u i nema trka nad deljenim in-memory stanjem.
+- Rute koje menjaju stanje (`POST /trips`, `/telemetry`, `/video/frames`, `/speed`, `/trips/{id}/end`) i
+  WS petlje su `async`, pa se izvršavaju redom na event loop-u i nema trka nad stanjem u memoriji.
   **Ne prebacuj ih u `def`**, jer bi tada radile paralelno u threadpool-u.
-- **Snimanje nikad ne blokira živi tok.** Hook-ovi `TripRecorder`-a rade samo u memoriji. Postgres i S3
-  zovu samo pozadinski task, taskovi za klipove i rute za čitanje. Ako su dole, score radi, redovi čekaju
-  u memoriji (do 20 000), a u logu je jedno upozorenje i jedna poruka kad se vrate.
-- `Database.ensure_schema()` pravi tabele samo jednom (zaključano), jer su provera na startu i prvi zahtev
-  paralelno radili `CREATE TABLE` (test je padao 4/25 puta). SQLite (testovi) je jedna konekcija, pa
-  `Database` pušta njegove korisnike redom. Postgres ima pool i radi paralelno.
-- `TripRecorder._flush_lock` drži pakete upisa u redosledu (red `trips` mora pre uzoraka, zbog FK).
-- Rute za čitanje (`/report`, `/timeline`, `/events`, istorija) prvo upišu red čekanja (izveštaj
-  sačeka i klipove u izradi), pa vide sve do tog trenutka. Poslednja, nezavršena sekunda aktivne
-  vožnje još nije u bazi.
-- Rezime vožnje se upisuje u `trips` na ~10 s (`summary_interval_s`), a na startu se vožnje bez
-  `ended_at` (osim onih koje ovaj proces vozi) zatvaraju na poslednjem upisu. Zato pad servera ne
-  ostavlja "večno aktivne" vožnje.
-- Nalozi: heširanje lozinke (scrypt, ~50 ms) ide u `asyncio.to_thread`, nikad na event loop, jer bi
-  zaustavilo živi score. Loš token je 401 i tamo gde je login opcion. Tuđa vožnja je 404, ne 403.
-- Redosled sa jednakim vrednostima (dva ponašanja po 3,0 s) je abecedni. Inače zavisi od redosleda
-  iteracije kroz `set`, koji se menja od pokretanja do pokretanja (test je padao 9/20).
-- Postgres je na **5433**, jer na ovom laptopu sistemski PostgreSQL 18 servis (`postgresql-x64-18`) drži 5432.
-- Tabele pravi `create_all` na startu. Migracija nema, pa posle promene modela: `.\scripts\services.ps1 reset`.
+- **Živi tok nikad ne čeka server.** `ServerOutbox` dira samo memoriju; isporuku radi jedan pozadinski task,
+  jedan zahtev u letu, pa sekcije stižu redom. Paket je idempotentan (ključ sekcije pravi koordinator), pa se
+  posle greške samo ponovi. Izuzetak: `POST /trips/{id}/end` čeka do 3 s da server primi sve (izveštaj odmah
+  posle kraja je ceo). Dok je server dole, End ne čeka.
+- **Model detekcije stižu 5–10/s, a telefon reaguje na svaku `state` poruku** (vibracija, zvuk). Zato
+  koordinator detekcije šalje telefonu na 0.5 s (`LIVE_STATE_INTERVAL_S`), ali odmah na promenu nivoa,
+  reakcije, ponašanja ili alarma modela. `POST /telemetry` (simulator) ide i dalje posle svakog ticka.
+- MediaPipe u VIDEO modu traži strogo rastuće vreme, pa worker na novoj vožnji ne vraća sat na nulu nego
+  nastavlja (`_base_ms`); `FeatureExtractor` (kalibracija pogleda) se pravi ispočetka.
+- Video keš je temp folder koji se **briše na svakom startu** (id-jevi frejmova kreću od 1). Upis na disk ide
+  kroz jednu nit; frejm koji je model analizirao se uvek upiše (može postati slika sekcije).
+- `pydantic.Base64Bytes` dekodira base64 i kad mu se u Pythonu da sirov JPEG (iskvari sliku). Zato
+  `SectionIn.image_jpeg` koristi `JpegBytes` iz `schemas/report.py`: sirovi bajtovi u Pythonu, base64 u JSON-u.
+- FastAPI 0.162 uključuje routere lenjo (`app.routes` sadrži `_IncludedRouter`), pa spisak ruta gledaj u
+  `app.openapi()["paths"]`. WebSocket rute tamo nisu.
+- **Windows + `--reload`:** kad se ubije samo uvicorn reloader (ili mu se ugasi konzola), njegov worker
+  (`python -c "from multiprocessing.spawn import ..."`) ostane živ i **i dalje drži port 8000** (Windows dozvoljava
+  dva socket-a na istom portu). Tada stari kod nastavlja da odgovara, a novi se ne vidi. Ubij celo stablo
+  (`taskkill /T /F /PID <reloader>`) i proveri `Get-NetTCPConnection -LocalPort 8000`.
+- `Database.ensure_schema()` pravi tabele samo jednom (zaključano). SQLite (testovi) je jedna konekcija, pa
+  `Database` pušta korisnike redom. Postgres ima pool i radi paralelno.
+- Na startu koordinator traži od servera `close-interrupted` (preko outbox-a, ponavlja dok server ne odgovori),
+  pa vožnje koje je pad ostavio otvorene dobijaju `ended_at` na poslednjem rezimeu.
+- Nalozi: heširanje lozinke (scrypt, ~50 ms) ide u `asyncio.to_thread`, nikad na event loop. Loš token je 401
+  i tamo gde je login opcion. Tuđa vožnja je 404, ne 403. Koordinator proverava token pitajući server
+  (`GET /auth/me`) i pamti odgovor 30 s; ako server ne odgovara, `POST /trips` sa tokenom je 503.
+- Redosled sa jednakim vrednostima (dva ponašanja po 3,0 s) je abecedni, inače zavisi od iteracije kroz `set`.
+- Postgres je na **5433**, jer na ovom laptopu sistemski PostgreSQL 18 servis drži 5432.
+- Tabele pravi `create_all` na startu servera. Migracija nema, pa posle promene modela: prazna baza
+  (`.\scripts\services.ps1 reset` ili `docker compose down -v`).
 - `services.ps1` pokreće servere preko `Start-Process` bez preusmeravanja izlaza. Server sa preusmerenim
   izlazom nasledi handle-ove shell-a, pa poziv (i agent) visi. RustFS 1.0.4: `--console-enable` je flag
-  bez vrednosti. Sa `true` iza njega `true` čita kao drugi disk i ne startuje.
+  bez vrednosti.
 - boto3: path-style adrese i `request_checksum_calculation="when_required"`, jer novi boto3 dodaje CRC
   checksum koji ne prihvata svaki S3 klon.
-- Klipove aplikacija dobija preko `GET /api/v1/media/...` (port 8000, podržava `Range`), a ne direktno sa
-  9000: Windows firewall i IP hotspota. Bucket je ipak javan (za demo, `S3_PUBLIC_READ`).
-- Svaki `Behavior` mora imati težinu i `TIPS` savet. Test `test_every_behavior_has_a_weight_and_a_tip`
-  to proverava.
-- `timestamp` u ticku je lokalno vreme sa offsetom. Sat iz njega određuje noćne penale. Razmak između
-  tickova je ograničen na 5 s. Mock brzina i ose izveštaja (`t`) idu po satu tickova, a isecanje klipa
-  po satu servera (`time.monotonic`), jer video stiže nezavisno od tickova.
-- Ispod 5 km/h: nema penala, nema oporavka, nema upozorenja, ne ulazi u statistiku i nije rizičan momenat.
-- U memoriji je samo stanje aktivne vožnje. Istorija, statistika, izveštaj i nalozi (i tokeni) su u
-  Postgresu, pa prežive restart. Prijavljen korisnik ostaje prijavljen i posle restarta.
+- Slike aplikacija dobija preko `GET /api/v1/media/...` (port 8000, podržava `Range`), a ne direktno sa
+  9000: Windows firewall i IP hotspota.
+- Svaki `Behavior` mora imati težinu i `TIPS` savet. Test `test_every_behavior_has_a_weight_and_a_tip` to proverava.
+- `timestamp` u ticku je lokalno vreme sa offsetom. Sat iz njega određuje noćne penale. Za detekcije modela
+  koordinator pravi timestamp iz vremena kad je frejm stigao (`_local_time`). Razmak između tickova je
+  ograničen na 5 s. Mock brzina i ose grafika (`t`) idu po satu tickova; video keš po satu servera (`time.monotonic`).
+- Ispod 5 km/h: nema penala, nema oporavka, nema upozorenja, ne ulazi u statistiku i sekcija nije opasna.
 - Tick može imati `behaviors` (labele), `frame` (zapis modela) ili oba, a labele se spajaju.
-  `ModelFrame` deklariše samo polja koja koristimo, a ostala (`perception`, `p_hat`, `D_s`...)
-  Pydantic ignoriše. NaN/inf iz modela postaju `null`, jer bi inače pokvarili `JSON.parse` u aplikaciji.
-- `trip.camera` se postavlja na svaki tick. Tick bez `frame` ga briše, da crveni alarm modela ne
-  ostane zaglavljen.
-- Kategorija modela koja nije u `CATEGORY_TO_BEHAVIOR` ide aplikaciji, ali se ne boduje, i jednom
-  se loguje warning u konzoli servera.
-- WebSocket se ne vidi u OpenAPI-ju ni na `/docs`, pa se dokumentuje ručno u `docs/API.md`.
-- Testovi: `tests/conftest.py` daje `client` sa svežim repo/hub-om, in-memory SQLite umesto Postgresa
-  (`db`), `MemoryMediaStore`, `FakeClock`, `SpeedService(scenario="city")` i `AuthService`, plus
-  pomoćne `register()` i `bearer()`. Koristi `with TestClient(app)`, da HTTP, WebSocket i recorder dele
-  isti event loop. Upit nad bazom iz testa: `client.portal.call(recorder.flush)`, pa
-  `client.portal.call(recorder.repo.trip, trip_id)`. Restart se simulira sa dva `app_client` nad istim
-  SQLite fajlom (`test_running_summary_and_restart`). Lifespan uzima bazu, recorder i brzinu preko
-  `app.dependency_overrides`, kao i rute.
+  `ModelFrame` deklariše samo polja koja koristimo. NaN/inf iz modela postaju `null`.
+- `trip.camera` se postavlja na svaki tick. Tick bez `frame` ga briše, da crveni alarm modela ne ostane zaglavljen.
+- Kategorija modela koja nije u `CATEGORY_TO_BEHAVIOR` ide aplikaciji, ali se ne boduje (jedan warning).
+- WebSocket se ne vidi u OpenAPI-ju ni na `/docs`, pa se dokumentuje ručno (`docs/API.md`, `docs/ARCHITECTURE.md`).
+- Testovi: `tests/conftest.py` daje `client` sa svežim koordinatorom (`make_coordinator`: `FakeClock`, video keš
+  u memoriji, risk config iz `notebooks/`, bez pozadinskog housekeeping-a) i serverom (`store`: SQLite u
+  memoriji + `MemoryMediaStore`). `flush(client, coordinator)` čeka da outbox isporuči sve serveru. Restart se
+  simulira sa dva `app_client` nad istim SQLite fajlom. `test_model_link.py` glumi model worker preko WS-a.
 - Windows Firewall blokira konekcije sa hotspota ako Python nije dozvoljen i na **Public** mrežama.
-  Komanda za to je u `README.md`. Postgres i RustFS slušaju samo na 127.0.0.1, pa im pravilo ne treba.
+  Komanda za to je u `README.md`. Postgres i RustFS slušaju samo na 127.0.0.1, model se javlja na 8000.
