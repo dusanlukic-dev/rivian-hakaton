@@ -10,9 +10,10 @@ pip install opencv-python mediapipe numpy ultralytics onnx || goto :err
 if not exist models mkdir models
 if not exist models\face_landmarker.task curl -L -o models\face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
 if not exist models\hand_landmarker.task curl -L -o models\hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
-if not exist models\yolo11n_320.onnx (
-  python -c "from ultralytics import YOLO; YOLO('yolo11n.pt').export(format='onnx', imgsz=320)" || goto :err
-  move yolo11n.onnx models\yolo11n_320.onnx
+REM yolo11s/640: nano/320 skoro ne vidi telefon na fisheye cabin kameri
+if not exist models\yolo11s_640.onnx (
+  python -c "from ultralytics import YOLO; YOLO('yolo11s.pt').export(format='onnx', imgsz=640)" || goto :err
+  move yolo11s.onnx models\yolo11s_640.onnx
 )
 dir models
 

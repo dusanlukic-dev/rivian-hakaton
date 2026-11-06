@@ -1,3 +1,20 @@
-- pokrenuti bat skriptu na windows ili sh skriptu na linux da bi se instalirali modeli
-- video snimak iz cabin camera staviti tamo gde je risk_pipeline.py fajl
+- pokrenuti bat skriptu na windows ili sh skriptu na linux da bi se instalirali modeli (models/ nije u gitu)
+- video snimak iz cabin camera staviti tamo gde je risk_pipeline.py fajl (ili dati punu putanju)
 - pokrenuti: python risk_pipeline.py --video snimak.mp4 --show
+
+Prikaz (--show): levo video sa ROI-jevima i detekcijama, desno sve promenljive modela po frejmu.
+  SPACE pauza, S screenshot (u logs/<sesija>/), Q ili ESC izlaz.
+
+Korisne opcije:
+  --verbose              jedan red po obradjenom frejmu u terminalu
+  --save-video out.mp4   snimi prikaz (video + panel) u fajl
+  --log-all              logs/<sesija>/frames.jsonl za svaki obradjeni frejm (inace 5 Hz)
+  --start 12 --max-seconds 10   samo deo snimka
+
+Podesavanje za novu kameru / novi polozaj kamere (jednom, upisuje se u risk_config.json):
+  1) ROI:        python risk_pipeline.py --video snimak.mp4 --pick-roi [--at 5]
+                 redom se mišem oznace driver_roi (ceo vozac), head_roi (glava), steering_wheel_roi (volan)
+                 ENTER/SPACE = sacuvaj, C = zadrzi postojeci
+  2) Kalibracija: python risk_pipeline.py --video snimak_normalne_voznje.mp4 --calibrate
+                 meri pozu glave "gleda u put" i upisuje calibration.prior_yaw_deg / prior_pitch_deg
+  Za Rivian dataset (kamera gleda unazad, vozac je DESNO na slici) vrednosti su vec podesene.

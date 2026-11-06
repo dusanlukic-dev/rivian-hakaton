@@ -32,6 +32,7 @@ The laptop plays the car's computer, and the phone's hotspot is the in-car netwo
 - `android-alerting.md`: sound on the alarm stream, flash, vibration, waking the phone, foreground service, permissions, Samsung quirks
 - `networking.md`: hotspot topology, ports, adb reverse, **Windows firewall state** (python allowed, node blocked on Public)
 - `environment.md`: this PC's toolchain (Android SDK + `android` CLI, JDK 17 toolchain + JDK 25, Python 3.13 venv, phone facts)
+- `cv-pipeline.md`: the cabin camera dataset and `notebooks/risk_pipeline.py`: driver is on the RIGHT, ROIs, head-pose baseline, look-down vs eyes-closed, YOLO/hands limits
 - `decisions.md`: decision log D1…Dn. Append when you decide something (D15: API.md supersedes our early draft)
 
 ## Skills

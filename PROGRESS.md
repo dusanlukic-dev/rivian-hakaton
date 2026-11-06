@@ -10,7 +10,7 @@
 |---|---|
 | Backend (FastAPI) | ✅ working (teammate Matija Vujić). 68 tests pass. Accepts the CV model's frame records (`TripState.camera`); every category in `risk_config.json` is mapped or deliberately ignored (`eyes_closed` → `drowsy`). **Records every trip** to Postgres + RustFS (S3): 1 s samples, risky moments with MP4 clips. **Accounts** (`/auth/register`, `/login`, `/me`; Bearer token, optional) and **`GET /trips/{id}/report`** = summary + user + raw per-second samples + moments with images, all from Postgres (history and summary survive restarts). Schema and review: `docs/DATABASE.md`. **Speed comes from the backend** (mock drive, Bezier scenarios; phone GPS via `POST /speed` is opt-in, off) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so risky moments get clips, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` landed (ttcpavle). Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. Output format known (`frames.jsonl` records: categories, risk, alert). Bridge: `SafetyClient.send_frame(rec)` + `send_video_frame(frame)` (no speed). Not yet called live from the pipeline |
 | Contract | ✅ `docs/API.md` (source of truth). Frontend notes and verification: `.claude/knowledge/contract-notes.md` |
 | **Mobile app** | ✅ **core done and verified on the A54 against the real backend**: Drive dashboard, alerts (flash, sound, vibration, voice, emergency siren screen), History, Trip summary, Profile, Settings (address/test/QR, toggles, test alerts, phone setup), QR scan |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary, QR "connect phone", simulator panel (`?sim`). Build + lint OK |
@@ -67,6 +67,8 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   (the backend log names the missing columns otherwise).
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
   (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
+- CV: hand detection is weak in the dark night clips (`05_23_62_0101xx`, no hands seen in ~37% of frames). Sunglasses make the eye
+  blendshapes meaningless. YOLO sees a phone in only ~30% of frames of a texting clip (hence the decaying memory). Details: `cv-pipeline.md`.
 
 
 ## Open questions
@@ -119,3 +121,6 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   raw per-second samples + moments with images/clips) so the app computes its own charts. New `docs/DATABASE.md` (schema, what the front
   gets, review). Verified: 68 tests (25× repeat), real Postgres + RustFS: register → owned trip with video → report → backend restart
   (token, history, report intact) → hard kill mid-trip (trip closed on restart with its last summary).
+- 2026-11-06, session 3 (CV pipeline, for ttcpavle): `risk_pipeline.py` fixed to watch the driver (right side), head_roi face crop,
+  calibration clamped to a measured prior, look-down/eyes-closed retune, yolo11s/640, hands evidence, unique log folders, `--show` diagnostic
+  panel + `--save-video/--verbose/--log-all/--pick-roi/--calibrate`. Category names unchanged (backend mapping still valid). Run on all 56 clips.
