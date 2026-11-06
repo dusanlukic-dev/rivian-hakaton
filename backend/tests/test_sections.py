@@ -217,6 +217,21 @@ def test_video_cache_keeps_five_minutes_at_most(clock):
     cache.close()
 
 
+def test_video_cache_forgets_frames_after_the_camera_stops(client, clock, coordinator, jpeg_frames):
+    """A rolling 5 min window: old frames are deleted (never sent anywhere), also when no new frame arrives."""
+    start_trip(client)
+    for jpeg in jpeg_frames[:5]:
+        clock.advance(0.1)
+        send_video(client, jpeg)
+    assert coordinator.video.stats()["frames"] == 5
+    clock.advance(299)  # the camera stopped
+    client.portal.call(coordinator.housekeeping_once)
+    assert coordinator.video.stats()["frames"] == 5  # still inside the window
+    clock.advance(2)
+    client.portal.call(coordinator.housekeeping_once)
+    assert coordinator.video.stats()["frames"] == 0
+
+
 def test_video_cache_on_disk(tmp_path, clock):
     cache = VideoCache(mode="disk", path=tmp_path / "cache", retention_s=300, max_fps=10, clock=clock)
     cache.open()

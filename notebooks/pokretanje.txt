@@ -21,7 +21,10 @@ DVA MODA
      --start 12 --max-seconds 10   samo deo snimka
      --backend [URL]        uz prikaz salji i backendu (kao prod);  --realtime = brzinom snimka
 
-2) PROD: bez prozora i bez prikaza, spremno za backend sistem
+2) PROD (za debug): bez prozora i bez prikaza, salje backendu
+   Napomena: pravi put u kolima je kamera -> koordinator -> model/worker.py, i rizik tada racuna
+   koordinator (docs/ARCHITECTURE.md). Ovaj mod sam racuna rizik i sluzi za debug i poredjenje.
+   Dok je model worker povezan, backend odbija ove zapise (409).
    python risk_pipeline.py --video 0 --mode prod                    (kamera 0 -> backend sa configa)
    python risk_pipeline.py --video snimak.mp4 --mode prod --start-trip demo   (snimak, bez telefona)
 

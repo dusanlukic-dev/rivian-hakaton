@@ -444,6 +444,9 @@ Odgovor `201`, `TripState`:
 - **Sa tokenom** (`Authorization: Bearer ...`) vožnja pripada nalogu: `driver_id` = korisničko ime, a
   kontakt za hitne slučajeve je iz naloga ako ga telo ne pošalje. Telo može biti i prazno `{}`.
 - Greške: `422` ako fali `driver_id`, a vozač nije prijavljen. `401` ako je token pogrešan ili istekao.
+- Kola ne čekaju server: ako koordinator ne može da proveri token (server ne odgovara), vožnja ipak kreće.
+  Token koji je već video važi po poslednjem odgovoru. Za nov token je `driver_id` iz tela (ili
+  `"unverified-login"`), a server vožnju upiše na nalog kad je primi. Do tada je u istoriji nema.
 
 ### `POST /trips/{trip_id}/end`: kraj vožnje [K]
 Bez tela. Odgovor `200`, `TripSummary`:
@@ -594,16 +597,18 @@ Slati ~1/s tokom vožnje, i to **samo ako `GET /speed` vrati `phone_enabled: tru
 `PHONE_SPEED_ENABLED=true`). Inače `409`. Sveže očitavanje telefona ima prednost nad mock brzinom,
 a `lat`/`lon` se upisuju u izveštaj. Ovo je za kola bez sopstvene računarske snage, gde telefon zna brzinu.
 
-### `POST /telemetry`: NIJE za aplikaciju [K]
-Ovo zovu simulator (`notebooks/safety_client.py`, `tools/sim.py`) ili model koji sam računa rizik.
-Kamera i model rade drugim putem (`WS /camera/ws` i `WS /model/ws`, vidi ispod). Aplikacija ga ne koristi.
+### `POST /telemetry`: NIJE za aplikaciju, samo debug [K]
+Ovo zovu simulator (`notebooks/safety_client.py`, `tools/sim.py`) ili, za debug, pipeline CV tima koji sam
+računa rizik (`risk_pipeline.py --mode prod`). Pravi put su kamera i model preko koordinatora
+(`WS /camera/ws` i `WS /model/ws`, vidi ispod), gde rizik računa koordinator. Aplikacija ga ne koristi.
+Dok je model worker povezan, zapis frejma (`frame`) dobija `409`, a labele simulatora i dalje prolaze.
 Model šalje svoj zapis frejma neizmenjen (bez `perception`), a backend preslikava njegove aktivne
 kategorije na `Behavior` (`phone_use` → `looking_at_phone`, `eyes_closed` i `drowsiness` → `drowsy`...,
 tabela u `backend/README.md`) i prosleđuje `camera` aplikaciji. U `camera.categories` mogu da stignu i
 kategorije koje se ne boduju (npr. `eating_drinking`), pa ih prikaži sirovim imenom.
 `speed_kmh` je opciono i model ga ne šalje: brzinu daje backend (`GET /speed`). Simulator ga šalje
 da bi vožnja kroz nivoe bila ista svaki put.
-Uživo ga šalje `python notebooks/risk_pipeline.py --video 0 --mode prod` (~2/s plus svaka promena
+Za debug ga šalje `python notebooks/risk_pipeline.py --video 0 --mode prod` (~2/s plus svaka promena
 alarma, i JPEG video na `/video/frames`). Iz istog toka backend pravi i `TripReport.model`.
 
 ### `POST /video/frames`: NIJE za aplikaciju [K]
@@ -750,8 +755,9 @@ Momenti bez slike (`image_url: null`, npr. nije bilo videa) se prikazuju bez ku�
 | `409` | `POST /auth/register` sa zauzetim imenom | `{"detail": "Username ana is taken"}` |
 | `409` | `/telemetry` ili `/video/frames` bez aktivne vožnje | `{"detail": "No active trip - start one from the app first"}` |
 | `409` | `POST /speed` dok je GPS telefona isključen na backendu | `{"detail": "Phone speed is disabled (PHONE_SPEED_ENABLED=false); ..."}` |
+| `409` | `/telemetry` sa zapisom frejma dok je model worker povezan (debug put ne meša se sa pravim) | `{"detail": "A model worker is connected and drives the score: ..."}` |
 | `503` | `/report`, `/sections`, `/summary`, `GET /trips`, `/media`, `/auth/*`: čuvanje je isključeno ili Postgres / S3 nisu dostupni | `{"detail": "Postgres is unreachable (...)"}` |
-| `503` | `POST /trips` sa tokenom dok server ne odgovara (koordinator ne može da proveri prijavu) | `{"detail": "Can't check the login: ..."}` |
+| `503` | `GET /trips/{id}` sa tokenom koji koordinator nikad nije proverio, dok server ne odgovara (`POST /trips` tada ipak kreće, vidi §5) | `{"detail": "Can't check the login: ..."}` |
 | `403` | `/internal/*` bez ispravnog `X-Internal-Token` (ruta za koordinator, ne za aplikaciju) | `{"detail": "Internal route: ..."}` |
 | `422` | loše telo zahteva | `{"detail": [{"type": "missing", "loc": ["body", "driver_id"], "msg": "Field required", "input": {}}]}` |
 
@@ -774,8 +780,9 @@ Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početa
    (`--speedup 2` ide duplo brže, `--speed-kmh 90` zakuca brzinu). Tada `camera` stiže popunjen.
 6. `--backend-speed`: simulator ne šalje brzinu, nego je određuje mock vožnja backenda.
 7. `GET /coordinator/status` pokazuje kameru, model, video keš i isporuku serveru.
-8. Pravi model na snimku iz kabine, bez telefona: `python notebooks/risk_pipeline.py --video snimak.mp4
-   --mode prod --start-trip demo` (pokrene i završi vožnju sam, ide brzinom snimka i šalje video).
+8. Debug: pipeline CV tima na snimku iz kabine, bez telefona: `python notebooks/risk_pipeline.py --video
+   snimak.mp4 --mode prod --start-trip demo` (pokrene i završi vožnju sam, ide brzinom snimka i šalje video).
+   Rizik tada računa pipeline, ne koordinator. Radi samo bez model worker-a (inače `409`).
 
 Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventualno pokrenula
 (pravilo jedne aktivne vožnje). Ne puštaj simulator i model istovremeno: oba boduju istu vožnju.

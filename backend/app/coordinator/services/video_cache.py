@@ -4,7 +4,11 @@
                                                       └─► bytes: disk (diskcache) or memory, at most `max_fps`
     dangerous section closes ──► get(peak frame id) or nearest(peak time) ──► JPEG for the section summary
 
-Frames are kept `retention_s` (5 min) and at most `max_mb`, oldest first. Disk mode uses diskcache (SQLite index
+A rolling window, not a queue: frames older than `retention_s` (5 min), or past `max_mb`, are deleted oldest
+first; nothing is ever sent anywhere from here. Only the image of a dangerous section is copied out (into the
+section, which goes to the server through the outbox) when the section closes, 2 s after it started, so it never
+depends on the window. Trimming runs on every stored frame and on the coordinator's housekeeping (`expire`), so
+frames also age out after the camera stops. Frames are stored only while a trip is active. Disk mode uses diskcache (SQLite index
 + one file per frame, a library built for exactly this kind of bounded cache) in a temp folder that is wiped on
 start: frame ids restart with the process. Writes go through one worker thread, so the event loop (the live
 score) never waits for the disk; frames not written yet are still served from memory.
@@ -183,6 +187,13 @@ class VideoCache:
         finally:
             with self._lock:
                 self._unwritten.pop(frame_id, None)
+
+    def expire(self, now: float | None = None) -> None:
+        """Drop what is older than the window now, not only when the next frame arrives (camera stopped)."""
+        with self._lock:
+            dropped = self._trim(self._clock() if now is None else now)
+        if dropped and self._store is not None:
+            self._forget(dropped)
 
     def _trim(self, now: float) -> list[int]:
         dropped = []

@@ -2,10 +2,14 @@
 
 from datetime import timedelta
 
+from app.coordinator.services import server_client
+from app.coordinator.services.trips import UNVERIFIED_DRIVER
+from app.main import app
 from app.server.repositories.database import Database
 from app.server.repositories.media import MemoryMediaStore
 from app.server.repositories.recordings import RecordingRepository
-from app.server.services.auth import hash_password, verify_password
+from app.server.repositories.users import UserRepository
+from app.server.services.auth import AuthService, AuthUnavailable, get_auth_service, hash_password, verify_password
 from app.server.services.storage import TripStore
 from tests.conftest import (
     API, CONTACT, DAY, MODEL_FRAME, app_client, bearer, flush, make_coordinator, register, send_tick, send_video,
@@ -175,3 +179,41 @@ def test_running_summary_and_restart(tmp_path, clock, speed):
         report = client.get(f"{API}/trips/{trip_id}/report", headers=headers).json()
         assert len(report["sections"]) == 6  # the open section was delivered when the first process stopped
         assert report["moments"][0]["behaviors"] == {"looking_at_phone": 11.5}
+
+
+class FlakyAuth(AuthService):
+    """Accounts whose Postgres is 'down' while `down` is True: token checks fail (503 on /auth/me)."""
+
+    down = False
+
+    async def user_for_token(self, token):
+        if self.down:
+            raise AuthUnavailable("Postgres is unreachable (test)")
+        return await super().user_for_token(token)
+
+
+def test_the_car_starts_a_trip_while_the_server_cant_check_the_login(db, store, clock, speed, monkeypatch):
+    coordinator = make_coordinator(clock, speed)
+    auth = FlakyAuth(UserRepository(db))
+    with app_client(store, coordinator, db) as client:
+        app.dependency_overrides[get_auth_service] = lambda: auth
+        ana, bob = register(client, "ana"), register(client, "bob")
+        start_trip(client, headers=bearer(ana))  # the coordinator checked ana's token once
+        monkeypatch.setattr(server_client, "USER_CACHE_S", 0.0)  # every later check asks the server again
+        auth.down = True
+
+        # A token checked before: the last answer is used.
+        assert start_trip(client, headers=bearer(ana))["driver_id"] == "ana"
+        # A token never checked: the trip starts anyway; the server decides whose it is when it gets the trip.
+        res = client.post(f"{API}/trips", json={}, headers=bearer(bob))
+        assert res.status_code == 201 and res.json()["driver_id"] == UNVERIFIED_DRIVER
+        trip_id = res.json()["trip_id"]
+        send_tick(client, DAY, 60, ["looking_at_phone"])
+        assert not client.portal.call(coordinator.outbox.flush, 0.3)  # the server can't take it yet
+        assert client.post(f"{API}/trips/{trip_id}/end").status_code == 200
+
+        auth.down = False
+        flush(client, coordinator)
+        summary = client.get(f"{API}/trips/{trip_id}/summary", headers=bearer(bob))
+        assert summary.status_code == 200 and summary.json()["driver_id"] == "bob"
+        assert client.get(f"{API}/trips/{trip_id}/summary").status_code == 404  # bob's trip, not a public one

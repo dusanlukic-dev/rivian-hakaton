@@ -163,3 +163,14 @@ dashboard draws the same chart with plain inline SVG. 2026-11-06.
 
 **D33: On this laptop Postgres + RustFS run in Docker (`backend/docker-compose.yml`).** Docker Desktop is installed now (D22
 assumed it wasn't); the portable `services.ps1` stays for the backend teammate's laptop. Same ports and keys either way. 2026-11-06.
+
+**D34: The demo and the architecture use one camera path: camera → coordinator → model worker → coordinator.** The user defined
+it: in the car are the camera, the model and the coordinator; the server is outside and holds history and logs. Video goes only
+into the coordinator, which sends frames to the model, gets evidence back, computes risk + score, streams it to the phone, decides
+which 2 s sections are dangerous and posts their picture to the server, which stores and serves it. The coordinator owns all
+caching (video window, outbox); Postgres + RustFS are the server's only. The CV teammate's `risk_pipeline.py --mode prod` (the
+pipeline scores itself and posts frame records to `/telemetry`) is **debug only**; the coordinator refuses those records with 409
+while a model worker is connected. Alternative (keep both as equal demo paths) dropped: two places computing risk, and they
+silently double-scored a trip when both ran. Follow-ups in the same pass: a phone login never blocks the car (stale-if-error token
+cache; an unchecked token travels as `TripMeta.owner_token` and the server resolves it), video frames also expire on housekeeping.
+Still open: outbox on disk and the phone's second address once the server really runs elsewhere. 2026-11-06.

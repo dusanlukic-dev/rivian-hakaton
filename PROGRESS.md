@@ -2,16 +2,16 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-06, coordinator/server split + model worker + drive chart + phone fixes (Claude, for Matija Radović).
+> Last updated: 2026-11-06, architecture check against the user's definition (one camera path, debug feed, offline login, setup_models fixed) (Claude, for Matija).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 89 tests. Speed is mocked by the coordinator (phone GPS opt-in) |
-| Camera + model | ✅ `tools/camera_stream.py` (test pattern / clip / webcam → coordinator) + `model/worker.py` (own venv; CV detectors imported unchanged; `--fake` = scripted detections, verified end to end with Postgres + RustFS). Real-model mode written, **not run here** (no `notebooks/models/` or dataset on this laptop): `model/README.md` |
+| Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Checked against the user's definition (session 6):** the car = camera + model + coordinator, the server is outside; `/telemetry` frame records are a debug feed (409 while a model worker is connected), a phone login never blocks the car (offline: stale token cache, or the token rides along as `TripMeta.owner_token`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 92 tests. Speed is mocked by the coordinator (phone GPS opt-in) |
+| Camera + model | ✅ `tools/camera_stream.py` (test pattern / clip / webcam → coordinator) + `model/worker.py` (own venv; CV detectors imported unchanged; `--fake` = scripted detections, verified end to end with Postgres + RustFS). Real-model mode written, **not run here** (no YOLO model or dataset on this laptop; the face/hand `.task` files are in `notebooks/models/` now): `model/README.md`. `notebooks/setup_models.bat`/`.sh` fixed (conflict resolved, yolo11s/640) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
-| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. Two live paths now: their `--mode prod` → `/telemetry`, or camera → coordinator → `model/worker.py` |
+| CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. **One real path:** camera → coordinator → `model/worker.py`; their `--mode prod` → `/telemetry` is **debug only** (D34) |
 | Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
 | **Mobile app** | ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section`, **verified on the A54** (chart, picture box, moment sheet, live strip). Phone fixes verified too: stuck test flash, app-specific settings pages, permission re-check |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary + **drive chart**, QR "connect phone", simulator panel (`?sim`). **`/trip/:id`** = any stored trip's summary + chart (headless-Chrome screenshot ✅). Build + lint OK |
@@ -36,8 +36,9 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Run the real model worker** (`model/README.md`): own venv, `notebooks/models/` (setup_models), a dataset clip through
-   `tools/camera_stream.py --video`. Compare with `risk_pipeline.py --mode prod` on the same clip; pick the demo path.
+1. **Run the real model worker** (`model/README.md`): own venv, `notebooks\setup_models.bat` (YOLO export needs ultralytics, e.g.
+   the CV env), a dataset clip through `tools/camera_stream.py --video`. It is the demo path (D34); `risk_pipeline.py --mode prod`
+   on the same clip (worker stopped) is only a debug comparison.
 2. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
    ("standing: no penalty" below 5 km/h), optionally the model's `camera.risk` / `alert` colour. Display only, `response` still drives alerts.
 3. **Login** + the rest of the report (the drive chart is done; API.md §3–§5; types already re-copied: `TripCreate.driver_id` is now optional, new `User`,
@@ -56,7 +57,10 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
 8. **Team alignment:** proposals in `contract-notes.md`: dashboard sim panel posting `/telemetry`, SMS on emergency. Phone GPS speed now
    exists as an **opt-in** backend feature (`GET /speed` → `phone_enabled`, then `POST /speed` ~1/s); the app may implement it behind that flag.
 9. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level.
-10. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+10. **When the server really runs outside the car** (`run.py --role`): outbox on disk (now memory: turning the car off while
+    offline loses undelivered sections), and the phone needs two addresses (car for live, server for history) or a reverse proxy.
+    Not needed while both run in one process on the laptop. `docs/ARCHITECTURE.md` → Planirano.
+11. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
 
 ## In progress
 
@@ -73,7 +77,6 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
   native module). The other three rows refresh on return from Android settings.
 - **With camera + fake worker running, every trip gets scripted detections** (phone at 14–20 s of each minute, etc.). Close their
   windows (or don't start them) when testing something else.
-- `notebooks/setup_models.bat` still has unresolved merge-conflict markers (CV team's file; `.sh` was fixed).
 - The dev-client gear button overlaps the top-right status pill. It's dev builds only.
 - Web dashboard audio needs one click per page load ("Enable sound"), a browser rule. Its main chunk is 642 KB (Vite warning, harmless).
 - `node.exe` is blocked inbound on Public networks (Metro over Wi-Fi / LAN dashboard). USB + `adb reverse` works. Fix: `networking.md`.
@@ -97,13 +100,11 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
 ## Open questions
 
 - **CV:** the model has no `looking_behind` / `turning_around` output (only the simulator sends them). Will the CV team add one?
-  The models now run live against the backend (`risk_pipeline.py --mode prod`). Open: is the in-car CPU fast enough
+  The models run live through the coordinator (`model/worker.py`). Open: is the in-car CPU fast enough
   (~110 ms per processed frame on this laptop vs a 100 ms budget at every 3rd frame)?
 - **Production split:** coordinator (car) and server (reports) are separated in code (`docs/ARCHITECTURE.md`). Open: a reverse proxy
   so the phone keeps one address when they run apart, image access (signed URLs instead of the demo's public bucket), retention,
   several cars (`car_id`).
-- **Which camera path for the demo:** `risk_pipeline.py --mode prod` (pipeline scores itself, posts `/telemetry`) or camera →
-  coordinator → `model/worker.py` (user's architecture: the coordinator scores)? Both work; don't run both on one trip.
 - **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
 - **Accounts:** login is optional for now (trips without a token still work). Should the app require it? No password reset/change yet.
@@ -171,3 +172,11 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
   Postgres/RustFS (66 sections, 9 moments with images), dashboard chart screenshot, mobile + dashboard typecheck/lint/build.
   The new mobile screens were checked on the A54 at the end (after the USB link came back; a cold Metro bundle takes ~70 s).
   Not verified: the real model worker (no models here).
+- 2026-11-06, session 6 (Claude, for Matija): **architecture checked against the user's definition** (car = camera + model +
+  coordinator, server outside; video only into the coordinator; coordinator owns caching, server owns Postgres + RustFS). It held
+  (no DB/S3 import in the coordinator, none of the coordinator in the server); fixed the gaps: `/telemetry` frame records
+  (`--mode prod`) are a **debug feed**, refused with 409 while a model worker is connected and counted in `/coordinator/status`;
+  `POST /trips` with a token **no longer 503s when the server is unreachable** (stale-if-error token cache, else
+  `TripMeta.owner_token` resolved by the server); video frames also expire on housekeeping. `setup_models.bat`/`.sh` resolved
+  (+ `.gitattributes`: bat CRLF, sh LF). Docs: ARCHITECTURE (real vs debug paths, rolling-window cache, owner_token), API.md,
+  root CLAUDE.md, D34. Verified: 92 backend tests (new ones 8× repeated), `setup_models.bat` downloads + package stop in cmd.

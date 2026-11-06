@@ -101,9 +101,10 @@ Blendshape survey over 2129 face frames (every 10th frame of 28 clips):
   `backend/tests/test_risk_engine.py` imports the original from `notebooks/risk_pipeline.py` and requires identical records over
   5 × 4000 random steps. If the CV team changes `RiskEngine`, port it and the test tells you. The whole-trip report
   (`app/services/model_report.py`) is fed by the coordinator with every tick, whichever path the frames took.
-- Two live paths now: **(a)** `risk_pipeline.py --mode prod` computes the frame record itself and posts it to `/telemetry` (below);
-  **(b)** `tools/camera_stream.py` → coordinator → `model/worker.py` (detectors only) → coordinator's `RiskEngine`. Don't run both
-  for the same trip.
+- **The real path is (b)** `tools/camera_stream.py` → coordinator → `model/worker.py` (detectors only) → coordinator's `RiskEngine`
+  (user's decision, D34). **(a)** `risk_pipeline.py --mode prod` computes the frame record itself and posts it to `/telemetry`
+  (below): **debug only**. The coordinator refuses its frame records (409) while a model worker is connected, so both never score
+  one trip; `GET /coordinator/status` → `debug_feed.telemetry_frames` counts what came that way.
 - `model/worker.py` runs the body of `risk_pipeline.run()` per frame on frames the coordinator sends: `FacePerception`,
   `HandPerception`, `ObjectPerception` (if `models/yolo11s_640.onnx` exists), `FeatureExtractor` → `evidence` back. The schedule
   (`face_every_n`, `hands_every_n`, `objects_every_n`, `max_result_age_s`) is kept; the coordinator decides which frames go
@@ -111,6 +112,9 @@ Blendshape survey over 2129 face frames (every 10th frame of 28 clips):
 - MediaPipe VIDEO mode needs strictly increasing timestamps across trips, so the worker keeps a base offset instead of
   restarting at 0; `FeatureExtractor` (head-pose calibration, PERCLOS, phone memory) is recreated on every `reset` (new trip).
 - **Not run with the real models on this laptop** (no `notebooks/models/`, no dataset drive). The fake mode is verified end to end.
-- **`notebooks/setup_models.bat` still contains unresolved merge-conflict markers** (`<<<<<<< HEAD` ... `>>>>>>> 0c36827`, from
-  commit 6985249; the `.sh` was fixed in f82aaf1), so it fails as committed. The HEAD side exports `yolo11s_640` (what
-  `risk_config.json` uses), the other side `yolo11n_320`. Left for the CV team to resolve (their file).
+- **`setup_models.bat` / `.sh` resolved (2026-11-06, user's request):** the conflict (commit 6985249; the `.sh` had only its
+  markers deleted in f82aaf1, so it ran both sides and also exported an unused `yolo11n_320`) is merged as the CV team's robust
+  version (`.part` downloads, Python detection) with the HEAD model `yolo11s_640` (what `risk_config.json` reads). Packages are
+  checked only where needed: the two `.task` files need just curl, the YOLO export needs `ultralytics` + `onnx`, the test clip
+  `cv2` + `mediapipe`. Verified here: `.task` downloads + the "install packages" stop; the YOLO export itself was not run (no
+  ultralytics/torch on this laptop). `.gitattributes` pins `*.bat` to CRLF (cmd misreads `call :label` in LF files), `*.sh` to LF.

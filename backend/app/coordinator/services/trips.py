@@ -12,7 +12,9 @@ from app.domain.trip import EmergencyContact, Trip
 from app.schemas.auth import User
 from app.schemas.trip import BehaviorSummary, TelemetryTick, TripCreate, TripState, TripSummary
 
-__all__ = ["TIPS", "MissingDriver", "end_trip", "process_tick", "start_trip", "to_state", "to_summary"]
+__all__ = [
+    "TIPS", "UNVERIFIED_DRIVER", "MissingDriver", "end_trip", "process_tick", "start_trip", "to_state", "to_summary",
+]
 
 
 
@@ -20,15 +22,22 @@ class MissingDriver(ValueError):
     """No login and no driver_id: nobody to put the trip on."""
 
 
+UNVERIFIED_DRIVER = "unverified-login"  # driver_id until the server resolves a login it couldn't check
+
+
 def start_trip(
-    repo: InMemoryTripRepository, data: TripCreate, user: User | None = None
+    repo: InMemoryTripRepository, data: TripCreate, user: User | None = None, *, unverified_login: bool = False
 ) -> tuple[Trip, Trip | None]:
     """Start a new trip. A trip still in progress is ended first and returned as the second item.
 
     With a logged-in `user` the trip belongs to that account: its username becomes the driver_id
-    and its saved emergency contact is used unless the request brings one.
+    and its saved emergency contact is used unless the request brings one. `unverified_login`: the phone
+    sent a token the server couldn't check (unreachable); the trip starts anyway and the server puts it on
+    the account when it gets the trip (TripMeta.owner_token).
     """
     driver_id = user.username if user else data.driver_id
+    if not driver_id and unverified_login:
+        driver_id = UNVERIFIED_DRIVER
     if not driver_id:
         raise MissingDriver
     previous = repo.active()

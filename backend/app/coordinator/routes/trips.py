@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, HTTPException, status
 
-from app.coordinator.deps import CoordinatorDep, OptionalUser, TripDep, VisibleTripDep
+from app.coordinator.deps import CoordinatorDep, DriverDep, TripDep, VisibleTripDep
 from app.coordinator.services import trips as trip_service
 from app.schemas.trip import TripCreate, TripState, TripSummary
 
@@ -10,13 +10,15 @@ router = APIRouter(prefix="/trips", tags=["trips (coordinator)"])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
-async def create_trip(body: TripCreate, coordinator: CoordinatorDep, user: OptionalUser) -> TripState:
+async def create_trip(body: TripCreate, coordinator: CoordinatorDep, driver: DriverDep) -> TripState:
     """Called by the app when the drive starts. Ends any trip still in progress.
 
     Logged in (Bearer token): the trip belongs to the account. Without login, `driver_id` is required.
+    The car never waits for the server: if it can't check the token, the trip starts and the server puts it on
+    the account once it gets the trip.
     """
     try:
-        return await coordinator.start_trip(body, user)
+        return await coordinator.start_trip(body, driver.user, driver.unverified_token)
     except trip_service.MissingDriver:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "driver_id is required when starting a trip without logging in"

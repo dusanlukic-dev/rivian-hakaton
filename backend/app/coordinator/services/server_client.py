@@ -68,7 +68,12 @@ class ServerClient:
         return CloseInterruptedOut.model_validate(data).closed
 
     async def user_for_token(self, token: str) -> User | None:
-        """The account behind a phone's bearer token; None if the token is wrong or expired."""
+        """The account behind a phone's bearer token; None if the token is wrong or expired.
+
+        Answers are re-checked after USER_CACHE_S. While the server is unreachable the last answer for this token
+        is used, however old (the car keeps working without the server); ServerUnavailable only for a token
+        never checked before.
+        """
         now = time.monotonic()
         cached = self._users.get(token)
         if cached is not None and now - cached[0] < USER_CACHE_S:
@@ -76,6 +81,10 @@ class ServerClient:
         try:
             data = await self._request("GET", "/auth/me", headers={"Authorization": f"Bearer {token}"})
             user = User.model_validate(data)
+        except ServerUnavailable:
+            if cached is not None:
+                return cached[1]
+            raise
         except ServerRejected as e:
             if e.status != 401:
                 raise

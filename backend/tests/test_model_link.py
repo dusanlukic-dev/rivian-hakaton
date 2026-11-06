@@ -3,7 +3,7 @@
 import time
 
 from app.coordinator.services.model_link import pack_frame, unpack_frame
-from tests.conftest import API, flush, start_trip
+from tests.conftest import API, DAY, MODEL_FRAME, flush, send_tick, start_trip
 
 PHONE = {"phone_use": 0.95, "eyes_off_road": 0.9, "hands_off_wheel": 0.1}
 CALM = {"phone_use": 0.02, "eyes_off_road": 0.05, "hands_off_wheel": 0.1}
@@ -92,3 +92,19 @@ def test_slow_model_gets_the_newest_frame_and_lost_frames_time_out(client, clock
         assert coordinator.model.lost == 1
         after, _ = unpack_frame(model.receive_bytes())
         assert after["id"] == newest["id"] + 1
+
+
+def test_debug_feed_is_refused_while_a_model_worker_drives(client, coordinator):
+    """risk_pipeline.py --mode prod posts frame records it scored itself: a debug feed, never mixed with the worker."""
+    with client.websocket_connect(f"{API}/model/ws") as model:
+        model.send_json({"type": "hello", "worker": "fake", "version": "test"})
+        trip_id = start_trip(client)["trip_id"]
+        assert model.receive_json() == {"type": "reset", "trip_id": trip_id}
+        res = client.post(f"{API}/telemetry", json={"timestamp": DAY.isoformat(), "frame": MODEL_FRAME})
+        assert res.status_code == 409 and "debug feed" in res.json()["detail"]
+        res = client.post(f"{API}/telemetry", json={"timestamp": DAY.isoformat(), "behaviors": ["looking_at_phone"]})
+        assert res.status_code == 200  # the simulator's labels still go through
+    wait_for(lambda: not coordinator.model.connected)
+    state = send_tick(client, DAY, 60, frame=MODEL_FRAME)  # no worker: the debug feed scores the trip
+    assert state["camera"]["alert"] == "red"
+    assert client.get(f"{API}/coordinator/status").json()["debug_feed"] == {"telemetry_frames": 1}

@@ -2,7 +2,7 @@
 
     camera ──WS /camera/ws (JPEG per message) or POST /video/frames──► video cache + model worker
     model worker ◄──WS /model/ws──► coordinator (routes/model.py)
-    simulator / a model that scores by itself ──POST /telemetry──► score
+    debug only: simulator labels / risk_pipeline --mode prod frame records ──POST /telemetry──► score
     phone, dashboard ◄──WS /ws── trip_started, state, emergency, section, trip_ended
 """
 
@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebS
 
 from app.coordinator.deps import CoordinatorDep, Hub, TripRepo
 from app.coordinator.services import trips as trip_service
+from app.coordinator.services.coordinator import DebugFeedRefused
 from app.coordinator.services.video import is_jpeg
 from app.domain.enums import LiveEvent
 from app.schemas.trip import TelemetryTick, TripState
@@ -18,18 +19,26 @@ router = APIRouter(tags=["live (coordinator)"])
 
 MAX_FRAME_BYTES = 2_000_000
 NO_ACTIVE_TRIP = "No active trip - start one from the app first"
+MODEL_WORKER_DRIVES = (
+    "A model worker is connected and drives the score: frame records on /telemetry are a debug feed "
+    "(risk_pipeline.py --mode prod). Stop the worker to use it."
+)
 
 
 @router.post("/telemetry")
 async def ingest_telemetry(tick: TelemetryTick, repo: TripRepo, coordinator: CoordinatorDep) -> TripState:
-    """Labels and/or a model frame record (~2/s), from the simulator or a model that scores by itself.
+    """Debug feed: labels (simulator) and/or a model frame record (~2/s) from a model that scored it by itself.
 
-    The camera + model worker path doesn't use this: the worker sends evidence over WS /model/ws.
+    The real path doesn't use this: camera -> coordinator -> model worker (WS /model/ws), and the coordinator
+    computes the risk. While a worker is connected, frame records are refused (409) so both never score one trip.
     """
     trip = repo.active()
     if trip is None:
         raise HTTPException(status.HTTP_409_CONFLICT, NO_ACTIVE_TRIP)
-    return await coordinator.on_tick(trip, tick)
+    try:
+        return await coordinator.on_telemetry(trip, tick)
+    except DebugFeedRefused:
+        raise HTTPException(status.HTTP_409_CONFLICT, MODEL_WORKER_DRIVES) from None
 
 
 @router.post(

@@ -19,6 +19,11 @@ class TripMeta(BaseModel):
     trip_id: str
     driver_id: str
     user_id: str | None = Field(description="The account that started it; null = started without login.")
+    owner_token: str | None = Field(
+        default=None,
+        description="The phone's login token when the coordinator couldn't check it (server unreachable at the "
+        "start). The server resolves it to user_id when it stores the trip and never stores the token.",
+    )
     started_at: datetime
     emergency_contact: EmergencyContactIn | None = None
     speed_scenario: str | None = None

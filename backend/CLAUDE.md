@@ -35,7 +35,8 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 ## Slojevi
 
 **Koordinator** (`app/coordinator/`):
-- `routes/`: tanke rute. `live.py`: `WS /ws` (telefon), `POST /telemetry` (simulator), `POST /video/frames`,
+- `routes/`: tanke rute. `live.py`: `WS /ws` (telefon), `POST /telemetry` (samo debug: simulator, `--mode prod`;
+  zapis frejma `409` dok je model worker povezan), `POST /video/frames`,
   `WS /camera/ws` (kamera). `model.py`: `WS /model/ws` (model worker). `trips.py`: start, kraj, živo stanje.
   `speed.py`: `GET/POST /speed`. `status.py`: `GET /coordinator/status`.
 - `services/coordinator.py`: **`Coordinator`**, ceo živi tok na jednom mestu: tick → brzina → score →

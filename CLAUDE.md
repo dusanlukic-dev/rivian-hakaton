@@ -19,7 +19,7 @@ slike** (privatnost).
 | `model/` | **model worker**: svoj proces i okruženje (kasnije Docker), prima frejmove od koordinatora i vraća detekcije. Koristi kod CV tima bez izmena |
 | `tools/camera_stream.py` | kamera za demo: snimak, test slika ili web kamera → koordinator |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
-| `notebooks/risk_pipeline.py` | CV pipeline: `--mode dev` (video + metrike) ili `--mode prod` (šalje frejmove backendu preko `/telemetry`). Uputstvo: `notebooks/pokretanje.txt` |
+| `notebooks/risk_pipeline.py` | CV pipeline: `--mode dev` (video + metrike) ili `--mode prod` (**samo debug**: sam računa rizik i šalje zapise backendu preko `/telemetry`). Uputstvo: `notebooks/pokretanje.txt` |
 | `notebooks/safety_client.py` | stari most modeli → backend, plus simulator cele vožnje (i dalje radi) |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
@@ -36,7 +36,7 @@ Celo objašnjenje: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 ```
 laptop: kamera (tools/camera_stream.py) ──WS 127.0.0.1:8000/api/v1/camera/ws (JPEG, ~10 fps)──► KOORDINATOR
         model worker (model/worker.py)  ◄─WS 127.0.0.1:8000/api/v1/model/ws: frejm → dokaz po kategoriji─►
-        simulator (safety_client.py)    ──POST /api/v1/telemetry (labele ili zapis modela)──────────────►
+        debug: simulator, --mode prod   ──POST /api/v1/telemetry (labele ili zapis modela)──────────────►
         KOORDINATOR ──POST /api/v1/internal/trips/{id}/sync (sekcije od 2 s + slike)──► SERVER
         SERVER ──► Postgres 127.0.0.1:5433 (nalozi, vožnje, sekcije) + RustFS S3 127.0.0.1:9000 (slike)
 telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergency, section na 2 s── KOORDINATOR
@@ -46,6 +46,11 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 - Za demo **nema servera ni DNS-a**. Laptop pokreće backend (koordinator + server u jednom procesu,
   port 8000), kameru i model, telefon pravi hotspot, a laptop je povezan na njega. Aplikacija gađa IP
   laptopa, koji `python backend/run.py` ispiše pri pokretanju. IP se menja pri svakom ponovnom povezivanju.
+- **U kolima:** kamera, model i koordinator. **Van kola:** server (istorija i zapisi vožnji). Sav keš je u
+  koordinatoru, a Postgres i RustFS su samo serverovi. Vožnja nikad ne čeka server.
+- **Pravi put:** kamera → koordinator → model worker → koordinator (rizik, score, reakcija). `risk_pipeline.py
+  --mode prod` i simulator (`POST /telemetry`) su **samo debug**; zapis frejma na `/telemetry` dobija `409` dok je
+  model worker povezan.
 - **Jedan auto = jedna aktivna vožnja.** Detekcije i telemetrija idu u aktivnu vožnju, a nova vožnja
   završava prethodnu.
 - **Koordinator** prima video, šalje frejmove modelu, od dokaza modela računa rizik (`RiskEngine` CV tima,
@@ -124,6 +129,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   ga hrani koordinator svakim tickom (frejmovi sa `/telemetry` ili detekcije model worker-a) i šalje serveru uz svaku
   sekciju. Pipeline radi samo matematiku po frejmu i ima dva moda: `--mode dev` (video sa sažetim metrikama, lokalni
   log) i `--mode prod` (bez prikaza, šalje backendu). Modul ostaje na toj putanji jer ga dev mod uvozi.
+- (2026-11-06, kasnije) **Pravi put je kamera → koordinator → model worker**, a `risk_pipeline.py --mode prod` je samo
+  debug (rizik tada računa pipeline, ne koordinator). Koordinator odbija zapise frejma na `/telemetry` dok je
+  worker povezan. Prijava ne blokira kola: bez servera vožnja kreće, a server je upiše na nalog kad je primi
+  (`TripMeta.owner_token`).
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
@@ -133,12 +142,13 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 2. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
    događaj `emergency`.
 3. **Produkcija:** podela na koordinator (u kolima) i server (izveštaji) je urađena u kodu
-   (docs/ARCHITECTURE.md). Otvoreno: reverse proxy da telefon i u odvojenom režimu ima jednu adresu,
-   pristup slikama (potpisani URL-ovi umesto javnog bucketa), koliko dugo se čuvaju, više kola (`car_id`).
-4. ~~**Model → backend uživo**~~ rešeno na dva načina: `risk_pipeline.py --mode prod` šalje frejmove i video
-   backendu, a `model/worker.py` (detektori CV tima) radi preko koordinatora. Ostaje: koji put ide na demo,
-   na pravom autu proveriti da li CPU stiže ~10 obrađenih frejmova/s (na ovom laptopu ~110 ms po frejmu), i
-   merge konflikti u `notebooks/setup_models.bat`.
+   (docs/ARCHITECTURE.md). Otvoreno: kad server zaista radi van kola, telefon treba ili dve adrese (kola za
+   uživo, server za istoriju) ili reverse proxy; outbox koordinatora na disk (sada je u memoriji, pa gašenje kola
+   bez interneta gubi neisporučene sekcije); pristup slikama (potpisani URL-ovi umesto javnog bucketa), koliko
+   dugo se čuvaju, više kola (`car_id`).
+4. ~~**Model → backend uživo**~~ rešeno: `model/worker.py` (detektori CV tima) radi preko koordinatora i to je
+   put za demo; `risk_pipeline.py --mode prod` ostaje za debug. Ostaje: na pravom autu proveriti da li CPU
+   stiže ~10 obrađenih frejmova/s (na ovom laptopu ~110 ms po frejmu). `setup_models.bat`/`.sh` su popravljeni.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 

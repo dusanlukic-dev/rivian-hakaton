@@ -3,7 +3,7 @@
     camera ──JPEG──► on_video_frame ─┬─► VideoCache (5 min)
                                      └─► ModelLink ──► model worker ──evidence──► on_detection
                                                                                      │ RiskEngine (CV team's math)
-    simulator ──POST /telemetry──────────────────────────────────────────────────────┤
+    debug only: simulator labels, risk_pipeline --mode prod ──POST /telemetry────────┤ (on_telemetry)
                                                                                      ▼
                                 speed (mock / phone) ──► on_tick: score + car response (scoring.py, alerts.py)
                                                            ├─► ModelReportBuilder: the model's whole-trip report
@@ -54,6 +54,10 @@ from app.services.model_report import ModelReportBuilder
 logger = logging.getLogger(__name__)
 
 IMAGE_MAX_GAP_S = 1.5  # nearest cached frame to the riskiest tick, if the exact frame isn't cached
+
+
+class DebugFeedRefused(Exception):
+    """A frame record on POST /telemetry while a model worker is connected: the worker drives the score."""
 
 
 def running_summary(trip: Trip, model: ModelReportBuilder | None = None) -> RunningSummary:
@@ -144,6 +148,8 @@ class Coordinator:
         self._last_signature: tuple | None = None
         self._camera = _Rate()
         self._camera_clients = 0
+        self._debug_frames = 0  # frame records that came on the debug feed (POST /telemetry)
+        self._debug_trips: set[str] = set()
         self._housekeeper: asyncio.Task | None = None
         # monotonic clock -> local wall time, for the timestamps of model ticks (local: night penalties)
         self._ref = (datetime.now().astimezone(), clock())
@@ -186,9 +192,13 @@ class Coordinator:
 
     # ---------------- trips ----------------
 
-    async def start_trip(self, body: TripCreate, user: User | None) -> TripState:
-        """Raises trip_service.MissingDriver without login and driver_id."""
-        trip, previous = trip_service.start_trip(self.repo, body, user)
+    async def start_trip(self, body: TripCreate, user: User | None, unverified_token: str | None = None) -> TripState:
+        """Raises trip_service.MissingDriver without login and driver_id.
+
+        `unverified_token`: a login the server couldn't check (unreachable). The car doesn't wait for the server:
+        the trip starts now and the server puts it on the account when the trip reaches it.
+        """
+        trip, previous = trip_service.start_trip(self.repo, body, user, unverified_login=unverified_token is not None)
         if previous is not None:
             await self._finish(previous, wait=False)
         wall = self.clock()
@@ -202,6 +212,7 @@ class Coordinator:
             trip_id=trip.id,
             driver_id=trip.driver_id,
             user_id=trip.user_id,
+            owner_token=unverified_token,
             started_at=trip.started_at,
             emergency_contact={"name": contact.name, "phone": contact.phone} if contact else None,
             speed_scenario=self.speed.scenario_for(trip.id).name,
@@ -239,6 +250,26 @@ class Coordinator:
             await self.outbox.flush(timeout=3.0)
 
     # ---------------- ticks ----------------
+
+    async def on_telemetry(self, trip: Trip, tick: TelemetryTick) -> TripState:
+        """POST /telemetry: the simulator's labels, or a frame record from a model that scored it by itself.
+
+        A frame record (`risk_pipeline.py --mode prod`) is a **debug feed**: the pipeline ran its own RiskEngine, so
+        the coordinator only maps its result instead of computing the risk. The real path is camera -> coordinator
+        -> model worker. While a worker is connected it drives the score, and frame records are refused
+        (DebugFeedRefused) so the two never score one trip together.
+        """
+        if tick.frame is not None:
+            if self.model.connected:
+                raise DebugFeedRefused
+            self._debug_frames += 1
+            if trip.id not in self._debug_trips:
+                self._debug_trips.add(trip.id)
+                logger.warning(
+                    "Trip %s is fed by the debug path (frame records on POST /telemetry, the pipeline's own risk). "
+                    "Real path: camera -> coordinator -> model worker (model/worker.py).", trip.id,
+                )
+        return await self.on_tick(trip, tick)
 
     async def on_tick(
         self,
@@ -345,6 +376,7 @@ class Coordinator:
     async def housekeeping_once(self) -> None:
         now = self.clock()
         self.model.check_timeouts(now)
+        self.video.expire(now)  # frames age out even when the camera stopped sending
         for trip_id, closed in self.sections.sweep(now):
             trip = self.repo.get(trip_id)
             if trip is not None:
@@ -371,6 +403,7 @@ class Coordinator:
                 "last_frame_age_s": round(now - last_frame, 1) if last_frame is not None else None,
             },
             "model": self.model.status(),
+            "debug_feed": {"telemetry_frames": self._debug_frames},
             "risk_engine": {
                 "config": str(self.cfg.risk_config_file),
                 "loaded": self._risk_config is not None,

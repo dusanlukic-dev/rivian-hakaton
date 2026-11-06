@@ -103,6 +103,9 @@ What changed for the apps (both `src/api/types.ts` re-copied from §4 the same d
   `critical`), speed, car response. `image_url` is always null live; the report has it. Unknown message types must be ignored.
 - **`state` from the model path is throttled to ~2/s** (plus at once on any change of level, response, behaviours or model alert),
   because the model scores 5–10 frames a second and the phone vibrates/beeps per message. `/telemetry` (simulator) is unchanged.
+- **`POST /trips` no longer fails (503) when the server is unreachable** and the phone sends a token (2026-11-06, D34): the trip
+  starts; for a token the coordinator never checked, `driver_id` is the body's or `"unverified-login"` until the server puts the
+  trip on the account. The app should show the name from its own profile, not `driver_id`. `/telemetry` is debug-only now.
 - **`TripReport` = `{trip, user, section_s, sections, moments}`.** `samples`, `window_s`, `events`, `TripSample`, `RiskEvent`,
   `TripTimeline`, `/timeline`, `/events` and the MP4 clips are gone. `GET /trips/{id}/sections?after_seq=N` returns new sections.
 - `DangerMoment` = back-to-back dangerous sections merged by the server: node at (`peak_t`, `peak_score`), `image_url` of the
