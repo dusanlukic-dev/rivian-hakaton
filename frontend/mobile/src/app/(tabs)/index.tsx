@@ -7,6 +7,7 @@ import { ensureNotificationPermission } from '@/alerts/notifications';
 import { api } from '@/api/client';
 import type { TripState, TripSummary } from '@/api/types';
 import { BehaviorGrid, Indicators, Lamp, LevelBar, ScoreBadge, StatusPill } from '@/components/dashboard';
+import { RecentSections } from '@/components/report';
 import { Banner, Button, Card, Screen, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
@@ -120,6 +121,7 @@ export default function DriveScreen() {
 
 function ActiveTrip({ trip, stale, busy, onEnd }: { trip: TripState; stale: boolean; busy: boolean; onEnd: () => void }) {
   const light = lampColors[trip.response.dashboard_light];
+  const sections = useLive((s) => s.sections);
   const focused = Object.keys(trip.active_behaviors).length === 0;
   return (
     <View style={styles.stack}>
@@ -139,6 +141,7 @@ function ActiveTrip({ trip, stale, busy, onEnd }: { trip: TripState; stale: bool
       </Card>
       {stale ? <Banner icon="wifi-off" text={strings.drive.staleBanner} /> : null}
       <BehaviorGrid active={trip.active_behaviors} />
+      <RecentSections sections={sections.filter((s) => s.trip_id === trip.trip_id)} />
       <Indicators response={trip.response} stale={stale} />
       <Txt size="xs" tone="subtle" style={styles.center}>
         {strings.drive.driver}: {trip.driver_id} · trip {trip.trip_id.slice(0, 8)}

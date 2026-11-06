@@ -1,5 +1,5 @@
 import { restBase } from './address';
-import type { ValidationIssue, TripCreate, TripState, TripSummary } from './types';
+import type { TripCreate, TripReport, TripState, TripSummary, ValidationIssue } from './types';
 
 /** REST error. `status` 0 = network problem / timeout (car computer unreachable). */
 export class ApiError extends Error {
@@ -51,4 +51,7 @@ export const api = {
     request<TripSummary>(address, `/trips/${encodeURIComponent(tripId)}/summary`),
   listTrips: (address: string, driverId?: string) =>
     request<TripSummary[]>(address, driverId ? `/trips?driver_id=${encodeURIComponent(driverId)}` : '/trips'),
+  /** The drive chart: summary + every 2 s section + dangerous moments with images. 503 = storage down → hide it. */
+  getReport: (address: string, tripId: string) =>
+    request<TripReport>(address, `/trips/${encodeURIComponent(tripId)}/report`, {}, 10_000),
 };
