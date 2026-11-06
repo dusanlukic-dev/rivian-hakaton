@@ -12,4 +12,6 @@ Several agents and teammates work in parallel. These files are how nobody gets l
    book, not only into PROGRESS.md.
 4. **Decisions with alternatives**: append to `.claude/knowledge/decisions.md`.
 5. **A workflow you did twice, or one that was tricky**: turn it into a skill at `.claude/skills/<name>/SKILL.md` and list it in `.claude/CLAUDE.md`.
-6. **A contract change** (WebSocket messages): update `.claude/knowledge/ws-protocol.md` and both clients' adapters in the same commit.
+6. **Contract:** `docs/API.md` belongs to the backend. When it changes, re-copy its §4 types into `src/api/types.ts` of **both** apps,
+   adapt `src/api/`, and note anything new in `.claude/knowledge/contract-notes.md`, all in the same commit. Frontend needs go to the
+   backend as a request. Never patch the contract from the frontend side.

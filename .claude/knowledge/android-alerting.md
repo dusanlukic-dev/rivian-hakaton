@@ -30,12 +30,19 @@ silent mode, uses alarm volume (usually high), and is allowed by the default Do 
 A channel's sound and importance are **immutable after creation**. To change them, use a new channel id (e.g. `alerts_v2`),
 or reinstall or clear app data.
 
+## Triggers come from the backend, never from the app's own logic
+
+Every WS `state` (~1/s) carries `response = { dashboard_light, vibrate_seat, sound: none|low|high, message }`, and an `emergency`
+event arrives once per trip when the score drops below 10. The app **executes** these and never decides on its own (docs/API.md §7).
+The full field → effect table is in `metrics-and-scoring.md`.
+
 ## Foreground mode (main demo path)
 
-App open on the Drive screen with `useKeepAwake()`. The level comes from WebSocket `state` frames (`metrics-and-scoring.md`).
+App open on the Drive screen with `useKeepAwake()`. The background colour is `dashboard_light`.
 
-- Level 2: animated red overlay (≤ 2 Hz), `alarm_warning` loop with expo-audio, vibration pattern, brightness up.
-- Level 3: full-screen red pulse + `alarm_critical` + continuous vibration + TTS + an "I'm focused" button.
+- `vibrate_seat` → `Vibration.vibrate(300)` per message. `sound: low` → `chime` per message.
+- `sound: high` → `alarm_warning` per message + red pulse overlay (≤ 2 Hz) + brightness up.
+- `emergency` → full-screen red pulse + `alarm_critical` loop + continuous vibration + TTS + "Send SMS to <contact>" (proposal) + an "OK" button.
 - Optionally **also** post the alarm-channel notification in the foreground. Its sound then uses the alarm stream even when media volume is 0.
 
 ## Background / locked mode (stretch, the "wake from sleep" requirement)
@@ -44,7 +51,7 @@ App open on the Drive screen with `useKeepAwake()`. The level comes from WebSock
    (ongoing "Drive mode active"). Manifest types: `location` (Doze-exempt, no timeout; needs a runtime location permission, and the
    phone's GPS speed is a real input) and `specialUse` as a fallback. Pass `foregroundServiceTypes` at start, then keep the
    WebSocket in JS. The RN JS thread keeps running while the process is alive.
-2. **Alert:** `displayNotification({ android: { channelId: 'alerts_critical', category: AndroidCategory.ALARM, importance: HIGH,
+2. **Alert** (on `sound: high` or the `emergency` event): `displayNotification({ android: { channelId: 'alerts_critical', category: AndroidCategory.ALARM, importance: HIGH,
    fullScreenAction: { id: 'default' }, loopSound: true, ongoing: true, actions: [{ title: "I'm focused", pressAction: { id: 'ack' } }],
    smallIcon: 'ic_stat_alert' } })`.
    - `fullScreenAction` + `showWhenLocked`/`turnScreenOn`: when the phone is **locked or screen-off**, Android launches the
@@ -63,7 +70,7 @@ Special access (Settings toggles, so the app deep-links with expo-intent-launche
 - **Display over other apps** (`SYSTEM_ALERT_WINDOW`).
 - **Do Not Disturb access**, so the channel can `bypassDnd`.
 - **Battery: Unrestricted.** Samsung pauses foreground services after a few seconds with the screen off on battery otherwise
-  (notify-kit README, notifee#410). Settings → Apps → Driver Alert → Battery → **Unrestricted**. Also make sure it isn't in
+  (notify-kit README, notifee#410). Settings → Apps → Safety Reviewer → Battery → **Unrestricted**. Also make sure it isn't in
   Settings → Battery → Background usage limits → Sleeping / Deep sleeping apps. https://dontkillmyapp.com/samsung
 
 Faster for the demo phone over adb (package `dev.hakaton.driveralert`; verify each on first use):

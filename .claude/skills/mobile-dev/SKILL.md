@@ -40,8 +40,10 @@ Metro over Wi-Fi instead of USB: phone and laptop on the same network, `npm star
   `~/.jdks/jdk-17.0.21+9`, registered in `~/.gradle/gradle.properties` (`org.gradle.java.installations.paths`).
   If a build fails with a Java/Kotlin version error, run the Gradle daemon on JDK 17 too:
   `$env:JAVA_HOME="$HOME\.jdks\jdk-17.0.21+9"; npm run android`.
-- SDK packages: platform 37.0, build-tools 37.0.0, NDK 27.1.12297006, CMake 3.30.5. Install with `android sdk install <pkg/path>`
-  (`sdkmanager` is deprecated). Only `arm64-v8a` is built (D12).
+- SDK packages: platform 37.0, build-tools 37.0.0, NDK 27.1.12297006, CMake 3.30.5 **with Ninja swapped to 1.13.2** (long paths, see
+  Common errors). Install with `android sdk install <pkg/path>` (`sdkmanager` is deprecated). Only `arm64-v8a` is built (D12).
+- A first build from scratch is ~13+ minutes (mostly C++). Later builds reuse `node_modules/*/android/.cxx` and Gradle caches.
+- A background build's own exit code is what counts. Don't chain `; echo` after it in a way that hides the failure.
 
 ## Release APK for the demo phone / other phones
 
@@ -62,4 +64,4 @@ It's debug-signed, which is fine for sideloading. Updating an installed app need
 | App opens, red screen "Unable to load script" | Metro not running or not reachable: `npm start`, then `npm run adb:reverse` |
 | Native module "null"/"not found" at runtime | the installed dev build is older than package.json. Rebuild with `npm run android` |
 | Notification sound/importance won't change | channels are immutable. Use a new channel id or `adb shell pm clear dev.hakaton.driveralert` |
-| Windows path-length errors in CMake/Ninja | keep the repo path short. Enable long paths (admin): `git config --system core.longpaths true` + the registry `LongPathsEnabled=1` |
+| `ninja: error: mkdir(CMakeFiles/<lib>.dir/C_/Users/...): No such file or directory` (seen 2026-11-06 in react-native-screens) | **Windows 260-char path limit.** CMake embeds the absolute source path in object paths. Needs registry `LongPathsEnabled=1` (already set on this PC) **and** a long-path-aware Ninja ≥ 1.12. The SDK CMakes ship 1.10.2, so it was replaced with 1.13.2 in **every** `$ANDROID_HOME/cmake/*/bin/ninja.exe` (originals kept as `ninja-<ver>-original.exe`). Libraries without a pinned CMake (react-native-screens, worklets) use **3.22.1**, which AGP auto-installs during the first build; RN core uses 3.30.5. Redo the swap whenever a new CMake version appears in the SDK, or on a teammate's PC. The loop is in `.claude/knowledge/environment.md`. Alternative: a much shorter repo path |

@@ -28,7 +28,7 @@ Device facts: `adb shell getprop ro.product.model`, `ro.build.version.release`, 
 
 ```bash
 adb reverse tcp:8081 tcp:8081   # Metro (expo run:android does this itself)
-adb reverse tcp:8000 tcp:8000   # backend / mock server → app can use ws://localhost:8000/api/v1/ws
+adb reverse tcp:8000 tcp:8000   # backend → app can use ws://localhost:8000/api/v1/ws
 adb reverse --list
 ```
 These reset on replug or an adb restart. `npm run adb:reverse` in `frontend/mobile` sets both.
@@ -51,7 +51,7 @@ android screen capture --output=<scratchpad>/shot.png              # then Read t
 android screen capture --annotate --output=<scratchpad>/shot.png   # numbered boxes, usable with `android screen resolve`
 android layout --pretty --output=<scratchpad>/layout.json          # accessibility tree JSON (text, class, bounds, clickable)
 android input tap "text=Connect"                                   # tap by selector (key=value pairs, comma separated)
-android input text "text=Host" "192.168.1.5"                       # (check `android input text --help` for the exact form)
+android input text "10.190.62.27:8000" "clz=EditText" --submit    # <string> <selector>: replaces the field's text, then Enter
 android input key back|home|power|enter
 android device hub                                                 # live mirror window, handy on the projector during the pitch
 ```
@@ -79,7 +79,7 @@ Test: start Drive mode → screen off → trigger a critical alert from the mock
 ## 7. Demo-phone prep (permissions + special access)
 
 The command block is in `.claude/knowledge/android-alerting.md` § Permissions: `pm grant` for notifications, location and camera,
-`appops` for overlay and full-screen intent, DND access, and the battery whitelist. Then on the phone: Settings → Apps → Driver Alert → Battery → **Unrestricted**.
+`appops` for overlay and full-screen intent, DND access, and the battery whitelist. Then on the phone: Settings → Apps → Safety Reviewer → Battery → **Unrestricted**.
 
 ## 8. Wireless adb (no cable), when the phone hosts the hotspot
 

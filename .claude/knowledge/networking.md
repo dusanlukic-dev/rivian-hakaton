@@ -1,64 +1,62 @@
 # Networking: laptop ("car computer") ⇄ phone ⇄ dashboard
 
-## Demo topology
+## Demo topology (no server, no DNS)
 
 ```
- ┌──────────────── Galaxy A54 ─────────────────┐
- │  Mobile hotspot (phone = gateway)           │
- │  Driver Alert app ── ws://<laptop-ip>:8000 ─┼──┐
- └─────────────────────────────────────────────┘  │  Wi-Fi (hotspot LAN)
- ┌──────────────── Laptop = car computer ───────┐ │
- │  FastAPI backend  0.0.0.0:8000  /api/v1/ws ◄─┼─┘
- │  CV models (or mocks) → backend              │
- │  Dashboard (browser) ── ws://localhost:8000 ─┤
- └──────────────────────────────────────────────┘
+ ┌──────────────── Galaxy A54 ───────────────────────────┐
+ │ mobile hotspot (phone = gateway, randomized subnet)   │
+ │ Safety Reviewer app ── ws://<laptop-ip>:8000/api/v1/ws ┼──┐ Wi-Fi (hotspot LAN)
+ └───────────────────────────────────────────────────────┘  │
+ ┌──────────────── laptop = car computer ─────────────────┐ │
+ │ backend  python run.py → 0.0.0.0:8000 (prints its IP) ◄┼─┘
+ │ camera models / simulator → POST 127.0.0.1:8000/api/v1/telemetry
+ │ dashboard (browser) → ws://localhost:8000/api/v1/ws    │
+ └────────────────────────────────────────────────────────┘
 ```
 
-- The phone hosts the hotspot and the laptop joins it. Apps on the hotspot phone *can* reach hotspot clients
-  (Android routes the tether subnet through its `local_network` table for all apps).
-- The app needs the **laptop's** IP on the hotspot network: `ipconfig` → "Wireless LAN adapter Wi-Fi" → IPv4.
-  Recent Android/Samsung builds randomize the hotspot subnet, so **never hardcode the IP**.
-- Any other phone works the same way: join the same network, enter the IP. A second phone on the hotspot is also fine (passenger device).
+- The phone hosts the hotspot and the laptop joins it. Apps on the hotspot phone can reach hotspot clients, as verified on 2026-11-06:
+  `phone → 10.190.62.27:8000/api/v1/health` returned 200.
+- The app needs the **laptop's** IP. `backend/run.py` prints it, or use `ipconfig` → adapter `WiFi` → IPv4. **It changes with every hotspot
+  session**, so it's never hardcoded. API.md §2 requires a settings screen with an address field (saved in AsyncStorage) and a
+  "Test connection" button that calls `GET /health`.
+- Any phone works the same way: join the network, enter the IP. Several clients can connect at once, and the backend broadcasts to all.
 
 ## Ports
 
-| port | what | bind |
+| port | what | bind / notes |
 |---|---|---|
-| 8000 | FastAPI backend (or the mock server) — HTTP + WS `/api/v1/ws` | `0.0.0.0` (`uvicorn --host 0.0.0.0`) |
-| 8081 | Metro bundler (mobile dev only) | expo default |
-| 5173 | Dashboard Vite dev server | `npm run dev -- --host` to expose on the LAN |
-
-## How the app finds the server (settings screen, planned)
-
-1. **Manual**: host, port and path fields (default `localhost` · `8000` · `/api/v1/ws`) with a "Test" button that calls the health endpoint.
-   Persisted with AsyncStorage, and the last few hosts are remembered.
-2. **QR**: the dashboard shows a QR code of the full `ws://…` URL, and the app scans it with expo-camera.
-3. **LAN scan** (optional): take the phone's IP from expo-network and probe `/24:8000/api/v1/health` with short timeouts.
-   On the hotspot phone itself, expo-network may report the cellular IP, so this is unreliable there. Treat it as a bonus.
+| 8000 | FastAPI backend: REST `/api/v1/*`, WS `/api/v1/ws`, Swagger `/docs` | `0.0.0.0` (`run.py`) |
+| 8081 | Metro bundler (mobile dev only) | over USB via `adb reverse` (automatic with `expo run:android`) |
+| 5173 | dashboard Vite dev server | `localhost` by default. `npm run dev -- --host` exposes it on the LAN |
 
 ## Development without hotspot hassle: USB + adb reverse
 
-`adb reverse tcp:8000 tcp:8000` (and `tcp:8081` for Metro; `expo run:android` already does 8081) makes `localhost:8000`
-**on the phone** reach the laptop over USB. No IP, firewall or Wi-Fi needed. `npm run adb:reverse` in `frontend/mobile` sets both.
-Reverse mappings reset when the cable or adb server restarts.
+`adb reverse tcp:8000 tcp:8000` (plus `tcp:8081` for Metro) makes `localhost:8000` **on the phone** reach the laptop over USB, with no IP,
+firewall or Wi-Fi involved. `npm run adb:reverse` in `frontend/mobile` sets both. The mappings reset on replug or an adb restart. Verified 2026-11-06.
 
-## Windows gotchas (laptop)
+## Windows firewall: state on Matija's laptop (2026-11-06)
 
-- **Firewall**: when the laptop joins a phone hotspot, Windows usually marks it *Public*, which blocks inbound connections.
-  Run once in an **elevated** PowerShell:
-  ```powershell
-  New-NetFirewallRule -DisplayName "Hackathon backend 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow -Profile Any
-  New-NetFirewallRule -DisplayName "Hackathon Metro 8081"   -Direction Inbound -Protocol TCP -LocalPort 8081 -Action Allow -Profile Any
-  # or mark the hotspot network Private (alias is "WiFi" on Matija's laptop, check with Get-NetConnectionProfile):
-  Set-NetConnectionProfile -InterfaceAlias "WiFi" -NetworkCategory Private
-  ```
-  The first Python run may instead pop a firewall dialog: tick both Private and Public.
-- Bind the backend to `0.0.0.0`. `127.0.0.1` is reachable only from the laptop.
+The hotspot network is classed as **Public**.
+
+| program | inbound rule on Public | effect |
+|---|---|---|
+| `…\Python\pythoncore-3.13-64\python.exe` (the backend venv's base interpreter) | **Allow** (accepted at the first `run.py`) | phone → backend over the hotspot works ✅ |
+| `…\nvm\v26.13.0\node.exe` | **Block** (an earlier prompt was denied) | Metro over Wi-Fi and a LAN-exposed dashboard are **blocked** for other devices. USB/`adb reverse` and `localhost` are unaffected |
+
+Block rules beat allow rules. To unblock node (only needed for Metro over Wi-Fi or opening the dashboard from another device), run in an
+**elevated** PowerShell, then accept the prompt on the next start:
+```powershell
+Get-NetFirewallRule -Direction Inbound | Where-Object { $_.DisplayName -eq 'node.exe' -and $_.Action -eq 'Block' } | Remove-NetFirewallRule
+```
+If a different Python ever runs the backend, Windows prompts again. Tick Public too, or add a port rule (from `backend/README.md`):
+`New-NetFirewallRule -DisplayName "Safety API 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow`.
+Multiple adapters exist (VirtualBox `192.168.56.1`, Hyper-V `192.168.16.1`), so always use the `WiFi` adapter's IP. `run.py` picks it correctly.
 
 ## Android gotchas (phone)
 
-- **Cleartext**: release builds block `http://`/`ws://` to non-localhost hosts by default. We set
+- **Cleartext:** release builds block `http://`/`ws://` to non-localhost hosts by default. We set
   `expo-build-properties.android.usesCleartextTraffic = true`, and debug builds already allow it.
-- Mobile data stays on while hosting a hotspot, so the laptop gets internet through the phone. That's fine.
-- If the phone joins some other Wi-Fi instead of hosting, the laptop must be on that same Wi-Fi. Client isolation on venue
-  Wi-Fi often blocks device-to-device traffic, so **prefer the hotspot**.
+- `toybox nc` tests through `adb reverse`: keep stdin open (`(printf …; sleep 2) | toybox nc …`), because the adb tunnel drops the
+  stream on a TCP half-close.
+- If the phone joins some other Wi-Fi instead of hosting, the laptop must be on the same Wi-Fi. Venue Wi-Fi often has client isolation,
+  so **prefer the hotspot**.

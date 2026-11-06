@@ -16,8 +16,11 @@ koeficijente i vrste grešaka, **nikad slike** (privatnost).
 | `backend/` | FastAPI: računa score, šalje događaje aplikaciji. Detalji u `backend/CLAUDE.md` |
 | `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
 | `notebooks/safety_client.py` | most modeli → backend, plus simulator cele vožnje |
-| `frontend/` | React Native aplikacija (još nije napravljena) |
+| `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
+| `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
 | `docs/API.md` | **ugovor backend ↔ aplikacija, izvor istine.** Pročitaj ga pre bilo kakvog rada na frontendu |
+| `PROGRESS.md` | stanje projekta, bagovi, sledeći koraci. Pročitaj na početku, ažuriraj na kraju |
+| `.claude/` | pravila, skillovi i knowledge za agente (frontend, alati, mreža, Android). Indeks: `.claude/CLAUDE.md` |
 
 ## Arhitektura i mreža
 

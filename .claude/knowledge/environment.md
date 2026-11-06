@@ -9,7 +9,7 @@ Recorded 2026-11-06. Update it when something changes. Other teammates' machines
 | Windows | 11 Pro (26300) | PowerShell 5.1 + Git Bash. PS 5.1 has no `&&`, and `>` corrupts binary output |
 | Node / npm | 26.13.0 / 12.2.1 | nvm4w (`C:\nvm4w\nodejs`). **npm 12 blocks dependency install scripts** unless allowed (`npm install-scripts ls/approve`). Only `@parcel/watcher` was blocked (prebuilt binary, harmless) |
 | git | 2.56 | identity "Matija Radović" <radovic1918@gmail.com>. SSH to GitHub works |
-| Python | 3.15.2 | not used by the frontend. Backend teammate: very new Python, wheels (pydantic-core…) may lag. 3.12/3.13 is safer |
+| Python | 3.15.2 (default `py`) + **3.13.17** | 3.13 was installed with `py install 3.13` (the Python install manager, per user, no admin). **The backend venv `backend/.venv` uses 3.13**: on 3.15, `fastapi[standard]` fails because PyYAML has no cp315 wheel (D16). Run the backend with `backend\.venv\Scripts\python.exe run.py` |
 | Java (global) | Temurin **25** | `JAVA_HOME=C:\Program Files\Eclipse Adoptium\jdk-25.0.5.8-hotspot\`, untouched |
 | Java (Android toolchain) | Temurin **17.0.21+9**, portable | `C:\Users\matija\.jdks\jdk-17.0.21+9`, registered only as a Gradle toolchain candidate in `~/.gradle/gradle.properties` (`org.gradle.java.installations.paths`). Not on PATH |
 | Android SDK | — | `C:\Users\matija\AppData\Local\Android\Sdk` (Android Studio's default location, so a later Studio install reuses it) |
@@ -18,7 +18,8 @@ Recorded 2026-11-06. Update it when something changes. Other teammates' machines
 | ├ platforms | android-37.0 | compileSdk 37 |
 | ├ build-tools | 37.0.0 | |
 | ├ NDK | 27.1.12297006 | RN 0.88's version catalog |
-| └ CMake | 3.30.5 | RN 0.88 default (`CMAKE_VERSION` env overrides) |
+| └ CMake | 3.30.5 (RN core) + 3.22.1 (auto-installed by AGP for libraries without a pinned version, e.g. react-native-screens, worklets) | **Both `bin/ninja.exe` were replaced with Ninja 1.13.2** (long-path aware; the bundled 1.10.2 broke the C++ build on our 70-char repo path). Originals kept as `ninja-1.10.2-original.exe`. Swap loop (Git Bash): `for B in "$LOCALAPPDATA"/Android/Sdk/cmake/*/bin; do cp /path/to/ninja-1.13.2.exe "$B/ninja.exe"; done` (ninja-win.zip from github.com/ninja-build/ninja/releases) |
+| Windows long paths | `LongPathsEnabled=1` (was already set) | needed together with Ninja ≥ 1.12 |
 | Expo / RN / React | SDK 58.0.23 / 0.88.1 / 19.3.0 | TypeScript 6.0, React Compiler on, New Architecture only, Hermes |
 | Gradle / AGP / Kotlin | 9.4.1 / 9.2.1 / 2.2.0 | from the generated `android/`; minSdk 24, targetSdk 36, compileSdk 37 |
 | Chrome | `C:\Program Files\Google\Chrome\Application\chrome.exe` | headless screenshots (dashboard-dev skill) |
@@ -41,7 +42,7 @@ Android 16 means full-screen intents need the special-access toggle for non-alar
 ## Network (when the laptop is on the phone's hotspot)
 
 - Laptop adapter `WiFi`: `10.190.62.27`, gateway (= the phone) `10.190.62.95`. Both change between hotspot sessions.
-- Windows classed the hotspot as **Public**, so inbound to 8000/8081 is blocked until a firewall rule exists or the profile is set
-  to Private (`networking.md` § Windows gotchas; the adapter alias here is `WiFi`, not `Wi-Fi`).
+- Windows classed the hotspot as **Public**. Python 3.13 is allowed inbound (backend reachable ✅). `node.exe` has Block rules on
+  Public (Metro over Wi-Fi and the LAN dashboard are blocked; USB is fine). The fix is in `networking.md` § Windows firewall. The adapter alias is `WiFi`.
 - Extra adapters exist: VirtualBox host-only `192.168.56.1` ("Ethernet 2"), Hyper-V `192.168.16.1`, Npcap loopback. Code that guesses the
   "LAN IP" must pick the adapter with the default route (the UDP-connect trick in `backend/run.py` does). Never take the first adapter.

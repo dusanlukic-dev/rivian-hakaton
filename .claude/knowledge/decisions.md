@@ -53,3 +53,20 @@ Doze exemption. 2026-11-06.
 
 **D14: Flashing stays ≤ 3 Hz (2 Hz in practice).** Photosensitive-seizure safety (WCAG 2.3.1), and the user is driving. Sound is the
 primary channel and the flash is secondary. 2026-11-06.
+
+**D15: `docs/API.md` (backend-owned) is the contract. This supersedes the frontend draft `ws-protocol.md` and parts of D7/D8.**
+The real backend landed on 2026-11-06 (commit `903df76`): a 0–100 attention score, six levels, behaviour labels instead of probabilities,
+WS `{type, data}` with `trip_started|state|emergency|trip_ended`, and client messages ignored. So: no client-side fallback scoring (the
+app shows `response`), no hello/ping/sim messages, and no mock server (the backend + `notebooks/safety_client.py` simulator replace it).
+Still valid from D7/D8: plain WebSocket, never-give-up reconnect, and only `src/api/` knows the wire format. 2026-11-06.
+
+**D16: Backend on this laptop runs in `backend/.venv` with Python 3.13** (installed with `py install 3.13`). Python 3.15 failed because
+PyYAML (pulled in by `fastapi[standard]`) has no cp315 wheel. The backend docs also target 3.13. 2026-11-06.
+
+**D17: The app display name follows the team's project name, "Safety Reviewer".** This supersedes the "Driver Alert" placeholder in D10.
+The package id stays `dev.hakaton.driveralert` and the scheme stays `driveralert`, which avoids a reinstall and is invisible to users. 2026-11-06.
+
+**D18: Swap the SDK CMake's Ninja for 1.13.2 instead of moving the repo to a short path.** The first build failed on the Windows
+260-char limit (`ninja: error: mkdir(CMakeFiles/rnscreens.dir/C_/Users/...)`). Long paths were already enabled in the registry, but
+Ninja 1.10.2 isn't long-path-aware. Swapping the binary in every SDK CMake (3.22.1 + 3.30.5) needs no admin rights and keeps the user's folder layout.
+Alternatives: move or `subst` the repo (disruptive; subst risks mixed real/virtual paths in CMake). 2026-11-06.
