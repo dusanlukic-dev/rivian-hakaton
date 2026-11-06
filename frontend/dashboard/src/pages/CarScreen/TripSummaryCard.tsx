@@ -4,6 +4,7 @@ import type { TripSummary } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { behaviorMeta, formatDuration, formatScore, levelLabel, LEVELS, lightColor } from './carMeta'
+import { DriveReport } from './DriveReport'
 
 interface TripSummaryCardProps {
   summary: TripSummary
@@ -38,6 +39,8 @@ const TripSummaryCard = ({ summary, onDismiss }: TripSummaryCardProps) => (
       <Stat label="Average" value={summary.average_score} />
       <Stat label="Lowest" value={summary.min_score} />
     </div>
+
+    <DriveReport tripId={summary.trip_id} />
 
     {summary.behaviors.length === 0 ? (
       <p className="flex items-center gap-2 text-base">

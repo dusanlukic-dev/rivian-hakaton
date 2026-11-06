@@ -2,7 +2,7 @@ import { createBrowserRouter, createRoutesFromElements, Route, RouterProvider } 
 import { DashboardSquare01Icon, Logout01Icon, Settings01Icon } from '@hugeicons/core-free-icons'
 import { RequireAuth, SidebarButton, SidebarLayout } from '@/components/layout'
 import { AuthProvider, useAuth } from '@/context/AuthContext'
-import { CarScreen, ErrorPage, LoginPage } from '@/pages'
+import { CarScreen, ErrorPage, LoginPage, TripReportPage } from '@/pages'
 
 // Example admin shell — replace items / pages with your own
 const AdminShell = () => {
@@ -21,6 +21,7 @@ const router = createBrowserRouter(
   createRoutesFromElements(
     <Route errorElement={<ErrorPage />}>
       <Route path='/' element={<CarScreen />} />
+      <Route path='/trip/:id' element={<TripReportPage />} />
       <Route path='/login' element={<LoginPage />} />
 
       <Route element={<RequireAuth />}>

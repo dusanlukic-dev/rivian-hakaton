@@ -1,6 +1,6 @@
 import axios from 'axios'
 import api from '@/utils/api/client'
-import type { ApiError, Behavior, TripCreate, TripState, TripSummary } from '@/api/types'
+import type { ApiError, Behavior, TripCreate, TripReport, TripState, TripSummary } from '@/api/types'
 
 /** Every route in docs/API.md is relative to this */
 export const API_PREFIX = '/api/v1'
@@ -10,6 +10,10 @@ export const startTrip = (body: TripCreate) =>
 
 export const endTrip = (tripId: string) =>
   api.post<TripSummary>(`${API_PREFIX}/trips/${tripId}/end`).then((r) => r.data)
+
+/** The drive chart: every 2 s section + the dangerous moments with images. 503 = storage down, 404 = not stored */
+export const getReport = (tripId: string) =>
+  api.get<TripReport>(`${API_PREFIX}/trips/${tripId}/report`).then((r) => r.data)
 
 /** One camera sample (`TelemetryTick` in backend/app/schemas/trip.py). Normally sent by the camera models, not the UI */
 export interface TelemetryTick {
