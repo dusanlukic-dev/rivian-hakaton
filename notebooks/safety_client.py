@@ -7,7 +7,7 @@ Standard library only (OpenCV just to JPEG-encode numpy frames). Keep it next to
     client = SafetyClient()  # backend running on the same laptop
     # inside the camera loop - calling both every frame is fine, they throttle themselves:
     client.send_frame(record)       # record = the dict you write to frames.jsonl (~2/s)
-    client.send_video_frame(frame)  # the BGR frame from OpenCV (~8/s), for the risky-moment clips
+    client.send_video_frame(frame)  # the BGR frame from OpenCV (~8/s), for the dangerous-moment images
 
 The backend maps the record's active categories to its labels (phone_use -> looking_at_phone...)
 and forwards risk / alert / categories to the app. `perception` (raw detector output) is dropped
@@ -15,14 +15,15 @@ here; the app doesn't need it. Don't send a speed: the camera doesn't know it, a
 has its own (a mocked drive, or the phone's GPS). If you only have labels, use
 `client.send({"looking_at_phone"})` with the names in BEHAVIORS.
 
-Video frames stay in the backend's memory for a few seconds. Only clips around risky moments are
-stored (S3), for the driver's report.
+Video frames go to the coordinator's video cache (5 min). Every 2 s section that was dangerous gets the
+image of its riskiest frame in the driver's report. The newer path, where the coordinator sends camera
+frames to a model worker itself, is tools/camera_stream.py + model/worker.py (docs/ARCHITECTURE.md).
 
 Run this file directly to drive the backend without any models (useful for the app team):
 
     python safety_client.py                          # simulated drive through every level
     python safety_client.py --interval 0.3           # faster than real time
-    python safety_client.py --video 0                # ...streaming the webcam: risky moments get clips
+    python safety_client.py --video 0                # ...streaming the webcam: dangerous moments get images
     python safety_client.py --backend-speed          # speed from the backend's mock drive
     python safety_client.py --replay frames.jsonl    # replay a recorded model run
     python safety_client.py --replay frames.jsonl --speedup 2 --speed-kmh 90 --video run.mp4
@@ -98,7 +99,7 @@ class SafetyClient:
         return self._send_tick({"behaviors": sorted(behaviors)}, speed_kmh, timestamp)
 
     def send_video_frame(self, image: Any) -> bool:
-        """Stream one camera frame for the risky-moment clips (throttles itself to `video_fps`).
+        """Stream one camera frame for the dangerous-moment images (throttles itself to `video_fps`).
 
         `image` is a BGR numpy frame as OpenCV reads it, or JPEG bytes. Returns True if the backend
         took it. Never raises on network trouble, so it can't kill the camera loop.
@@ -131,13 +132,11 @@ class SafetyClient:
     def end_trip(self, trip_id: str) -> dict:
         return self._post(f"/trips/{trip_id}/end")
 
-    def trip_events(self, trip_id: str, order: str = "time") -> list[dict]:
-        """Risky moments the backend recorded, with clip URLs. Empty if recording is off or down."""
+    def trip_moments(self, trip_id: str) -> list[dict]:
+        """Dangerous moments of the drive report, with image URLs. Empty if storage is off or down."""
         try:
-            with urllib.request.urlopen(
-                f"{self.base_url}/trips/{trip_id}/events?order={order}", timeout=30
-            ) as response:
-                return json.load(response)
+            with urllib.request.urlopen(f"{self.base_url}/trips/{trip_id}/report", timeout=30) as response:
+                return json.load(response)["moments"]
         except urllib.error.HTTPError as e:
             if e.code in (404, 503):
                 return []
@@ -248,14 +247,14 @@ def _print_summary(client: SafetyClient, summary: dict) -> None:
     print(f"\nFinal score {summary['final_score']} (avg {summary['average_score']}, min {summary['min_score']})")
     for b in summary["behaviors"]:
         print(f"  {b['behavior']}: {b['occurrences']}x, {b['total_seconds']} s - {b['tip']}")
-    events = client.trip_events(summary["trip_id"], order="worst")
-    if events:
-        print(f"\nRisky moments recorded: {len(events)} (worst first)")
-        for e in events[:5]:
-            what = ", ".join(e["behaviors"]) or ", ".join(e["rules_triggered"]) or "model alarm"
+    moments = sorted(client.trip_moments(summary["trip_id"]), key=lambda m: m["score_drop"], reverse=True)
+    if moments:
+        print(f"\nDangerous moments: {len(moments)} (worst first)")
+        for m in moments[:5]:
+            what = ", ".join(m["behaviors"]) or ", ".join(m["rules_triggered"]) or "model alarm"
             print(
-                f"  t={e['t_start']:>6.1f} s  {e['duration_s']:>4} s  score -{e['score_drop']:<5} {what}"
-                f"  {e['video_url'] or '(no video)'}"
+                f"  t={m['t_start']:>6.1f} s  {m['duration_s']:>4} s  {m['danger']:<9} score -{m['score_drop']:<5} {what}"
+                f"  {m['image_url'] or '(no image)'}"
             )
 
 
@@ -319,7 +318,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--video", metavar="SOURCE",
-        help="webcam index (0) or a video file, streamed at ~8 fps so risky moments get clips (needs OpenCV)",
+        help="webcam index (0) or a video file, streamed at ~8 fps so dangerous moments get images (needs OpenCV)",
     )
     parser.add_argument("--replay", metavar="FRAMES_JSONL", help="replay a recorded model run instead of the demo")
     parser.add_argument(

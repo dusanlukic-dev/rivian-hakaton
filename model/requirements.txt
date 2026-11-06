@@ -1,0 +1,6 @@
+# The model worker's own environment (not the backend's): the CV team's detectors + the coordinator link.
+# python -m venv model/.venv && model/.venv/Scripts/python.exe -m pip install -r model/requirements.txt
+opencv-python-headless   # decode JPEGs, resize, YOLO through cv2.dnn (no GUI needed here)
+mediapipe>=0.10          # face + hand landmarkers
+numpy
+websockets>=13
