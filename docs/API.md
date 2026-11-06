@@ -420,7 +420,9 @@ a `lat`/`lon` se upisuju u izveštaj. Ovo je za kola bez sopstvene računarske s
 ### `POST /telemetry`: NIJE za aplikaciju
 Ovo zovu modeli za kameru preko `notebooks/safety_client.py`. Aplikacija ga ne koristi.
 Model šalje svoj zapis frejma neizmenjen (bez `perception`), a backend preslikava njegove aktivne
-kategorije na `Behavior` (`phone_use` → `looking_at_phone`...) i prosleđuje `camera` aplikaciji.
+kategorije na `Behavior` (`phone_use` → `looking_at_phone`, `eyes_closed` i `drowsiness` → `drowsy`...,
+tabela u `backend/README.md`) i prosleđuje `camera` aplikaciji. U `camera.categories` mogu da stignu i
+kategorije koje se ne boduju (npr. `eating_drinking`), pa ih prikaži sirovim imenom.
 `speed_kmh` je opciono i model ga ne šalje: brzinu daje backend (`GET /speed`). Simulator ga šalje
 da bi vožnja kroz nivoe bila ista svaki put.
 

@@ -8,16 +8,21 @@ from app.schemas.camera import ModelFrame
 
 logger = logging.getLogger(__name__)
 
-# Model category name -> backend label. Our own label names map to themselves.
+# Model category name -> backend label. The model's categories are listed in
+# notebooks/risk_config.json ("categories"). Our own label names map to themselves, which
+# covers `eyes_off_road` and `hands_off_wheel`. Hard rules such as `microsleep` are not
+# categories: they come in `rules_triggered` and raise the model's red alert instead.
 # A category missing here still reaches the app through `camera`, but doesn't affect the score.
 CATEGORY_TO_BEHAVIOR: dict[str, Behavior] = {
     **{behavior.value: behavior for behavior in Behavior},
     "phone_use": Behavior.LOOKING_AT_PHONE,
-    "turned_around": Behavior.TURNING_AROUND,
-    "hands_off": Behavior.HANDS_OFF_WHEEL,
     "drowsiness": Behavior.DROWSY,
-    "microsleep": Behavior.DROWSY,
+    "eyes_closed": Behavior.DROWSY,
 }
+
+# Categories the model reports that we deliberately don't score (root CLAUDE.md, "Odluke").
+# They still reach the app through `camera`, just without the "unmapped" warning.
+IGNORED_CATEGORIES: frozenset[str] = frozenset({"eating_drinking"})
 
 ALERT_BY_CODE = {0: "green", 1: "yellow", 2: "red"}
 
@@ -28,6 +33,8 @@ def behaviors_from_frame(frame: ModelFrame) -> set[Behavior]:
     """Labels for the categories the model currently marks as active."""
     behaviors: set[Behavior] = set()
     for name, category in frame.categories.items():
+        if name in IGNORED_CATEGORIES:
+            continue
         behavior = CATEGORY_TO_BEHAVIOR.get(name)
         if behavior is None:
             if name not in _unmapped_seen:

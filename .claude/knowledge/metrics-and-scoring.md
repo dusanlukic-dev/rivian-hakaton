@@ -9,14 +9,15 @@ with a summary in the root `CLAUDE.md`. This is the frontend cheat sheet. If the
 |---|---|---|---|
 | `looking_at_phone` | Looking at phone | 2.0 | the most demo-able signal |
 | `looking_behind` | Looking behind | 2.0 | usually reported together with `turning_around`, so they add up |
-| `turning_around` | Turning around | 1.0 | open question: a separate model output, or the same signal as `looking_behind`? |
-| `hands_off_wheel` | Hands off the wheel | 1.0 | open question: both hands, or at least one? |
-| `drowsy` | Drowsiness | 2.5 | heaviest: a microsleep means no reaction at all |
+| `turning_around` | Turning around | 1.0 | the model has no such output yet: only the simulator sends it (and `looking_behind`) |
+| `hands_off_wheel` | Hands off the wheel | 1.0 | = **no** hand on the wheel (model evidence 0 / 0.45 / 0.85 for 2 / 1 / 0 hands, threshold 0.5) |
+| `drowsy` | Drowsiness | 2.5 | heaviest: a microsleep means no reaction at all. From the model's `drowsiness` **and** `eyes_closed` |
 | `eyes_off_road` | Eyes off the road | 1.0 | added 2026-11-06; usually comes together with `looking_at_phone`, so they add up |
 
 Background: on 2026-11-06 the CV team listed phone use, turning fully around, hands-on-wheel count, drowsiness and eyes-off-road
 (unreliable). The backend split turning into two labels and, once the model's real output arrived, added `eyes_off_road` back.
-The model now sends its own frame record; the backend maps its categories (`phone_use` → `looking_at_phone`...) and forwards
+The model now sends its own frame record; the backend maps its categories (`phone_use` → `looking_at_phone`...; the full
+table is in `backend/README.md`, `eating_drinking` is deliberately not scored) and forwards
 its risk, alert and per-category probabilities as `TripState.camera` (display only; may be `null`, may hold unknown category names). The models side maps detections to labels
 (`BEHAVIORS` in `notebooks/safety_client.py`). **The UI must also render unknown labels** (generic icon + raw label) in case one gets added.
 

@@ -90,26 +90,35 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws (uživo)── backen
   feature, podrazumevano isključen (`PHONE_SPEED_ENABLED`), npr. za kola bez računarske snage.
 - (2026-11-06) Klipovi su za demo u **javnom** lokalnom bucketu. Kompanija (`/analytics`) ih nikad ne
   dobija. Produkcija (poseban server za izveštaje) se dogovara kasnije.
+- (2026-11-06) **Kategorije modela → labele**, prema `notebooks/risk_config.json`: `phone_use` →
+  `looking_at_phone`, `eyes_off_road` i `hands_off_wheel` → iste labele, `drowsiness` i
+  `eyes_closed` → `drowsy`. `eating_drinking` se ne boduje (`IGNORED_CATEGORIES`, jer je jelo
+  izbačeno). `microsleep`, `long_distraction`, `phone_sustained` i `vats` su pravila
+  (`rules_triggered`), a ne kategorije. Model nema izlaz za `looking_behind` ni `turning_around`, pa
+  njih šalje samo simulator. `backend/tests/test_camera_mapping.py` pada ako model doda nepoznatu kategoriju.
+- (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
+  2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
 ## Otvorena pitanja (ažuriraj kad se dogovori)
 
-1. **Imena kategorija modela:** `notebooks/risk_config.json` kaže `phone_use`, `eyes_off_road`,
-   `hands_off_wheel`, `eating_drinking`, `drowsiness`, `eyes_closed`. **`eyes_closed` nije u
-   `CATEGORY_TO_BEHAVIOR`**, pa se prikazuje, ali ne boduje (predlog: → `drowsy`). `microsleep` je
-   pravilo (`rules_triggered`), a ne kategorija. `turned_around` i `hands_off` ne postoje. Da li
-   postoji poseban izlaz za `looking_behind`?
-2. `hands_off_wheel`: obe ruke ili bar jedna? Ako je jedna, težinu treba spustiti na 0.3–0.5.
-3. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
+1. **`looking_behind` / `turning_around`:** da li CV tim pravi te izlaze? Do tada dolaze samo iz simulatora.
+2. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
    događaj `emergency`.
-4. **Produkcija:** odvojiti server za računanje (u kolima) od servera za izveštaje (dostupan i van
+3. **Produkcija:** odvojiti server za računanje (u kolima) od servera za izveštaje (dostupan i van
    kola)? Pristup klipovima (potpisani URL-ovi umesto javnog bucketa) i koliko dugo se čuvaju.
+4. **Model → backend uživo:** `risk_pipeline.py` još ne zove `SafetyClient.send_frame`. To je
+   jedna linija u petlji, ali je fajl CV tima.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 
 - Promena ruta, šema ili enuma u backendu → **ažuriraj `docs/API.md` u istoj izmeni**.
 - Promena labela → `Behavior` enum, težina u `scoring.py`, savet u `TIPS`, `BEHAVIORS` u
   `notebooks/safety_client.py`, `CATEGORY_TO_BEHAVIOR` u `services/camera.py` (ako se ime
-  kategorije modela razlikuje) i `docs/API.md`.
+  kategorije modela razlikuje) i `docs/API.md`. Na frontendu: kopiraj §4 iz `docs/API.md` u
+  `src/api/types.ts` obe aplikacije i dodaj labelu u `BEHAVIORS` (`frontend/mobile/src/config/behaviors.ts`
+  + `strings.ts`, `frontend/dashboard/src/pages/CarScreen/carMeta.ts`).
+- Nova kategorija u `notebooks/risk_config.json` → `CATEGORY_TO_BEHAVIOR` ili `IGNORED_CATEGORIES`
+  u `services/camera.py`.
 - Frontend ne izmišlja endpointe ni polja. Ako nešto fali, to je izmena backenda.
 - Promena tabela (`backend/app/repositories/recordings.py`): migracija još nema, pa u dev-u
   `.\scripts\services.ps1 reset` (prazna baza), pa restart backenda, koji napravi tabele.
