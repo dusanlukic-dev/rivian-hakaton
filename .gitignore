@@ -24,6 +24,17 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
+# CV pipeline (notebooks/setup_models.*, risk_pipeline.py): downloaded models, run logs and
+# cabin-camera recordings. Large, and the videos are private: never commit them.
+notebooks/models/
+notebooks/logs/
+notebooks/*.pt
+notebooks/*.onnx
+*.mp4
+*.avi
+*.mov
+*.mkv
+
 # Build outputs
 dist/
 build/

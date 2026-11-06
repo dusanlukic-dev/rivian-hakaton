@@ -8,7 +8,7 @@ Uses notebooks/safety_client.py (stdlib only). Run with the backend venv from th
   backend/.venv/Scripts/python.exe tools/sim.py --ticks 40                    # clean driving (recovery after 30 s)
   backend/.venv/Scripts/python.exe tools/sim.py --end                         # end the active trip
 
-Behaviours: looking_at_phone, looking_behind, turning_around, hands_off_wheel, drowsy.
+Behaviours: looking_at_phone, eyes_off_road, looking_behind, turning_around, hands_off_wheel, drowsy.
 Ticks use real time (the backend scores by timestamp), so --interval below 1 s makes penalties smaller.
 """
 
