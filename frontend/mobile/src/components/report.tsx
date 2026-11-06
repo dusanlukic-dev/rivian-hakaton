@@ -1,6 +1,7 @@
 import { Image } from 'expo-image';
 import { Fragment, useState } from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Defs, Line, LinearGradient, Path, Rect, Stop, Text as SvgText } from 'react-native-svg';
 
 import type { DangerLevel, DangerMoment, TripSection } from '@/api/types';
@@ -239,12 +240,13 @@ export function MomentList({ moments, onSelect }: { moments: DangerMoment[]; onS
 
 /** Everything about one moment: the picture, what was detected, what it cost. */
 export function MomentSheet({ moment, onClose }: { moment: DangerMoment | null; onClose: () => void }) {
+  const insets = useSafeAreaInsets(); // keep Close above Android's navigation bar
   return (
     <Modal visible={moment !== null} transparent animationType="slide" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel={strings.report.close} />
       {moment ? (
         <View style={styles.sheet}>
-          <ScrollView contentContainerStyle={styles.sheetContent}>
+          <ScrollView contentContainerStyle={[styles.sheetContent, { paddingBottom: insets.bottom + 20 }]}>
             {moment.image_url ? (
               <Image source={{ uri: moment.image_url }} style={styles.photo} contentFit="contain" transition={150} />
             ) : null}
@@ -312,9 +314,14 @@ export function MomentSheet({ moment, onClose }: { moment: DangerMoment | null; 
   );
 }
 
+/** Slots on the Drive screen strip: 30 × 2 s = the last minute. Newest on the right, like a scrolling timeline. */
+const RECENT_SLOTS = 30;
+
 /** Drive screen: the last minute, one bar per 2 s section (height = score, colour = danger). */
 export function RecentSections({ sections }: { sections: TripSection[] }) {
   if (sections.length === 0) return null;
+  const shown = sections.slice(-RECENT_SLOTS);
+  const empty = RECENT_SLOTS - shown.length;
   const last = sections[sections.length - 1];
   const seen = behaviorsText(last.behaviors);
   return (
@@ -330,7 +337,10 @@ export function RecentSections({ sections }: { sections: TripSection[] }) {
         ) : null}
       </View>
       <View style={styles.bars}>
-        {sections.map((s) => (
+        {Array.from({ length: empty }, (_, i) => (
+          <View key={`empty${i}`} style={[styles.bar, styles.emptyBar]} />
+        ))}
+        {shown.map((s) => (
           <View
             key={s.section_id}
             style={[
@@ -391,4 +401,5 @@ const styles = StyleSheet.create({
   recent: { gap: 8 },
   bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, height: 44 },
   bar: { flex: 1, borderRadius: 2 },
+  emptyBar: { height: 6, backgroundColor: colors.secondary },
 });

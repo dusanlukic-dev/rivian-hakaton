@@ -13,7 +13,7 @@
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. Two live paths now: their `--mode prod` → `/telemetry`, or camera → coordinator → `model/worker.py` |
 | Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
-| **Mobile app** | ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section` (typecheck/lint ✅, **not yet seen on the phone**: USB kept dropping). Phone fixes verified on the A54: stuck test flash, app-specific settings pages, permission re-check |
+| **Mobile app** | ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section`, **verified on the A54** (chart, picture box, moment sheet, live strip). Phone fixes verified too: stuck test flash, app-specific settings pages, permission re-check |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary + **drive chart**, QR "connect phone", simulator panel (`?sim`). **`/trip/:id`** = any stored trip's summary + chart (headless-Chrome screenshot ✅). Build + lint OK |
 | Brand / copy | app name only in `config/brand.json` (both apps). Mobile UI copy in `frontend/mobile/src/config/strings.ts` |
 | Tooling | ✅ SDK, adb, `android` CLI, JDK 17 toolchain, Ninja swap, Python 3.13 venv, A54 authorized, **Docker Desktop** (Postgres + RustFS via `backend/docker-compose.yml`) |
@@ -36,8 +36,6 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-0. **See the new screens on the A54** (USB dropped during session 5): start a trip with camera + fake worker running, watch the
-   "last minute" strip, end it, open the summary: chart, picture boxes, tap a moment. Also check the Settings fixes once more.
 1. **Run the real model worker** (`model/README.md`): own venv, `notebooks/models/` (setup_models), a dataset clip through
    `tools/camera_stream.py --video`. Compare with `risk_pipeline.py --mode prod` on the same clip; pick the demo path.
 2. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
@@ -171,4 +169,5 @@ Docker, Metro on 8081. A trip started from the phone gets the scripted detection
   `model/worker.py` (+ `--fake`), `tools/camera_stream.py`, `model/Dockerfile` (untested). Mobile + dashboard drive charts, dashboard
   `/trip/:id`. Postgres + RustFS moved to Docker here. Verified: 89 backend tests, live run camera → fake worker → coordinator →
   Postgres/RustFS (66 sections, 9 moments with images), dashboard chart screenshot, mobile + dashboard typecheck/lint/build.
-  Not verified: the new mobile screens on the phone (USB dropped), the real model worker (no models here).
+  The new mobile screens were checked on the A54 at the end (after the USB link came back; a cold Metro bundle takes ~70 s).
+  Not verified: the real model worker (no models here).
