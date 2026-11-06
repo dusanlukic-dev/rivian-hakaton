@@ -63,8 +63,6 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
 - This laptop also has a **system PostgreSQL 18 service** (`postgresql-x64-18`) on port 5432 with unknown credentials. Ours runs on **5433**
   (`backend/scripts/services.ps1`). Without `services.ps1 start` the backend still works, it just records nothing (log says so).
 
-- **Node on the backend laptop (Matija Vujić) is 22.11 / npm 10.9:** too old for the frontends (vite 8 build fails with "Cannot find
-  native binding", the Expo CLI wants ≥ 22.13, `npm ci` in mobile fails on the lock). Upgrade Node before running the apps there (`environment.md`).
 
 ## Open questions
 
@@ -106,4 +104,6 @@ backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # o
   `eyes_closed` → `drowsy`, `eating_drinking` is ignored, and the guessed names are gone (`services/camera.py` + `tests/test_camera_mapping.py`,
   which fails on an unknown category). `hands_off_wheel` confirmed as "no hand on the wheel". Both apps re-copied §4 types, and
   `eyes_off_road` got a tile. `.gitignore` now covers CV models, pipeline logs and cabin videos. Verified: 59 backend tests, mobile
-  typecheck + lint, dashboard `tsc -b` + lint + vite build (in a scratch copy with Node 22.11; see Known issues).
+  typecheck + lint, dashboard `tsc -b` + lint + vite build.
+- 2026-11-06, Claude (for Matija Vujić): Node on the backend laptop upgraded 22.11 → 26.13.0 LTS (winget), same as the frontend
+  laptop. Clean `npm ci` in both apps, dashboard build, mobile typecheck + lint all pass there now.
