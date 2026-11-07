@@ -2,5 +2,7 @@
 *.onnx
 *.task
 *.pt
+# Frejm iz dataseta hakatona (lica stvarnih ljudi): pravi se lokalno, python setup_models.py --warmup-from <klip>
+warmup_frame.jpg
 __pycache__/
 out*/
