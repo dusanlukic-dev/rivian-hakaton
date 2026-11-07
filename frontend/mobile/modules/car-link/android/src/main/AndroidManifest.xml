@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+
+  <!-- The car link (docs/BLUETOOTH.md). Merged into the app manifest by Gradle, so app.json needs no entry. -->
+  <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+
+  <!-- Android 12+: find the car (scan) and talk to it (connect). Scans are never used to derive location. -->
+  <uses-permission
+    android:name="android.permission.BLUETOOTH_SCAN"
+    android:usesPermissionFlags="neverForLocation"
+    tools:targetApi="s" />
+  <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+  <!-- Android 11 and older (scanning there also needs ACCESS_FINE_LOCATION, which expo-location declares). -->
+  <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+  <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+</manifest>

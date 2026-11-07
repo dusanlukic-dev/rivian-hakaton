@@ -1,3 +1,4 @@
+import type { CarLinkPhase } from '@/api/carlink';
 import type { Behavior, SafetyLevel, SoundLevel } from '@/api/types';
 import type { LinkState } from '@/state/live';
 import type { ServerStatus } from '@/state/server';
@@ -40,7 +41,7 @@ export const strings = {
     offlineTitle: 'Car computer offline',
     offlineBody: (address: string) =>
       `Can't reach the car computer at ${address}. Check that it's running and that the phone is on its network or plugged in over USB.`,
-    openSettings: 'Connection settings',
+    openSettings: 'Car connection settings',
     readyTitle: 'Ready to drive',
     readyBody: 'Start a trip when you set off. The car watches for distractions and warns you right away.',
     drivingAs: (name: string) => `Driving as ${name}`,
@@ -170,8 +171,9 @@ export const strings = {
   },
   settings: {
     title: 'Settings',
-    connection: 'Car computer',
-    connectionRow: 'Car computer address',
+    connection: 'Car connection',
+    connectionBluetooth: 'Over Bluetooth: live alerts, start and end of trips',
+    connectionWifi: 'Over Wi-Fi or USB: live alerts, start and end of trips',
     alerts: 'Alerts',
     sound: 'Sound',
     vibration: 'Vibration',
@@ -204,9 +206,64 @@ export const strings = {
     serverRow: 'Accounts, trip history and drive reports',
   },
   /** The connection screen (Settings → Car computer, or "Change address" on the login screen). A debug tool. */
+  /** The car link (docs/BLUETOOTH.md): Bluetooth by default, Wi-Fi or USB as the backup. */
+  carLink: {
+    intro:
+      'Live alerts, start and end of trips come from the car computer. The phone finds it over Bluetooth by itself; Wi-Fi or the USB cable is the backup.',
+    mode: 'Connect over',
+    bluetooth: 'Bluetooth',
+    bluetoothHint: 'The phone finds the car by itself. No network or address needed.',
+    wifi: 'Wi-Fi or USB',
+    wifiHint: 'Uses the car computer address below: the same network, or the USB cable.',
+    car: 'Car',
+    noCar: 'No car found yet',
+    phase: {
+      unsupported: "This phone or app build can't use Bluetooth LE.",
+      'no-permission': 'Allow Nearby devices so the phone can find the car.',
+      off: 'Bluetooth is off.',
+      searching: 'Looking for the car nearby.',
+      connecting: 'Connecting to the car.',
+      connected: 'Connected over Bluetooth.',
+      'car-offline': "Connected over Bluetooth, but the car computer doesn't answer.",
+    } satisfies Record<CarLinkPhase, string>,
+    /** The Drive tab's card while the Bluetooth link isn't up. */
+    card: {
+      unsupported: {
+        title: 'Bluetooth unavailable',
+        body: "This phone or app build can't use Bluetooth LE. Switch the car connection to Wi-Fi or USB.",
+      },
+      'no-permission': {
+        title: 'Allow Bluetooth',
+        body: 'The phone finds the car over Bluetooth. Android asks once to allow Nearby devices.',
+      },
+      off: { title: 'Bluetooth is off', body: 'Turn on Bluetooth to connect to the car.' },
+      searching: {
+        title: 'Looking for the car',
+        body: 'Make sure the car computer is on, its car link is running, and the phone is close to it.',
+      },
+      connecting: { title: 'Connecting to the car', body: 'Found the car. One moment.' },
+      connected: { title: 'Connected', body: 'Connected over Bluetooth.' },
+      'car-offline': {
+        title: 'Car computer offline',
+        body: "The phone reaches the car over Bluetooth, but the car computer doesn't answer. Check that it's running.",
+      },
+    } satisfies Record<CarLinkPhase, { title: string; body: string }>,
+    allow: 'Allow Bluetooth',
+    blocked: 'Bluetooth access is blocked for this app. Allow Nearby devices in the system app settings.',
+    openAppSettings: 'Open system app settings',
+    openBluetooth: 'Open Bluetooth settings',
+    searchAgain: 'Search again',
+    forget: 'Forget this car',
+    forgetHint: 'The next search connects to the first car it finds.',
+    serverOffer: (url: string) => `The car says its server is at ${url}.`,
+    useServer: 'Use this server',
+    notConnected: 'Not connected to the car over Bluetooth.',
+    carOffline: "The car computer doesn't answer.",
+  },
   carComputer: {
-    title: 'Car computer',
-    intro: 'The phone talks to the car computer over the car network or a USB cable. You only change this when setting up.',
+    title: 'Car connection',
+    wifiSection: 'Wi-Fi or USB address',
+    intro: 'Used when the car connection is Wi-Fi or USB. You only change this when setting up.',
     current: 'Current address',
     address: 'Address',
     addressPlaceholder: 'IP address and port',

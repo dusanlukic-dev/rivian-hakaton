@@ -3,7 +3,8 @@ import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
-import { ensureNotificationPermission } from '@/alerts/notifications';
+import { ensureNotificationPermission, openAppSettings, openBluetoothSettings } from '@/alerts/notifications';
+import { requestCarLinkPermission } from '@/api/carlink';
 import { ApiError, api } from '@/api/client';
 import type { TripState, TripSummary } from '@/api/types';
 import { BehaviorGrid, Indicators, Lamp, LevelBar, ScoreBadge, StatusPill } from '@/components/dashboard';
@@ -12,7 +13,7 @@ import { Banner, Button, Card, Screen, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { errorText, formatDuration } from '@/lib/format';
-import { dropTrip, setActiveTrip, setEndedTrip, useLive } from '@/state/live';
+import { dropTrip, retryCarLink, setActiveTrip, setEndedTrip, useLive } from '@/state/live';
 import { useAuth } from '@/state/auth';
 import { useSettings } from '@/state/settings';
 import { colors, lampColors, withAlpha } from '@/theme/colors';
@@ -26,6 +27,7 @@ export default function DriveScreen() {
   const lastMessageAt = useLive((s) => s.lastMessageAt);
   const summary = useLive((s) => s.summary);
   const address = useSettings((s) => s.address);
+  const carLink = useSettings((s) => s.carLink);
   const keepAwake = useSettings((s) => s.keepAwake);
   const driverName = useAuth((a) => a.user?.display_name ?? '');
   const now = useNow(1000);
@@ -49,7 +51,7 @@ export default function DriveScreen() {
     try {
       await ensureNotificationPermission();
       // Logged in: the trip belongs to the account, and the account's emergency contact is used.
-      const state = await api.startTrip(address);
+      const state = await api.startTrip();
       setActiveTrip(state);
     } catch (e) {
       setError(errorText(e));
@@ -62,7 +64,7 @@ export default function DriveScreen() {
     setBusy(true);
     setError(null);
     try {
-      const ended = await api.endTrip(address, tripId);
+      const ended = await api.endTrip(tripId);
       setEndedTrip(ended);
       router.push(`/trip/${tripId}`);
     } catch (e) {
@@ -108,6 +110,8 @@ export default function DriveScreen() {
         />
       ) : link === 'checking' ? (
         <Connecting />
+      ) : carLink === 'bluetooth' ? (
+        <CarLinkCard />
       ) : (
         <Offline address={address} />
       )}
@@ -213,6 +217,45 @@ function Connecting() {
   );
 }
 
+/** The Bluetooth link isn't up: say why, and offer the one action that fixes it. */
+function CarLinkCard() {
+  const phase = useLive((s) => s.carLink?.phase ?? 'searching');
+  const [blocked, setBlocked] = useState(false);
+  const copy = strings.carLink.card[phase];
+
+  async function allow() {
+    const result = await requestCarLinkPermission();
+    if (result === 'blocked') setBlocked(true);
+    retryCarLink();
+  }
+
+  return (
+    <Card>
+      <View style={styles.row}>
+        {phase === 'searching' || phase === 'connecting' ? <ActivityIndicator color={colors.muted} /> : null}
+        <Txt size="lg" weight="800" style={styles.flex}>
+          {copy.title}
+        </Txt>
+      </View>
+      <Txt tone="muted">{blocked ? strings.carLink.blocked : copy.body}</Txt>
+      {phase === 'no-permission' ? (
+        blocked ? (
+          <Button label={strings.carLink.openAppSettings} icon="open-in-new" onPress={() => void openAppSettings()} />
+        ) : (
+          <Button label={strings.carLink.allow} icon="bluetooth" onPress={() => void allow()} />
+        )
+      ) : phase === 'off' ? (
+        <Button label={strings.carLink.openBluetooth} icon="bluetooth-settings" onPress={() => void openBluetoothSettings()} />
+      ) : (
+        <View style={styles.buttons}>
+          <Button label={strings.carLink.searchAgain} icon="bluetooth-connect" variant="secondary" style={styles.flex} onPress={retryCarLink} />
+          <Button label={strings.drive.openSettings} icon="cog-outline" variant="secondary" style={styles.flex} onPress={() => router.push('/connection')} />
+        </View>
+      )}
+    </Card>
+  );
+}
+
 function Offline({ address }: { address: string }) {
   return (
     <Card>
@@ -238,4 +281,5 @@ const styles = StyleSheet.create({
   lampWrap: { alignItems: 'center', paddingVertical: 12 },
   center: { textAlign: 'center' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  buttons: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

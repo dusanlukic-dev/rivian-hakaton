@@ -2,23 +2,130 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import { normalizeAddress } from '@/api/address';
+import { openAppSettings, openBluetoothSettings } from '@/alerts/notifications';
+import { normalizeAddress, normalizeServerAddress } from '@/api/address';
+import { requestCarLinkPermission } from '@/api/carlink';
 import { api } from '@/api/client';
 import { StatusPill } from '@/components/dashboard';
 import { Button, Card, Chevron, Divider, Icon, ListRow, Screen, SectionLabel, STACK_EDGES, TextField, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { errorText } from '@/lib/format';
-import { DEFAULT_ADDRESS, settingsStore, useSettings } from '@/state/settings';
+import { forgetCar, retryCarLink, useLive } from '@/state/live';
+import { DEFAULT_ADDRESS, settingsStore, useSettings, type CarLinkMode } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
 type Result = { ok: boolean; text: string };
 
 /**
- * The car computer's address (backend "host:port"). A setup/debug tool: opened from Settings, or from the login
- * screen's "Change address" when the server can't be reached. Saving reconnects the live socket right away
- * (state/live.ts follows the settings store).
+ * How the phone reaches the car computer: Bluetooth (docs/BLUETOOTH.md, the default) or Wi-Fi/USB with an address.
+ * A setup screen, opened from Settings or from the Drive tab when the car can't be reached. Every change reconnects
+ * the live link right away (state/live.ts follows the settings store).
  */
 export default function ConnectionScreen() {
+  const mode = useSettings((s) => s.carLink);
+
+  const choose = (carLink: CarLinkMode) => {
+    if (carLink !== settingsStore.get().carLink) settingsStore.set({ carLink });
+  };
+  const check = <Icon name="check-circle" size={22} color={colors.ok} />;
+
+  return (
+    <Screen edges={STACK_EDGES}>
+      <Txt size="sm" tone="muted">
+        {strings.carLink.intro}
+      </Txt>
+
+      <SectionLabel>{strings.carLink.mode}</SectionLabel>
+      <Card flush>
+        <ListRow
+          icon="bluetooth"
+          title={strings.carLink.bluetooth}
+          subtitle={strings.carLink.bluetoothHint}
+          right={mode === 'bluetooth' ? check : null}
+          onPress={() => choose('bluetooth')}
+        />
+        <Divider />
+        <ListRow
+          icon="wifi"
+          title={strings.carLink.wifi}
+          subtitle={strings.carLink.wifiHint}
+          right={mode === 'wifi' ? check : null}
+          onPress={() => choose('wifi')}
+        />
+      </Card>
+
+      {mode === 'bluetooth' ? <BluetoothCar /> : <WifiAddress />}
+    </Screen>
+  );
+}
+
+/** The car found over Bluetooth, what the link is doing, and the one action that helps. */
+function BluetoothCar() {
+  const info = useLive((s) => s.carLink);
+  const carName = useSettings((s) => s.carName);
+  const carDeviceId = useSettings((s) => s.carDeviceId);
+  const serverAddress = useSettings((s) => s.serverAddress);
+  const [blocked, setBlocked] = useState(false);
+
+  const phase = info?.phase ?? 'searching';
+  const name = info?.hello?.car ?? carName ?? strings.carLink.noCar;
+  const offered = info?.hello?.server_url ? normalizeServerAddress(info.hello.server_url) : null;
+  const icon = phase === 'connected' ? 'bluetooth-connect' : phase === 'off' ? 'bluetooth-off' : 'bluetooth';
+
+  async function allow() {
+    const result = await requestCarLinkPermission();
+    setBlocked(result === 'blocked');
+    retryCarLink();
+  }
+
+  return (
+    <>
+      <SectionLabel>{strings.carLink.car}</SectionLabel>
+      <Card flush>
+        <ListRow
+          icon={icon}
+          iconColor={phase === 'connected' ? colors.ok : colors.muted}
+          title={name}
+          subtitle={blocked ? strings.carLink.blocked : strings.carLink.phase[phase]}
+          right={<StatusPill />}
+        />
+        {offered && offered !== serverAddress ? (
+          <>
+            <Divider />
+            <ListRow
+              icon="server-network"
+              title={strings.carLink.useServer}
+              subtitle={strings.carLink.serverOffer(offered)}
+              right={<Chevron />}
+              onPress={() => settingsStore.set({ serverAddress: offered })}
+            />
+          </>
+        ) : null}
+        {carDeviceId ? (
+          <>
+            <Divider />
+            <ListRow icon="link-variant-off" title={strings.carLink.forget} subtitle={strings.carLink.forgetHint} onPress={forgetCar} />
+          </>
+        ) : null}
+      </Card>
+
+      {phase === 'no-permission' ? (
+        blocked ? (
+          <Button label={strings.carLink.openAppSettings} icon="open-in-new" onPress={() => void openAppSettings()} />
+        ) : (
+          <Button label={strings.carLink.allow} icon="bluetooth" onPress={() => void allow()} />
+        )
+      ) : phase === 'off' ? (
+        <Button label={strings.carLink.openBluetooth} icon="bluetooth-settings" onPress={() => void openBluetoothSettings()} />
+      ) : phase !== 'connected' ? (
+        <Button label={strings.carLink.searchAgain} icon="bluetooth-connect" variant="secondary" onPress={retryCarLink} />
+      ) : null}
+    </>
+  );
+}
+
+/** The car computer's "host:port" for the Wi-Fi/USB link. */
+function WifiAddress() {
   const saved = useSettings((s) => s.address);
   const [draft, setDraft] = useState(saved);
   const [seen, setSeen] = useState(saved);
@@ -53,7 +160,7 @@ export default function ConnectionScreen() {
     setTesting(true);
     const started = Date.now();
     try {
-      await api.health(address);
+      await api.wifiHealth(address);
       setResult({ ok: true, text: strings.carComputer.testOk(Date.now() - started) });
     } catch (e) {
       setResult({ ok: false, text: errorText(e) });
@@ -63,7 +170,8 @@ export default function ConnectionScreen() {
   }
 
   return (
-    <Screen edges={STACK_EDGES}>
+    <>
+      <SectionLabel>{strings.carComputer.wifiSection}</SectionLabel>
       <Txt size="sm" tone="muted">
         {strings.carComputer.intro}
       </Txt>
@@ -137,7 +245,7 @@ export default function ConnectionScreen() {
           onPress={() => save(DEFAULT_ADDRESS, strings.carComputer.usbDone)}
         />
       </Card>
-    </Screen>
+    </>
   );
 }
 

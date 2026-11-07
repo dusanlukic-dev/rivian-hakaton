@@ -36,6 +36,8 @@ import { colors } from '@/theme/colors';
 
 export default function SettingsScreen() {
   const address = useSettings((s) => s.address);
+  const bluetooth = useSettings((s) => s.carLink === 'bluetooth');
+  const carName = useSettings((s) => s.carName);
   const [refreshing, setRefreshing] = useState(false);
   const previewing = useLive((s) => s.preview !== null);
 
@@ -61,9 +63,9 @@ export default function SettingsScreen() {
       <SectionLabel>{strings.settings.connection}</SectionLabel>
       <Card flush>
         <ListRow
-          icon="car-connected"
-          title={address}
-          subtitle={strings.settings.connectionRow}
+          icon={bluetooth ? 'bluetooth' : 'car-connected'}
+          title={bluetooth ? (carName ?? strings.carLink.bluetooth) : address}
+          subtitle={bluetooth ? strings.settings.connectionBluetooth : strings.settings.connectionWifi}
           right={
             <View style={styles.rowEnd}>
               <StatusPill />

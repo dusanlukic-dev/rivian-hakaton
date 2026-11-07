@@ -1,8 +1,10 @@
 import { strings } from '@/config/strings';
 import { authStore, signedOut } from '@/state/auth';
 import { reportServer } from '@/state/server';
+import { settingsStore } from '@/state/settings';
 
 import { resolveMediaUrl, restBase, serverBase } from './address';
+import { currentCarLink, type CarReply } from './carlink';
 import type {
   AuthOut,
   LoginIn,
@@ -96,6 +98,32 @@ async function request<T>(target: Target, path: string, init: RequestInit = {}, 
 
 const post = (body?: unknown): RequestInit => ({ method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) });
 
+const detailOf = (body: unknown) => (body as { detail?: string | ValidationIssue[] } | null)?.detail;
+
+/**
+ * A [K] call over the chosen car link: Bluetooth (docs/BLUETOOTH.md: the car's gateway makes the same REST call on
+ * the car computer) or Wi-Fi/USB (`address`). Same errors either way: status 0 = the car can't be reached.
+ */
+async function carCall<T>(method: 'GET' | 'POST', path: string, body?: unknown, timeoutMs = 5000): Promise<T> {
+  const { carLink, address } = settingsStore.get();
+  if (carLink === 'wifi') return request<T>(car(address), path, method === 'POST' ? post(body) : {}, timeoutMs);
+  const link = currentCarLink();
+  if (!link) throw new ApiError(0, strings.carLink.notConnected);
+  const token = authStore.get().token;
+  let reply: CarReply;
+  try {
+    reply = await link.request(method, path, body, token, timeoutMs);
+  } catch (e) {
+    throw new ApiError(0, e instanceof Error && e.message ? e.message : strings.carLink.notConnected);
+  }
+  if (reply.status === 0) throw new ApiError(0, strings.carLink.carOffline);
+  if (reply.status >= 400) {
+    if (reply.status === 401 && token && authStore.get().token === token) signedOut();
+    throw new ApiError(reply.status, detailOf(reply.body) ?? `HTTP ${reply.status}`);
+  }
+  return reply.body as T;
+}
+
 /** Image URLs in a report point at the server's media route: load them through the address this phone uses. */
 function withMedia(serverAddress: string, report: TripReport): TripReport {
   return {
@@ -106,12 +134,14 @@ function withMedia(serverAddress: string, report: TripReport): TripReport {
 }
 
 /**
- * docs/API.md §5. Car calls take `address` ("host:port" of the car computer), server calls take `serverAddress`
- * (settings `serverAddress`: "host:port" or "https://host").
+ * docs/API.md §5. Car calls [K] go over the chosen car link (settings `carLink`: Bluetooth or Wi-Fi); server calls [S]
+ * take `serverAddress` (settings `serverAddress`: "host:port" or "https://host").
  */
 export const api = {
-  /** The car computer answers [K]. */
-  health: (address: string) => request<{ status: string }>(car(address), '/health', {}, 3000),
+  /** The car computer answers [K], over the chosen car link. */
+  health: () => carCall<{ status: string }>('GET', '/health', undefined, 3000),
+  /** One car computer address over Wi-Fi/USB, whatever the chosen link (Test on the car connection screen). */
+  wifiHealth: (address: string) => request<{ status: string }>(car(address), '/health', {}, 3000),
   /** The server answers [S] (same route on both programs). */
   serverHealth: (serverAddress: string) => request<{ status: string }>(server(serverAddress), '/health', {}, 3000),
 
@@ -124,11 +154,10 @@ export const api = {
     request<User>(server(serverAddress), '/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
 
   /** Logged in: the trip belongs to the account (its username is the driver_id, its contact the default). */
-  startTrip: (address: string, body: TripCreate = {}) => request<TripState>(car(address), '/trips', post(body)),
-  endTrip: (address: string, tripId: string) =>
-    request<TripSummary>(car(address), `/trips/${encodeURIComponent(tripId)}/end`, post()),
-  getTrip: (address: string, tripId: string) =>
-    request<TripState>(car(address), `/trips/${encodeURIComponent(tripId)}`),
+  startTrip: (body: TripCreate = {}) => carCall<TripState>('POST', '/trips', body),
+  /** Waits up to 3 s on the car computer for the server to get the whole trip, so allow more than usual. */
+  endTrip: (tripId: string) => carCall<TripSummary>('POST', `/trips/${encodeURIComponent(tripId)}/end`, undefined, 10_000),
+  getTrip: (tripId: string) => carCall<TripState>('GET', `/trips/${encodeURIComponent(tripId)}`),
   getSummary: (serverAddress: string, tripId: string) =>
     request<TripSummary>(server(serverAddress), `/trips/${encodeURIComponent(tripId)}/summary`),
   /** Logged in: my trips, oldest first. */

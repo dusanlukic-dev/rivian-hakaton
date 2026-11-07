@@ -1,8 +1,16 @@
 import { persist } from '@/lib/persist';
 import { createStore, useStore } from '@/lib/store';
 
+/** How the phone reaches the car computer: Bluetooth (docs/BLUETOOTH.md, the default) or Wi-Fi/USB (`address`). */
+export type CarLinkMode = 'bluetooth' | 'wifi';
+
 export interface Settings {
-  /** "host:port" of the car computer (backend). */
+  carLink: CarLinkMode;
+  /** The car this phone connected to over Bluetooth last (its Bluetooth address), tried first on the next start. */
+  carDeviceId: string | null;
+  /** That car's name from its hello, for the Settings row. */
+  carName: string | null;
+  /** "host:port" of the car computer for the Wi-Fi link (and USB with adb reverse). */
   address: string;
   /**
    * The server (accounts, history, drive reports), as `normalizeServerAddress` saves it: "host:port" for plain http,
@@ -28,6 +36,9 @@ export const DEFAULT_ADDRESS = 'localhost:8000';
 export const DEFAULT_SERVER_ADDRESS = 'localhost:8001';
 
 export const settingsStore = createStore<SettingsState>({
+  carLink: 'bluetooth',
+  carDeviceId: null,
+  carName: null,
   address: DEFAULT_ADDRESS,
   serverAddress: DEFAULT_SERVER_ADDRESS,
   sound: true,
@@ -39,7 +50,18 @@ export const settingsStore = createStore<SettingsState>({
 });
 
 export async function loadSettings() {
-  await persist(settingsStore, 'settings.v1', ['address', 'serverAddress', 'sound', 'vibration', 'flash', 'voice', 'keepAwake']);
+  await persist(settingsStore, 'settings.v1', [
+    'carLink',
+    'carDeviceId',
+    'carName',
+    'address',
+    'serverAddress',
+    'sound',
+    'vibration',
+    'flash',
+    'voice',
+    'keepAwake',
+  ]);
   settingsStore.set({ ready: true });
 }
 

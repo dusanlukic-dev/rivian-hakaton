@@ -1,5 +1,6 @@
 import { AppState } from 'react-native';
 
+import { connectCarLink, type CarLinkInfo } from '@/api/carlink';
 import { ApiError, api } from '@/api/client';
 import { connectLive, type LiveConnection, type LiveStatus } from '@/api/live';
 import type { LiveMessage, SafetyLevel, TripSection, TripState, TripSummary } from '@/api/types';
@@ -32,6 +33,8 @@ export interface LiveState {
   preview: TripState | null;
   /** The active trip's latest section summaries (WS `section`, one per 2 s), oldest first: the last ~minute. */
   sections: TripSection[];
+  /** The Bluetooth link's phase and the car's hello; null on the Wi-Fi link. */
+  carLink: CarLinkInfo | null;
 }
 
 /** 30 sections × 2 s = the last minute on the Drive screen. */
@@ -47,6 +50,7 @@ export const liveStore = createStore<LiveState>({
   summary: null,
   preview: null,
   sections: [],
+  carLink: null,
 });
 
 export function useLive<S>(select: (state: LiveState) => S): S {
@@ -98,22 +102,50 @@ function onMessage(message: LiveMessage) {
 }
 
 let connection: LiveConnection | null = null;
-let connectedAddress: string | null = null;
+/** What the running connection is for: "bluetooth", or "wifi:<address>". A change means reconnect. */
+let connectedTo: string | null = null;
 let started = false;
 
-function connect(address: string) {
+const linkKey = () => {
+  const { carLink, address } = settingsStore.get();
+  return carLink === 'wifi' ? `wifi:${address}` : 'bluetooth';
+};
+
+function onStatus(status: LiveStatus) {
+  if (status === 'open') liveStore.set({ status, link: 'online' });
+  else if (status === 'closed') liveStore.set({ status, link: 'offline' });
+  else liveStore.set({ status });
+  if (status === 'open') void checkTripStillRuns();
+}
+
+/** Opens the chosen car link: Bluetooth (docs/BLUETOOTH.md) or the WebSocket on the Wi-Fi/USB address. */
+function connect() {
   connection?.stop();
-  connectedAddress = address;
-  liveStore.set({ link: 'checking' });
-  connection = connectLive(address, {
+  connectedTo = linkKey();
+  const { carLink, address, carDeviceId } = settingsStore.get();
+  liveStore.set({ link: 'checking', carLink: null });
+  if (carLink === 'wifi') {
+    connection = connectLive(address, { onMessage, onStatus });
+    return;
+  }
+  connection = connectCarLink(carDeviceId, {
     onMessage,
-    onStatus: (status) => {
-      if (status === 'open') liveStore.set({ status, link: 'online' });
-      else if (status === 'closed') liveStore.set({ status, link: 'offline' });
-      else liveStore.set({ status });
-      if (status === 'open') void checkTripStillRuns(address);
+    onStatus,
+    onInfo: (carLink) => liveStore.set({ carLink }),
+    onCar: (carDeviceId, carName) => {
+      const saved = settingsStore.get();
+      if (saved.carDeviceId !== carDeviceId || saved.carName !== carName) settingsStore.set({ carDeviceId, carName });
     },
   });
+}
+
+/** Re-checks the car link right away (after granting Bluetooth, turning it on, or "Search again"). */
+export const retryCarLink = () => connection?.kick();
+
+/** Forgets the remembered car; the next search takes the first car it finds. */
+export function forgetCar() {
+  settingsStore.set({ carDeviceId: null, carName: null });
+  if (started && settingsStore.get().carLink === 'bluetooth') connect();
 }
 
 /** Resolves once the first connection attempt on the current address has an answer, or after `timeoutMs`. */
@@ -137,11 +169,11 @@ export function waitForLink(timeoutMs: number): Promise<void> {
  * After a (re)connect the car only sends `state` if a trip runs. If ours is gone (the backend restarted: the
  * server closed it at its last section) nothing would ever say so, and the Drive screen would show it forever.
  */
-async function checkTripStillRuns(address: string) {
+async function checkTripStillRuns() {
   const trip = liveStore.get().trip;
   if (!trip || trip.trip_id === TEST_TRIP_ID) return;
   try {
-    const state = await api.getTrip(address, trip.trip_id);
+    const state = await api.getTrip(trip.trip_id);
     if (state.status !== 'active') dropTrip(trip.trip_id);
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) dropTrip(trip.trip_id);
@@ -153,16 +185,15 @@ export function dropTrip(tripId: string) {
   liveStore.set((s) => (s.trip?.trip_id === tripId ? { trip: null, emergency: null, sections: [] } : {}));
 }
 
-/** Opens the socket to the configured address and follows address changes / app foregrounding. */
+/** Opens the chosen car link and follows link / address changes and app foregrounding. */
 export function startLive() {
   if (started) return;
   started = true;
-  connect(settingsStore.get().address);
+  connect();
   settingsStore.subscribe(() => {
-    const { address } = settingsStore.get();
-    if (address === connectedAddress) return;
+    if (linkKey() === connectedTo) return;
     liveStore.set({ trip: null, emergency: null, status: 'connecting' });
-    connect(address);
+    connect();
   });
   AppState.addEventListener('change', (state) => {
     if (state === 'active') connection?.kick();

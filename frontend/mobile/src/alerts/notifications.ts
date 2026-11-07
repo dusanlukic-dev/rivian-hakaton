@@ -223,6 +223,9 @@ export const openFullScreenSettings = () =>
  */
 export const openBatterySettings = () => openOrFallBack('android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS', APP);
 
+/** The system Bluetooth page, to turn Bluetooth on for the car link (docs/BLUETOOTH.md). */
+export const openBluetoothSettings = () => openOrFallBack('android.settings.BLUETOOTH_SETTINGS');
+
 /** This app's "Do not disturb permission" switch, else the list of all apps with DND access. */
 export const openDndSettings = () =>
   openOrFallBack('android.settings.NOTIFICATION_POLICY_ACCESS_DETAIL_SETTINGS', APP, () =>
