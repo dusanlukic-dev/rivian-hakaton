@@ -202,3 +202,43 @@ With edge-to-edge Android no longer resizes the window, and `KeyboardAvoidingVie
 changes, so one rebuild. (4) **Login:** no connection UI. The address got its own screen (`app/connection.tsx`), reached from
 Settings or from "Change address" in the login error when the server is unreachable. Alternative: a gear on the login screen
 (the user didn't want car details before login). 2026-11-07.
+
+**D38: The phone reaches the car over Bluetooth LE (default) and the server over HTTP(S) at its own address.** User's call
+(2026-11-07): "bluetooth if it works will be the main connection strategy"; the phone's hotspot stays only so the phone reaches
+the server on the laptop, and a hosted server (ngrok or similar) later only needs a different address in the app's gear. The
+WebSocket over Wi-Fi/USB stays as the fallback (Settings → Car connection), so a Bluetooth failure on demo day is one tap away
+from the old path. Supersedes part of D37: the login screen now has a small gear, for the **server** address only (the user asked
+for it). Rejected: the car hosting the Wi-Fi (Windows Mobile Hotspot, fixed 192.168.137.1; no new code, but Windows only enables
+it with a connection to share and Android routes a no-internet Wi-Fi oddly) and Bluetooth tethering (the same phone-hosted
+network, slower, Windows reconnects badly). Protocol: `docs/BLUETOOTH.md`.
+
+**D39: The car link is its own process, the coordinator doesn't change.** `backend/coordinator/car_link/gateway.py` advertises
+the car's GATT service, forwards the coordinator's live WebSocket to the phones and turns the phones' requests into REST calls on
+the coordinator (an allowlist of the [K] routes the app uses). The messages are API.md's JSON plus a request/response envelope,
+so the contract doesn't change and only `src/api/` knows the transport. Rejected: Bluetooth inside the coordinator (a fragile
+radio stack next to scoring) and a GATT characteristic per data item (more work, same result). A real car splits it the same way
+(connectivity is its own unit).
+
+**D40: The laptop's GATT server uses pywinrt 3.2.1 directly, not bless.** bless 0.3.0 pins `winrt-*==2.0.0b1` (2023, no
+Python 3.13 wheels) and hides what we needed: per-phone `max_notification_size`, subscription events, `bytes_sent`. No .NET SDK
+on this laptop for a C# helper. Windows-only by design (the car laptop); a BlueZ backend would be the Linux path.
+
+**D41: The phone's Bluetooth side is our own Expo module (`modules/car-link`, Kotlin), not a library.** react-native-ble-plx
+3.5.1 is legacy-architecture only (RN 0.88 is New Architecture only); react-native-ble-manager 13.0.0 had shipped two days
+earlier. The module is a message pipe (scan by service UUID, connect, MTU 517, high priority, subscribe, framing, a GATT write
+queue, adapter on/off broadcast); the protocol (hello, requests, reconnect loop, watchdog) is TypeScript in `src/api/carlink.ts`.
+Permissions come from the module's own manifest (BLUETOOTH_SCAN with neverForLocation, BLUETOOTH_CONNECT), requested in the app
+on the Drive tab, never before login. No new foreground-service type: the existing `specialUse` one already describes "the live
+connection to the vehicle computer" and a `connectedDevice` type would crash the service start without the Bluetooth permission.
+
+**D42: Frames ≤ 244 B both ways, a 2 s ping and a 7 s watchdog.** Measured on this laptop (MediaTek, Windows 11) with the A54:
+the link negotiates MTU 517, but 514-byte notifications (they need L2CAP segmentation) never reached the phone while Windows
+reported them sent, so every multi-frame `state` was lost and only single-frame messages arrived. Capped at one radio packet
+(251-byte LE data length → 244 B of payload) everything arrives: `state` is 4–5 frames, ~3 KB/s. Windows keeps the radio link when
+the gateway process restarts, and Android doesn't tell a GATT client when Bluetooth is switched off and on, so neither side
+noticed a dead link: the gateway pings every 2 s, the phone reconnects after 7 s of silence, and the module also follows the
+adapter's on/off broadcast. Then **indications instead of notifications**: notifications sent while the phone was
+writing a request were lost (the "end trip" reply and `trip_ended` never arrived); indications are acknowledged.
+They are slower (~30 ms connection interval), so the gateway **coalesces**: a newer `state`/`ping` replaces a queued
+one, responses/sections/events always go in order (measured: 180 messages, 0 lost, queue empty). The phone always scans
+first, because Windows advertises from rotating random addresses (connecting to the last one timed out twice). 2026-11-07.

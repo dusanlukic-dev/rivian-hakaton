@@ -2,13 +2,14 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-07, phone UX pass (boot check, keyboard, login/settings/profile redesign, DND module) (Claude, for Matija).
+> Last updated: 2026-11-07 ~04:40, session 9: Bluetooth car link + the server's own address (Claude, for Matija).
 
 ## Snapshot
 
 | area | state |
 |---|---|
 | Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Checked against the user's definition (session 6):** the car = camera + model + coordinator, the server is outside; `/telemetry` frame records are a debug feed (409 while a model worker is connected), a phone login never blocks the car (offline: stale token cache, or the token rides along as `TripMeta.owner_token`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 92 tests. Speed is mocked by the coordinator (phone GPS opt-in). **Session 7: the score is live** (D35: danger now × speed factor, falls and recovers within seconds, nothing while standing), summaries headline `average_score`. 95 tests. `run.py --mock` = backend + mocked camera + fake model |
+| **Car link (Bluetooth)** | ✅ **session 9, D38–D42:** phone ↔ car over **Bluetooth LE** (default; WebSocket over Wi-Fi/USB is the fallback in Settings → Car connection), phone ↔ server over HTTP(S) at its **own address** (gear on the login screen; `localhost:8001` over USB, laptop IP:8001 on the hotspot, later an ngrok link). Laptop: `backend/coordinator/car_link/gateway.py` (own process, pywinrt GATT server, bridges the coordinator's WS + [K] REST; coordinator unchanged). Phone: local Expo module `modules/car-link` + `src/api/carlink.ts`. Protocol: `docs/BLUETOOTH.md` (frames ≤ 244 B, indications, state coalescing, 2 s ping / 7 s watchdog). **Verified on the A54:** permission flow, connect (~10 s from cold start), start trip (201), live score + sections (180 msgs, 0 lost), end trip (200) → summary + report from the server on :8001, reconnect after a gateway restart (~10 s) and after phone Bluetooth off/on (~4 s). 38 tests in `backend/coordinator/car_link` |
 | Camera + model | ✅ `tools/camera_stream.py` (test pattern / clip / webcam → coordinator) + `model/worker.py` (own venv; CV detectors imported unchanged; `--fake` = scripted detections, verified end to end with Postgres + RustFS). Real-model mode written, **not run here** (no YOLO model or dataset on this laptop; the face/hand `.task` files are in `notebooks/models/` now): `model/README.md`. `notebooks/setup_models.bat`/`.sh` fixed (conflict resolved, yolo11s/640) |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. **One real path:** camera → coordinator → `model/worker.py`; their `--mode prod` → `/telemetry` is **debug only** (D34) |
@@ -27,10 +28,17 @@ cd backend && .venv/Scripts/python.exe run.py --mock          # coordinator + se
 curl -s http://127.0.0.1:8000/api/v1/coordinator/status       # camera fps, model, video cache, delivery to the server
 cd frontend/mobile && npm start                               # Metro; app already installed on the A54 (dev build with react-native-svg)
 adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8081 tcp:8081
+cd backend && .venv/Scripts/python.exe run.py --role server --port 8001 --no-reload   # the server as its own process (app's server address :8001)
+<venv with backend/coordinator/car_link/requirements.txt>/python backend/coordinator/car_link/gateway.py --name "Rivian demo car"   # Bluetooth
+adb reverse tcp:8001 tcp:8001                                 # server over USB (npm run adb:reverse forwards 8081, 8000, 8001)
 cd frontend/dashboard && npm run dev                          # http://localhost:5173 (?sim for the simulator panel, /trip/<id> for a report)
 backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # instead of camera + model; or tools/sim.py for exact states
 ```
-**Right now (end of session 8):** `run.py --mock` in one minimized window ("backend + mocked car :8000"), Postgres + RustFS in Docker,
+**Right now (session 9, ~04:40):** the combined `run.py --mock` on :8000 (user's window), a server-only `run.py --role server --port 8001`
+(same Postgres), the gateway (scratchpad venv with pywinrt), Metro on **8083** (the 8081 and 8082 Metros hung after the native build;
+restart 8081: the new `metro.config.js` ignores native build output). Laptop Bluetooth was off and is on now. The app uses Bluetooth.
+
+**Before (end of session 8):** `run.py --mock` in one minimized window ("backend + mocked car :8000"), Postgres + RustFS in Docker,
 the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after the native rebuild (restart it: close the window,
 `cd frontend/mobile && npm start`); session 8 ran a second Metro on **8082** (`adb reverse tcp:8082 tcp:8082`, app opened with
 `url=http%3A%2F%2Flocalhost%3A8082`). The A54 has the new dev build (keyboard-controller + system-access module), is logged in as
@@ -38,7 +46,14 @@ the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Run the real model worker** (`model/README.md`): own venv, `notebooks\setup_models.bat` (YOLO export needs ultralytics, e.g.
+1. **Finish the backend folder split** (user's request: coordinator and server in their own folders, scripts, venvs). Fork A's work is
+   a WIP commit on local branch `worktree-agent-a336269a95214247a` (worktree `.claude/worktrees/agent-a336269a95214247a`):
+   `backend/coordinator/`, `backend/server/`, `backend/shared/`, `start.ps1` done; left: tests green, dashboard with two targets + QR
+   `driveralert://connect?server=…&car=…` (the app already parses it), `notebooks/safety_client.py --server`, docs. Then a `-Ble`
+   window in `start.ps1` and `-r car_link/requirements.txt` in the coordinator's requirements. Keep `app/services/model_report.py`
+   importable for `notebooks/risk_pipeline.py` (lines 826-835, stdlib only).
+2. **Release APK** with the car link for the demo phone (`npm run android:release`); Bluetooth on + Nearby devices allowed.
+3. **Run the real model worker** (`model/README.md`): own venv, `notebooks\setup_models.bat` (YOLO export needs ultralytics, e.g.
    the CV env), a dataset clip through `tools/camera_stream.py --video`. It is the demo path (D34); `risk_pipeline.py --mode prod`
    on the same clip (worker stopped) is only a debug comparison.
 2. **Show the new live fields** (types are already re-copied in both apps, `eyes_off_road` has a tile): `speed_kmh` as a speedometer
@@ -66,6 +81,12 @@ the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after
 - (nothing)
 
 ## Known issues / risks
+
+- **Bluetooth:** frames stay ≤ 244 B (514-B notifications never arrived on this laptop), rx uses indications (notifications got lost
+  while the phone wrote), no encryption yet (anyone in range can read the stream or call [K] routes), Windows rotates its advertising
+  address (the app always scans first). Details: `docs/BLUETOOTH.md`.
+- Until the folder split lands, the server address :8001 needs the extra `run.py --role server --port 8001`; the dashboard's QR still
+  shows the old single address.
 
 - **A54 USB link is flaky** (session 5): `adb reverse` emptied by itself, then the device went `offline`/missing while Windows still
   showed "ADB Interface". Replug / re-allow USB debugging, then re-apply `adb reverse`. All permissions are granted on the phone now.
@@ -201,3 +222,9 @@ the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after
   Verified: mobile typecheck + lint, every changed screen on the A54 (screenshots), cold start online/offline, logout/login with
   the keyboard, unreachable-server path, test warning. Docs: rules/mobile.md (UI kit rules), architecture, android-alerting (DND
   dialog + channel bypass), decisions D37, mobile-dev + android-device skills.
+- 2026-11-07, session 9 (Claude, for Matija): car vs cloud discussion (user: Bluetooth as the main car link, hotspot only for the
+  server, maybe ngrok later). **Bluetooth car link** end to end: laptop gateway (pywinrt GATT server, coordinator unchanged) + phone Expo
+  module + transport, Bluetooth default with Wi-Fi fallback; hardware fixes (244-B frames, indications, coalescing, ping/watchdog,
+  adapter broadcast, always scan). Fork C: the app's server address (gear on login, Server screen, QR + deep link). Fork A: backend
+  folder split, stopped by the usage limit (WIP branch, Next 1). Docs: BLUETOOTH.md, D38–D42, environment, android-device skill,
+  metro.config.js. Verified on the A54 (Car link row); mobile typecheck + lint, 38 gateway tests.

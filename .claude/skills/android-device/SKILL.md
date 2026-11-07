@@ -77,6 +77,24 @@ adb logcat --pid=$(adb shell pidof dev.hakaton.driveralert)      # everything fr
 adb shell dumpsys notification --noredact | grep -A3 driveralert # posted notifications and channels
 ```
 
+## 5b. Bluetooth car link (docs/BLUETOOTH.md)
+
+```bash
+export MSYS_NO_PATHCONV=1                                         # Git Bash: keep /sdcard/... paths as they are
+adb shell cmd bluetooth_manager enable                            # or disable: switch the phone's Bluetooth
+adb shell settings get global bluetooth_on                        # 1 = on
+adb shell pm grant dev.hakaton.driveralert android.permission.BLUETOOTH_SCAN      # skip the "Nearby devices" prompt
+adb shell pm grant dev.hakaton.driveralert android.permission.BLUETOOTH_CONNECT
+adb logcat -v time -s BluetoothGatt                               # connect, MTU, priority, discovery, CCCD (no notifications)
+```
+- The gateway's log is the other half (`backend/coordinator/car_link/gateway.py -v`): "phone … connected (frames up to N B)",
+  "hello from mobile", every request with its status, and a delivery line every 10 s.
+- The app's own view: Settings → Car connection (phase, car name, "Search again", "Forget this car").
+- Test reconnects like this: kill and restart the gateway (the phone reconnects within ~10 s: 7 s watchdog + reconnect), and
+  `cmd bluetooth_manager disable`, then `enable` (the module sees the adapter broadcast and retries at once).
+- Tapping a system dialog: `uiautomator dump /sdcard/ui.xml`, `cat` it and tap the center of the button's `bounds`
+  (e.g. `com.android.permissioncontroller:id/permission_allow_button`).
+
 ## 6. Sleep / wake / lock testing (the "wake from sleep" feature)
 
 ```bash

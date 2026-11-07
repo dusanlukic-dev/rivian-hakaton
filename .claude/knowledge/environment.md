@@ -64,3 +64,20 @@ Android 16 means full-screen intents need the special-access toggle for non-alar
   "ADB Interface"). `adb kill-server` didn't bring it back: replug the cable / re-allow USB debugging. Re-apply `adb reverse` after.
 - Do NOT swipe in the recents screen blindly: One UI centres the *previous* app there. Remove one task with
   `adb shell am stack remove <taskId>` (task id from `dumpsys activity recents`), which is what "swipe away" does.
+
+## Bluetooth (the car link, 2026-11-07; protocol in docs/BLUETOOTH.md)
+
+- **Laptop adapter:** MediaTek Bluetooth Adapter. WinRT reports LE, **peripheral role**, central role, LE Secure Connections and
+  extended advertising as supported (max advertisement data 312 B). Check again with the PowerShell snippet in the
+  `backend-local` skill (BluetoothAdapter.GetDefaultAsync).
+- **The laptop's Bluetooth radio was OFF.** `GattServiceProvider.CreateAsync` then fails with `RadioNotAvailable`. The gateway
+  turns it on by itself (Windows.Devices.Radios, allowed without a prompt for a desktop app); the taskbar toggle works too.
+- The laptop advertises from `XX:..:A3:5D`; the A54 connects from a random private address that changes per connection
+  (the gateway log shows a different "phone ..." address each time). Neither side may rely on a fixed address: the app finds
+  the car by the service UUID and only *prefers* the last address.
+- Windows never lets a GATT server set the advertised name (it's the computer name); the car's name in the app comes from `hello`.
+- Python: pywinrt 3.2.1 (`winrt-*` packages) works on Python 3.13. Overloads have their own names
+  (`start_advertising_with_parameters`), WinRT callbacks run on its thread pool (hand off with `loop.call_soon_threadsafe`).
+- **A54 (Android 16):** `adb shell cmd bluetooth_manager enable|disable` switches Bluetooth; Android does **not** call a GATT
+  client back when Bluetooth goes off (the module listens to `ACTION_STATE_CHANGED` instead). `adb logcat -s BluetoothGatt`
+  shows connect, MTU, priority, discovery and CCCD steps per app pid; notifications are not logged.
