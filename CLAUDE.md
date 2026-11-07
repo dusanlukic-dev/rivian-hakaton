@@ -18,7 +18,8 @@ slike** (privatnost).
 | `backend/docker-compose.yml` | Postgres + RustFS (S3) za server. Bez Docker-a: `backend/scripts/services.ps1` (portabl) |
 | `rivian_model/` | **model** (Dušan): svoj proces i okruženje (`.venv`, kasnije Docker), prima frejmove od koordinatora i vraća dokaz po kategoriji (`phone_use`, `eyes_off_road`, `eyes_closed`, `collapse`). YOLO11n + YOLO11n-pose + MediaPipe lice. Uputstvo: `rivian_model/README.md` |
 | `tools/camera_stream.py` | kamera za demo: snimak, test slika ili web kamera → koordinator |
-| `demo.ps1` | ceo auto na laptopu (skladište, server, koordinator, Bluetooth, model, kamera), svaki deo u svom prozoru |
+| `start.ps1` + `docker-compose.yml` | **ceo sistem u Docker-u jednom komandom** (instalira Docker, gradi, pokreće; Bluetooth i adb na laptopu). Tri compose-a: `docker/car.yml` (koordinator, model, kamera), `docker/server.yml` (server, Postgres, RustFS), `docker/dashboard.yml`. Uputstvo: `DOCKER.md` |
+| `demo.ps1` | ceo auto na laptopu bez Docker-a (skladište, server, koordinator, Bluetooth, model, kamera), svaki deo u svom prozoru |
 | `notebooks/risk_config.json` | pragovi koordinatorovog `RiskEngine`-a (kategorije, pravila, alarm) |
 | `notebooks/safety_client.py` | simulator cele vožnje (labele na `/telemetry`, bez kamere i modela) |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |

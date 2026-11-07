@@ -19,7 +19,10 @@ import time
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Na laptopu backend venv (ima imageio-ffmpeg i websockets), u Docker kontejneru kamere sam Python tog kontejnera
 PY = os.path.join(REPO, "backend", ".venv", "Scripts", "python.exe")
+if not os.path.exists(PY):
+    PY = sys.executable
 CAMERA = os.path.join(REPO, "tools", "camera_stream.py")
 KLIPOVI = ["05_23_62_031246", "05_23_62_021254", "05_23_62_005853"]   # kolaps, telefon, telefon u krilu
 
@@ -33,16 +36,16 @@ def dataset_dir():
     return os.environ.get("DATASET_DIR") or os.path.join(os.path.dirname(REPO), "dataset")
 
 
-def status(port):
+def status(port, host="127.0.0.1"):
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/coordinator/status", timeout=3) as r:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/v1/coordinator/status", timeout=3) as r:
             return json.loads(r.read())
     except Exception:
         return None
 
 
-def other_cameras(port):
-    s = status(port)
+def other_cameras(port, host="127.0.0.1"):
+    s = status(port, host)
     return (s or {}).get("camera", {}).get("stream_clients", 0)
 
 
@@ -56,6 +59,8 @@ def main():
     ap = argparse.ArgumentParser(description="Svaka nova voznja dobija sledeci klip.")
     ap.add_argument("--klipovi", nargs="+", default=KLIPOVI)
     ap.add_argument("--port", type=int, default=8000)
+    ap.add_argument("--host", default=os.environ.get("COORDINATOR_HOST", "127.0.0.1"),
+                    help="adresa koordinatora (Docker: coordinator)")
     ap.add_argument("--dataset", default=dataset_dir())
     a = ap.parse_args()
 
@@ -65,9 +70,9 @@ def main():
     for k in a.klipovi:
         if not os.path.exists(os.path.join(a.dataset, f"{k}_video_inCabin.mp4")):
             sys.exit(f"Nema klipa {k} u {a.dataset}")
-    if status(a.port) is None:
-        sys.exit(f"Koordinator ne odgovara na portu {a.port}. Prvo pokreni backend (demo.ps1).")
-    n = other_cameras(a.port)
+    if status(a.port, a.host) is None:
+        sys.exit(f"Koordinator ne odgovara na {a.host}:{a.port}. Prvo pokreni backend (demo.ps1).")
+    n = other_cameras(a.port, a.host)
     if n:
         sys.exit(f"Vec je povezano kamera: {n} (verovatno demo.ps1 sa -Video ili -Webcam). Dve kamere se mesaju u "
                  f"koordinatoru. Ugasi tu kameru ili pokreni demo sa -PoVoznji umesto -Video.")
@@ -86,13 +91,13 @@ def loop(a):
     cam, aktivna, i = None, None, 0
     while True:
         _cam[0] = cam
-        s = status(a.port) or {}
+        s = status(a.port, a.host) or {}
         t = s.get("trip_id")
         if t and t != aktivna:
             stop(cam)
             cam = None
             time.sleep(0.5)  # da se nasa stara kamera odjavi pre provere
-            n = other_cameras(a.port)
+            n = other_cameras(a.port, a.host)
             if n:
                 print(f"[{time.strftime('%H:%M:%S')}] voznja {t[:8]}: VEC RADI DRUGA KAMERA ({n}), ne pokrecem klip "
                       f"da se frejmovi ne mesaju. Ugasi je pa pokreni novu voznju.", flush=True)
@@ -103,7 +108,7 @@ def loop(a):
             else:
                 klip = a.klipovi[i]
                 cam = subprocess.Popen(
-                    [PY, CAMERA, "--url", f"ws://127.0.0.1:{a.port}/api/v1/camera/ws",
+                    [PY, CAMERA, "--url", f"ws://{a.host}:{a.port}/api/v1/camera/ws",
                      "--video", os.path.join(a.dataset, f"{klip}_video_inCabin.mp4")],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 print(f"[{time.strftime('%H:%M:%S')}] voznja {t[:8]} -> klip {i + 1}/{len(a.klipovi)}: {klip}",

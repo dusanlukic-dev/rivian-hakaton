@@ -1,4 +1,4 @@
-# Spisak dozvoljenih fajlova: u Docker image ulazi SAMO ovo (ne venv, izlazi testova, snimci, .pt modeli).
+# Spisak dozvoljenih fajlova: u Docker image ulazi SAMO ovo (ne venv, izlazi testova, snimci, modeli: težine pravi setup_models.py u image-u).
 *
 !pipeline.py
 !features.py
@@ -6,6 +6,4 @@
 !sender.py
 !rivian_detector.py
 !rois.json
-!face_landmarker.task
-!yolo11n_640.onnx
-!yolo11n-pose_384.onnx
+!setup_models.py

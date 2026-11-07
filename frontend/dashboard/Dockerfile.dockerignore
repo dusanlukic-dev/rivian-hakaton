@@ -1,0 +1,7 @@
+# Build context = repo root. Only the dashboard sources and the brand file go into the build.
+*
+!config/brand.json
+!frontend/dashboard/**
+frontend/dashboard/node_modules
+frontend/dashboard/dist
+frontend/dashboard/.env*
