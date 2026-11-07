@@ -1,0 +1,12 @@
+# Spisak dozvoljenih fajlova: u Docker image ulazi SAMO ovo (ne venv, izlazi testova, snimci, .pt modeli).
+*
+!pipeline.py
+!features.py
+!scoring.py
+!sender.py
+!rivian_detector.py
+!rois.json
+!face_landmarker.task
+!yolo11n_640.onnx
+!yolo11n-pose_384.onnx
+!warmup_frame.jpg
