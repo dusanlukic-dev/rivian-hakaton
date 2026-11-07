@@ -22,6 +22,7 @@ export const strings = {
     turning_around: 'Turning around',
     hands_off_wheel: 'Hands off wheel',
     drowsy: 'Drowsiness',
+    collapse: 'Driver not responding',
   } satisfies Record<Behavior, string>,
   sound: { none: 'Silent', low: 'Soft tone', high: 'Loud alarm' } satisfies Record<SoundLevel, string>,
   connection: { idle: 'Not connected', connecting: 'Connecting…', open: 'Connected', closed: 'Reconnecting…' },
@@ -59,6 +60,11 @@ export const strings = {
     smsBody: (driver: string) =>
       `${brand.name}: ${driver || 'The driver'} just triggered a critical driving alert. Please check on them.`,
     voice: 'Emergency. Focus on the road now.',
+    // The driver collapsed (behavior `collapse`): the person who sees the screen is likely not the driver.
+    collapseSubtitle: 'The driver is not responding',
+    collapseSmsBody: (driver: string) =>
+      `${brand.name}: ${driver || 'The driver'} slumped over at the wheel and is not responding. Please call them or emergency services now.`,
+    collapseVoice: 'Emergency. The driver is not responding.',
   },
   notifications: {
     driveBody: 'Watching for distractions. Keep your eyes on the road.',

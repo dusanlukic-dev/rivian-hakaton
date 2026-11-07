@@ -1,5 +1,6 @@
 import {
   Alert02Icon,
+  AmbulanceIcon,
   Rotate360Icon,
   SleepingIcon,
   SmartPhone01Icon,
@@ -24,7 +25,12 @@ export const BEHAVIORS: (BehaviorMeta & { id: Behavior })[] = [
   { id: 'turning_around', label: 'Turning around', icon: Rotate360Icon },
   { id: 'hands_off_wheel', label: 'Hands off the wheel', icon: SteeringIcon },
   { id: 'drowsy', label: 'Drowsiness', icon: SleepingIcon },
+  { id: 'collapse', label: 'Driver not responding', icon: AmbulanceIcon },
 ]
+
+/** The driver collapsed (rivian_model): the emergency is medical, not a driving mistake */
+export const isCollapse = (trip: { active_behaviors: Partial<Record<Behavior, number>> }): boolean =>
+  'collapse' in trip.active_behaviors
 
 /** Unknown labels (a newer backend) still render: generic icon + the raw label */
 export const behaviorMeta = (id: string): BehaviorMeta =>

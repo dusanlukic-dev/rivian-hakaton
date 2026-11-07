@@ -2,7 +2,7 @@ import { HugeiconsIcon } from '@hugeicons/react'
 import { SirenIcon } from '@hugeicons/core-free-icons'
 import type { TripState } from '@/api/types'
 import { Button } from '@/components/ui/button'
-import { formatScore } from './carMeta'
+import { formatScore, isCollapse } from './carMeta'
 
 interface EmergencyOverlayProps {
   /** The `emergency` event's data */
@@ -20,6 +20,7 @@ const EmergencyOverlay = ({ trip, soundOn, onDismiss }: EmergencyOverlayProps) =
       <h2 id="emergency-title" className="text-4xl font-black tracking-wider text-lamp-red uppercase">
         Emergency
       </h2>
+      {isCollapse(trip) && <p className="text-2xl font-bold">The driver is not responding</p>}
       <p className="text-xl">{trip.response.message}</p>
       <p className="text-sm text-muted-foreground">
         Score {formatScore(trip.score)} · Driver {trip.driver_id}

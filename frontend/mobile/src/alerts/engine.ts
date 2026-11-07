@@ -3,6 +3,7 @@ import * as Speech from 'expo-speech';
 import { AppState, Vibration } from 'react-native';
 
 import type { SafetyLevel, TripState } from '@/api/types';
+import { isCollapse } from '@/config/behaviors';
 import { strings } from '@/config/strings';
 import { ackEmergency, liveStore } from '@/state/live';
 import { settingsStore } from '@/state/settings';
@@ -51,7 +52,7 @@ function startEmergency(state: TripState) {
   if (prefs.sound) sounds.loop('siren');
   if (prefs.vibration) Vibration.vibrate([0, 700, 300], true);
   Brightness.setBrightnessAsync(1).catch(() => {});
-  if (prefs.voice) Speech.speak(strings.emergency.voice, { rate: 1 });
+  if (prefs.voice) Speech.speak(isCollapse(state) ? strings.emergency.collapseVoice : strings.emergency.voice, { rate: 1 });
   if (AppState.currentState !== 'active') void notify.showEmergency(state);
 }
 
