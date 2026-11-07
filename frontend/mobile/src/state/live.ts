@@ -6,6 +6,7 @@ import { connectLive, type LiveConnection, type LiveStatus } from '@/api/live';
 import type { LiveMessage, SafetyLevel, TripSection, TripState, TripSummary } from '@/api/types';
 import { createStore, useStore } from '@/lib/store';
 
+import type { SmsResult } from '../../modules/system-access';
 import { settingsStore } from './settings';
 
 /**
@@ -37,7 +38,11 @@ export interface LiveState {
   carLink: CarLinkInfo | null;
   /** Cars the Bluetooth scans hear, strongest first (Car connection → Cars nearby). */
   nearbyCars: NearbyCar[];
+  /** The automatic text to the emergency contact (alerts/sms.ts), for the emergency screen. */
+  contactText: { tripId: string; status: ContactTextStatus } | null;
 }
+
+export type ContactTextStatus = 'sending' | SmsResult;
 
 /** 30 sections × 2 s = the last minute on the Drive screen. */
 const RECENT_SECTIONS = 30;
@@ -54,6 +59,7 @@ export const liveStore = createStore<LiveState>({
   sections: [],
   carLink: null,
   nearbyCars: [],
+  contactText: null,
 });
 
 export function useLive<S>(select: (state: LiveState) => S): S {
@@ -235,7 +241,13 @@ export const setActiveTrip = (trip: TripState) => liveStore.set({ trip, summary:
 /** After POST /trips/{id}/end. */
 export const setEndedTrip = (summary: TripSummary) => liveStore.set({ trip: null, emergency: null, summary });
 
+export const setContactText = (tripId: string, status: ContactTextStatus) =>
+  liveStore.set({ contactText: { tripId, status } });
+
 const TEST_TRIP_ID = 'test-alert';
+
+/** Settings → Try the alerts: a local fake, never a real trip. */
+export const isTestTrip = (tripId: string) => tripId === TEST_TRIP_ID;
 
 function fakeState(level: SafetyLevel): TripState {
   const emergency = level === 'emergency';

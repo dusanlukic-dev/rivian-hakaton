@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ensureNotificationPermission, openAppSettings, openBluetoothSettings } from '@/alerts/notifications';
+import { ensureSmsPermission } from '@/alerts/sms';
 import { requestCarLinkPermission } from '@/api/carlink';
 import { ApiError, api } from '@/api/client';
 import type { TripState, TripSummary } from '@/api/types';
@@ -51,6 +52,7 @@ export default function DriveScreen() {
     setError(null);
     try {
       await ensureNotificationPermission();
+      await ensureSmsPermission(); // an emergency texts the contact without asking anything
       // Logged in: the trip belongs to the account, and the account's emergency contact is used.
       const state = await api.startTrip();
       setActiveTrip(state);

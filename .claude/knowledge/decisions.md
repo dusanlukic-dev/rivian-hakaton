@@ -349,3 +349,14 @@ Sounds (tools/gen-sounds.mjs), measured: red zone = soft sine bell A5–C#6–E6
 square-wave siren: RMS 0.66, centroid 6.1 kHz, 68 % of energy above 2 kHz vs 37 % now). The emergency notification
 channel moved to `alarm_v2` with the new emergency sound (`alarm_v1` is deleted on start). The car screen keeps its own
 warning sounds and gets the new emergency sound too.
+
+**D54: The phone texts the emergency contact by itself (2026-11-07).** User (Matija): the contact saved in Profile should get a
+text like "Driver NAME is driving very carelessly, please check on them" when the score drops below 10, without anyone tapping
+Send. Options: (a) the phone sends it (`SmsManager` in our own module `modules/system-access`, permission `SEND_SMS`), (b) the
+backend sends it (Twilio or similar in `coordinator/services/notifications.py`), (c) keep only the `sms:` button. Chose (a): the
+phone has the SIM, works without the internet in the car, costs nothing and needs no account; (b) needs internet in the car, a
+paid account (a trial texts only verified numbers) and the driver's name on the trip; (c) fails exactly when the driver can't
+react. Trigger unchanged: the backend's `emergency` event, once per trip, never for the Settings test. Since D47 the score
+stays >= 10 unless the driver collapsed, so in practice the collapse text (`collapseSmsBody`) is the one that goes out; the
+"driving very carelessly" text (`smsBody`) would need a backend trigger for long `critical` driving (not built). Texts are in
+English like the rest of the app (`strings.ts`). Not on Google Play (SEND_SMS is restricted there); fine for the sideloaded APK.

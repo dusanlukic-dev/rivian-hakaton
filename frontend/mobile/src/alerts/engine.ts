@@ -6,6 +6,7 @@ import { ackEmergency, liveStore } from '@/state/live';
 import { settingsStore } from '@/state/settings';
 
 import * as notify from './notifications';
+import { textEmergencyContact } from './sms';
 import { sounds } from './sounds';
 
 /**
@@ -16,7 +17,8 @@ import { sounds } from './sounds';
  * - yellow (`warning`) and orange (`high_risk`): no sound, only vibration, the red pulse and the silent heads-up;
  * - red (`critical`, and the `emergency` level once the driver has dismissed the emergency): the calm bell, only
  *   while something risky is happening now (`response.sound` is not `none`), so it stops when the phone goes away;
- * - the emergency event: the stronger bell, looped until the driver taps "I'm OK".
+ * - the emergency event: the stronger bell, looped until the driver taps "I'm OK", and a text to the emergency
+ *   contact, sent by the phone itself (alerts/sms.ts, D54).
  */
 const RANK: Record<SafetyLevel, number> = { safe: 0, caution: 1, warning: 2, high_risk: 3, critical: 4, emergency: 5 };
 
@@ -42,6 +44,7 @@ function onTick(trip: TripState) {
 }
 
 function startEmergency(state: TripState) {
+  void textEmergencyContact(state); // first: the text must not wait for sounds or the screen
   const prefs = settingsStore.get();
   sounds.stop('critical');
   if (prefs.sound) sounds.loop('siren');

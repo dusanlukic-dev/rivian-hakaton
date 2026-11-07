@@ -23,6 +23,7 @@ import { strings } from '@/config/strings';
 import { colors } from '@/theme/colors';
 
 import { isDndAccessGranted } from '../../modules/system-access';
+import { smsAllowed } from './sms';
 
 // Channels are immutable once created on a device: bump the suffix to change sound/importance.
 // alarm_v2: the emergency-only bell sound (alarm_siren.wav) replaced alarm_critical.wav; warnings moved to warning_v1.
@@ -188,6 +189,8 @@ export interface PermissionState {
   batteryUnrestricted: boolean;
   /** "Do not disturb permission" (notification policy access), read by our own native module. null = unknown. */
   dnd: boolean | null;
+  /** SEND_SMS: the phone texts the emergency contact by itself (alerts/sms.ts). */
+  sms: boolean;
 }
 
 export async function getPermissionState(): Promise<PermissionState> {
@@ -198,6 +201,7 @@ export async function getPermissionState(): Promise<PermissionState> {
     fullScreen: settings.android.fullScreenIntent === AndroidNotificationSetting.ENABLED,
     batteryUnrestricted: !batteryOptimized,
     dnd: isDndAccessGranted(),
+    sms: await smsAllowed(),
   };
 }
 

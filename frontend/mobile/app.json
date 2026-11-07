@@ -29,7 +29,8 @@
         "android.permission.USE_FULL_SCREEN_INTENT",
         "android.permission.ACCESS_NOTIFICATION_POLICY",
         "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
-        "android.permission.SYSTEM_ALERT_WINDOW"
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.SEND_SMS"
       ],
       "blockedPermissions": [
         "android.permission.RECORD_AUDIO"

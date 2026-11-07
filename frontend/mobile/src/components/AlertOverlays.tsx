@@ -15,12 +15,12 @@ import { isCollapse } from '@/config/behaviors';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { formatScore } from '@/lib/format';
-import { ackEmergency, useLive } from '@/state/live';
+import { ackEmergency, isTestTrip, useLive, type ContactTextStatus } from '@/state/live';
 import { useAuth } from '@/state/auth';
 import { useSettings } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
-import { Button, Icon, Txt } from './ui';
+import { Button, Icon, Txt, type IconName } from './ui';
 
 // 250 ms up + 250 ms down = 2 Hz. Never faster than 3 Hz (photosensitivity, D14).
 const HALF_PERIOD_MS = 250;
@@ -64,6 +64,7 @@ function EmergencyOverlay() {
   const contactName = useAuth((a) => a.user?.emergency_contact?.name ?? '');
   const contactPhone = useAuth((a) => a.user?.emergency_contact?.phone ?? '');
   const driver = useAuth((a) => a.user?.display_name ?? '');
+  const contactText = useLive((s) => s.contactText);
   const insets = useSafeAreaInsets();
   const t = useSharedValue(0);
 
@@ -82,6 +83,14 @@ function EmergencyOverlay() {
   const contact = contactName || strings.profile.contactFallback;
   const collapse = isCollapse(emergency);
   const smsBody = collapse ? strings.emergency.collapseSmsBody(driver) : strings.emergency.smsBody(driver);
+  // The automatic text (alerts/sms.ts): a test never sends one, it only says what would happen.
+  const textLine = !contactPhone
+    ? null
+    : isTestTrip(emergency.trip_id)
+      ? { icon: 'message-text-outline' as const, text: strings.emergency.textTest(contact) }
+      : contactText?.tripId === emergency.trip_id
+        ? textStatusLine(contactText.status, contact)
+        : null;
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.emergency, pulse, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
@@ -102,6 +111,14 @@ function EmergencyOverlay() {
       </View>
       <View style={styles.actions}>
         <Button size="lg" label={strings.emergency.ack} icon="check-circle" onPress={ackEmergency} style={styles.ackButton} />
+        {textLine ? (
+          <View style={styles.textLine}>
+            <Icon name={textLine.icon} size={20} color="#fff" />
+            <Txt size="sm" weight="700" style={[styles.white, styles.flex]}>
+              {textLine.text}
+            </Txt>
+          </View>
+        ) : null}
         {contactPhone ? (
           <View style={styles.row}>
             <Button
@@ -129,6 +146,19 @@ function EmergencyOverlay() {
   );
 }
 
+function textStatusLine(status: ContactTextStatus, name: string): { icon: IconName; text: string } {
+  switch (status) {
+    case 'sending':
+      return { icon: 'message-processing-outline', text: strings.emergency.texting(name) };
+    case 'sent':
+      return { icon: 'message-check-outline', text: strings.emergency.texted(name) };
+    case 'no_permission':
+      return { icon: 'message-alert-outline', text: strings.emergency.textOff(name) };
+    default:
+      return { icon: 'message-alert-outline', text: strings.emergency.textFailed(name) };
+  }
+}
+
 /** Mounted once in the root layout, above every screen. */
 export function AlertOverlays() {
   return (
@@ -150,4 +180,5 @@ const styles = StyleSheet.create({
   ackButton: { backgroundColor: '#fff', borderColor: '#fff' },
   row: { flexDirection: 'row', gap: 12 },
   flex: { flex: 1 },
+  textLine: { flexDirection: 'row', alignItems: 'center', gap: 8, justifyContent: 'center' },
 });

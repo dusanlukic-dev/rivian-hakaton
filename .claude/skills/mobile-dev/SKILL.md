@@ -72,6 +72,7 @@ It's debug-signed, which is fine for sideloading. Updating an installed app need
 | `No matching toolchains found … languageVersion=17` | JDK 17 isn't registered. Check `~/.gradle/gradle.properties` |
 | `Unsupported class file major version 69` / Kotlin can't parse Java version | run with `JAVA_HOME` = JDK 17 (above) |
 | `INSTALL_FAILED_UPDATE_INCOMPATIBLE` | signature mismatch: `adb uninstall dev.hakaton.driveralert` |
+| `:app:createBundleReleaseJsAndAssets FAILED`, `Metro error: Cannot read properties of undefined (reading 'PERMISSIONS')` in `getServerManifest.js.bundle?platform=web` (2026-11-07) | the release bundle also evaluates every route for web/node (`web.output: "server"`), where `PermissionsAndroid` (and other Android-only APIs) are undefined. Never touch them at module top level: read them inside functions behind `Platform.OS === 'android'` (`src/alerts/sms.ts`). Typecheck, lint and dev builds don't catch it |
 | App opens, red screen "Unable to load script" | Metro not running or not reachable: `npm start`, then `npm run adb:reverse` |
 | Native module "null"/"not found" at runtime | the installed dev build is older than package.json. Rebuild with `npm run android` |
 | Notification sound/importance won't change | channels are immutable. Use a new channel id or `adb shell pm clear dev.hakaton.driveralert` |

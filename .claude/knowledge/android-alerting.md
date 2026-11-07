@@ -42,7 +42,27 @@ App open on the Drive screen with `useKeepAwake()`. The background colour is `da
 
 - `vibrate_seat` → `Vibration.vibrate(300)` per message. No sound in yellow/orange (D53).
 - `sound: high` → red pulse overlay (≤ 2 Hz) + brightness up; at level `critical` also the calm `alarm_critical` bell per message.
-- `emergency` → full-screen red pulse + `alarm_siren` loop (stronger bell) + continuous vibration + "Send SMS to <contact>" (proposal) + an "OK" button. No voice (D53).
+- `emergency` → full-screen red pulse + `alarm_siren` loop (stronger bell) + continuous vibration + an "I'm OK" button, and the
+  phone **texts the emergency contact by itself** (D54, below) with Text / Call buttons as a fallback. No voice (D53).
+
+## Automatic text to the emergency contact (D54)
+
+- `src/alerts/sms.ts` → `textEmergencyContact(state)`, called first thing in `engine.ts` `startEmergency`. Once per trip id,
+  never for the Settings test emergency (`isTestTrip`). The body is `strings.emergency.smsBody` / `collapseSmsBody` with the
+  account's `display_name`; the number is the account's contact with spaces and dashes stripped.
+- Native: `modules/system-access` `sendSms(phone, body)` → `SmsManager.sendTextMessage` (or `divideMessage` +
+  `sendMultipartTextMessage`), one `PendingIntent` "sent" broadcast per part to a not-exported receiver, all on the main
+  thread. Resolves `sent` / `failed` (no signal, no SIM, airplane mode) / `timeout` (30 s) / `no_permission` / `unavailable`
+  (an older build without the function). `sent` means the network took it, not that it was delivered.
+- **Nothing is asked during the emergency** (user: a collapsed driver can't confirm anything): no dialog, no SMS app, no Send
+  tap. The text goes out the moment the event arrives, before sounds and the screen, and doesn't wait for "I'm OK".
+- Needs `android.permission.SEND_SMS` (app.json, a native change → rebuild) **and** the runtime grant, asked beforehand: when a
+  contact is saved in Profile and at Start trip (`ensureSmsPermission`, silent once "Don't ask again" was picked), shown as a
+  row in Settings → Phone setup and as a banner in Profile while off (`NEVER_ASK_AGAIN` there opens the app's settings page).
+  Works from the background (foreground service keeps JS alive); no Activity needed.
+- The emergency screen shows the state under "I'm OK": texting / got a text / couldn't text / automatic texts are off.
+- Google Play only allows SEND_SMS for default SMS apps; fine for our sideloaded APK. Dual-SIM phones use the default SMS SIM.
+  **To verify on the Xiaomi:** MIUI/HyperOS may also gate SMS behind its own "Send SMS" permission or a per-send prompt.
 - Optionally **also** post the alarm-channel notification in the foreground. Its sound then uses the alarm stream even when media volume is 0.
 
 ## Background / locked mode (stretch, the "wake from sleep" requirement)

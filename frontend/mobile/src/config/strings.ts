@@ -68,12 +68,19 @@ export const strings = {
     ack: "I'm OK",
     text: (name: string) => `Text ${name}`,
     call: (name: string) => `Call ${name}`,
+    // Sent by the phone itself to the account's emergency contact (alerts/sms.ts), or prefilled by the Text button.
     smsBody: (driver: string) =>
-      `${brand.name}: ${driver || 'The driver'} just triggered a critical driving alert. Please check on them.`,
+      `${brand.name}: ${driver ? `Driver ${driver}` : 'The driver'} is driving very carelessly. We recommend checking on them.`,
     // The driver collapsed (behavior `collapse`): the person who sees the screen is likely not the driver.
     collapseSubtitle: 'The driver is not responding',
     collapseSmsBody: (driver: string) =>
       `${brand.name}: ${driver || 'The driver'} slumped over at the wheel and is not responding. Please call them or emergency services now.`,
+    // The automatic text, shown under "I'm OK".
+    texting: (name: string) => `Texting ${name}…`,
+    texted: (name: string) => `${name} got a text.`,
+    textFailed: (name: string) => `Couldn't text ${name} by itself. Use the buttons below.`,
+    textOff: (name: string) => `Automatic texts are off. Tap Text ${name}.`,
+    textTest: (name: string) => `In a real emergency, ${name} gets a text by itself.`,
   },
   notifications: {
     driveBody: 'Watching for distractions. Keep your eyes on the road.',
@@ -161,7 +168,10 @@ export const strings = {
     name: 'Your name',
     namePlaceholder: 'First and last name',
     contact: 'Emergency contact',
-    contactHint: 'Gets a text from you if you hit an emergency. Clear the phone number to remove the contact.',
+    contactHint:
+      'Your phone texts this person by itself if you hit an emergency on a trip. Clear the phone number to remove the contact.',
+    smsOff: 'Allow texts so your phone can message your contact by itself in an emergency.',
+    allowSms: 'Allow texts',
     contactName: 'Contact name',
     contactNamePlaceholder: 'Full name',
     contactPhone: 'Contact phone',
@@ -229,6 +239,8 @@ export const strings = {
     batteryHint: "Android won't pause the drive in the background.",
     dnd: 'Override Do Not Disturb',
     dndHint: 'Alarms ring even when Do Not Disturb is on.',
+    sms: 'Text your emergency contact',
+    smsHint: 'Your phone texts your contact by itself in an emergency.',
     allow: 'Allow',
     granted: 'On',
     systemSettings: 'Open system app settings',

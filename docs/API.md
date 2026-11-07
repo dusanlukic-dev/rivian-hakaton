@@ -733,9 +733,11 @@ Nazivi ponašanja za prikaz:
 | `eyes_off_road` | Pogled van puta | Eyes off the road |
 | `collapse` | Vozač ne reaguje | Driver not responding |
 
-**Uzbuna (`emergency`):** prikaži preko celog ekrana (crveno, glasan zvuk). Backend trenutno **ne
-šalje pravi SMS**, samo loguje. Predlog, još nije dogovoreno: aplikacija ponudi slanje SMS-a kontaktu
-(`expo-sms` ili `Linking.openURL("sms:...")`), jer telefon ima SIM karticu i mrežu.
+**Uzbuna (`emergency`):** prikaži preko celog ekrana (crveno, glasan zvuk). Backend **ne šalje SMS**, samo
+loguje. **SMS kontaktu šalje telefon sam** (od 2026-11-07, D54): na događaj `emergency` aplikacija jednom po vožnji pošalje
+poruku kontaktu sa naloga (`User.emergency_contact`, Profil) preko Android `SmsManager`-a (dozvola `SEND_SMS`), bez
+otvaranja SMS aplikacije, jer telefon ima SIM karticu i mrežu i radi bez interneta. Dugmad "Text" i "Call" ostaju kao
+rezerva. Ugovor se ne menja: backend i dalje samo odlučuje kada (score < 10 = potvrđen kolaps).
 
 **Kraj vožnje (`trip_ended` ili odgovor na `POST /end`):** ekran sa statistikom. Prikaži
 `average_score` (prosek dok se kola kreću, glavni broj) sa `level`, pored njega `min_score`, a zatim

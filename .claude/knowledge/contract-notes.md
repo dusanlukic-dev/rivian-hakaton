@@ -39,7 +39,8 @@
   reconnect, the current `state` arrives immediately.
 - API.md notes the socket drops when the app goes to the background. Our Drive-mode foreground service (`android-alerting.md`)
   exists to keep it alive.
-- `emergency`: full-screen red + loud sound. Offering an SMS to the emergency contact (`Linking.openURL('sms:…')`) is proposed but not agreed.
+- `emergency`: full-screen red + loud sound, and the phone texts the account's emergency contact by itself (D54, `SmsManager`,
+  `SEND_SMS`); `sms:` / `tel:` buttons stay as a fallback. No contract change: the backend still decides when (it only logs).
 
 ## Proposals for the backend (not agreed yet, don't build against them)
 

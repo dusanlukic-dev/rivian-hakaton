@@ -2,6 +2,7 @@ import { useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
 import { Keyboard, StyleSheet, View, type TextInputInstance } from 'react-native';
 
+import { allowSms } from '@/alerts/sms';
 import { api } from '@/api/client';
 import type { User } from '@/api/types';
 import { Banner, Button, Card, Screen, ScreenHeader, SectionLabel, TextField, Txt } from '@/components/ui';
@@ -9,6 +10,7 @@ import { strings } from '@/config/strings';
 import { errorText, formatDate } from '@/lib/format';
 import { authStore, setUser, signedOut, useAuth } from '@/state/auth';
 import { liveStore } from '@/state/live';
+import { permissionsStore, refreshPermissions, usePermissions } from '@/state/permissions';
 import { settingsStore } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
@@ -23,6 +25,7 @@ export default function ProfileScreen() {
         .me(settingsStore.get().serverAddress)
         .then(setUser)
         .catch(() => {});
+      void refreshPermissions(); // may the phone text the contact by itself?
     }, []),
   );
 
@@ -59,6 +62,7 @@ function ProfileForm({ user }: { user: User }) {
   const [leaving, setLeaving] = useState(false);
   const contactNameRef = useRef<TextInputInstance>(null);
   const contactPhoneRef = useRef<TextInputInstance>(null);
+  const smsOff = usePermissions((p) => p.value?.sms === false);
 
   const stored = fromUser(user);
   const dirty =
@@ -85,11 +89,18 @@ function ProfileForm({ user }: { user: User }) {
       setUser(next);
       setForm(fromUser(next)); // show exactly what the server stored (an empty name falls back to the username)
       setJustSaved(true);
+      // A new contact: ask right away for the permission that lets the phone text them by itself.
+      if (next.emergency_contact && !permissionsStore.get().value?.sms) void enableSms();
     } catch (e) {
       setError(errorText(e));
     } finally {
       setSaving(false);
     }
+  }
+
+  async function enableSms() {
+    await allowSms().catch((e: unknown) => console.warn('[profile] sms permission', e));
+    await refreshPermissions();
   }
 
   async function logout() {
@@ -164,6 +175,13 @@ function ProfileForm({ user }: { user: User }) {
           returnKeyType="done"
           onSubmitEditing={() => void save()}
         />
+        {user.emergency_contact && smsOff ? (
+          <Banner
+            icon="message-alert-outline"
+            text={strings.profile.smsOff}
+            action={{ label: strings.profile.allowSms, onPress: () => void enableSms() }}
+          />
+        ) : null}
       </Card>
 
       <Button

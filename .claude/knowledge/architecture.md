@@ -60,7 +60,8 @@ src/state/               settings.ts · auth.ts (token + user, AsyncStorage `aut
                          · permissions.ts (re-check on foreground; re-submits the alarm channel once DND access appears)
 src/alerts/              engine.ts executes `response` per message (vibration, sounds, voice, background notifications, emergency)
                          · sounds.ts (expo-audio) · notifications.ts (channels, foreground service, app-specific settings intents,
-                         permission state incl. DND from modules/system-access)
+                         permission state incl. DND from modules/system-access) · sms.ts (texts the emergency contact
+                         by itself on `emergency`, SEND_SMS permission; D54)
 src/components/          ui.tsx (the UI kit: Screen = keyboard-aware scroll + safe-area edges, Button sm/md/lg, TextField with
                          error/optional/secure eye, ListRow, Divider, Banner with action, TextLink) · dashboard.tsx (Lamp,
                          LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge)
@@ -71,7 +72,8 @@ src/app/                 _layout (KeyboardProvider; Stack.Protected: token → a
                          account, no connection UI) · connection (car-computer address: Settings row, or "Change address"
                          when login can't reach the server) · (tabs)/_layout (tab bar without ripple/elevation)
                          · (tabs)/index (Drive) · history (my trips) · profile (account, logout) · settings · trip/[id] · scan (QR)
-modules/system-access/   local Expo module (Kotlin): isDndAccessGranted() = NotificationManager.isNotificationPolicyAccessGranted
+modules/system-access/   local Expo module (Kotlin): isDndAccessGranted() = NotificationManager.isNotificationPolicyAccessGranted,
+                         sendSms(phone, body) = SmsManager with a "sent" result per part (D54)
 ```
 
 **Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels and unknown WS message types. The

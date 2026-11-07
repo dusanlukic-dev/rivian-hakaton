@@ -2,7 +2,7 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-07, session 13: the whole system in Docker with one script, `start.ps1` (Claude, for the user).
+> Last updated: 2026-11-07, session 15: the phone texts the emergency contact by itself (Claude, for Matija).
 
 ## Snapshot
 
@@ -53,6 +53,10 @@ server `localhost:8001` over USB.
    started on the phone gets the loaded clip by itself (account, History); Send uses the trip in progress only while it has
    had no frames, else starts a `video-sim` trip. Still one camera slot: no `klip_po_voznji.py` / `-Video` next to it
    (`.\demo.ps1 -Camera 05_23`). Details: `frontend/video-sim/README.md`.
+2c. **Check the automatic emergency text on a phone** (D54, session 15): install the new APK, save a contact (your own second
+   number), allow texts, run the collapse clip (`05_23_62_031246`) → the contact gets the text, the screen says "got a text".
+   On the Xiaomi also check whether MIUI/HyperOS asks before each text (unverified); if it does, set the app's SMS
+   permission to always allow in its permission settings, so nothing waits for a tap during a collapse.
 3. **Backend folder split** (user's request, decide together with Docker): Fork A's WIP is local branch
    `worktree-agent-a336269a95214247a` (`backend/coordinator/`, `backend/server/`, `backend/shared/`, `start.ps1`); left: tests, dashboard
    with two targets + QR `driveralert://connect?server=…&car=…` (the app already parses it), `safety_client.py --server`, docs. It
@@ -143,7 +147,8 @@ server `localhost:8001` over USB.
 - **Production split:** coordinator (car) and server (reports) are separated in code (`docs/ARCHITECTURE.md`). Open: a reverse proxy
   so the phone keeps one address when they run apart, image access (signed URLs instead of the demo's public bucket), retention,
   several cars (`car_id`).
-- **Emergency contact:** the backend only logs. The app offers Text/Call buttons on the emergency screen. Should the backend send SMS itself?
+- **Emergency contact:** decided (D54): the phone texts the contact by itself on `emergency`; the backend only logs. Open: a
+  "driving very carelessly" text without a collapse needs a backend trigger (e.g. long `critical`), since the score stays >= 10.
 - **Dashboard sim panel** posting `/telemetry` during demos: OK with the backend owner?
 - **Accounts:** decided: the app requires login (D36); the backend still accepts token-less trips (simulator, dashboard). No password reset/change yet.
 
@@ -293,3 +298,12 @@ server `localhost:8001` over USB.
   Backend unchanged. Verified: 63 Vitest tests, build, lint; live on the Xiaomi over USB: Send into a scored trip → new trip at 100 →
   27.9 critical; phone End/Start trip → clip by itself in the account's trip, 100 → 18.2 critical. Found: DirectML crash/hang on
   the Intel iGPU (model restarted on CPU), Bluetooth GATT connect timeout on the Xiaomi (Known issues).
+- 2026-11-07, session 15 (Claude, for Matija): **automatic text to the emergency contact** (D54, user: "a collapsed driver
+  can't confirm, send it by itself"): on the `emergency` event the phone sends the SMS itself through `SmsManager` (new
+  `sendSms` in `modules/system-access`, `SEND_SMS` in app.json, `src/alerts/sms.ts`), once per trip, never for the test
+  emergency, nothing asked at that moment. Permission asked beforehand (Profile save, Start trip, Settings → Phone setup row,
+  Profile banner); the emergency screen shows texting / sent / failed / off. Docs: API.md (emergency note), root CLAUDE.md
+  (open question 2), android-alerting, contract-notes, architecture, D54, mobile-dev skill (release bundle gotcha).
+  Verified: typecheck + lint, release APK build (`C:\dev\rh`, SEND_SMS in the manifest; the first try caught
+  `PermissionsAndroid` read at import time breaking the release bundle), installed on the Xiaomi 15T (starts, new Profile
+  copy). **Not yet:** a real text (no contact saved, permission not granted yet on the phone).

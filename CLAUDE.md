@@ -168,8 +168,9 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
 ## Otvorena pitanja (ažuriraj kad se dogovori)
 
 1. **`looking_behind` / `turning_around` / `hands_off_wheel`:** model ih ne daje; dolaze samo iz simulatora.
-2. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
-   događaj `emergency`.
+2. ~~**Poruka kontaktu**~~ rešeno (2026-11-07, D54): na događaj `emergency` telefon sam pošalje SMS kontaktu sa naloga
+   (`SmsManager`, dozvola `SEND_SMS`), a backend i dalje samo loguje. Ostaje: poruka "vozi jako neoprezno" bez kolapsa
+   traži novi okidač na backendu (npr. dug `critical`), jer score bez kolapsa ne pada ispod 10.
 3. **Produkcija:** podela na koordinator (u kolima) i server (izveštaji) je urađena u kodu
    (docs/ARCHITECTURE.md). Otvoreno: kad server zaista radi van kola, telefon treba ili dve adrese (kola za
    uživo, server za istoriju) ili reverse proxy; outbox koordinatora na disk (sada je u memoriji, pa gašenje kola

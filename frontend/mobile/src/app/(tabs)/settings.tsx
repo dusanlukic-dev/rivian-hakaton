@@ -10,6 +10,7 @@ import {
   openDndSettings,
   openFullScreenSettings,
 } from '@/alerts/notifications';
+import { allowSms } from '@/alerts/sms';
 import { api } from '@/api/client';
 import { StatusPill } from '@/components/dashboard';
 import { ServerStatusPill } from '@/components/server';
@@ -193,6 +194,7 @@ function PhoneSetup() {
     { key: 'fullScreen', icon: 'cellphone-lock', label: strings.settings.fullScreen, hint: strings.settings.fullScreenHint, ok: state?.fullScreen ?? null, open: openFullScreenSettings },
     { key: 'battery', icon: 'battery-heart-variant', label: strings.settings.battery, hint: strings.settings.batteryHint, ok: state?.batteryUnrestricted ?? null, open: openBatterySettings },
     { key: 'dnd', icon: 'minus-circle-off-outline', label: strings.settings.dnd, hint: strings.settings.dndHint, ok: state?.dnd ?? null, open: openDndSettings },
+    { key: 'sms', icon: 'message-alert-outline', label: strings.settings.sms, hint: strings.settings.smsHint, ok: state?.sms ?? null, open: allowSms },
   ];
   const known = state !== null;
   const ready = rows.filter((r) => r.ok === true).length;
