@@ -12,12 +12,15 @@ https://docs.expo.dev/versions/v58.0.0/ and https://docs.expo.dev/llms.txt inste
 - **Dependencies:** always `npx expo install <pkg>`. Adding or removing a native module, or changing `app.json` plugins or permissions, is
   a **native change**: run `npm run prebuild` then `npm run android` (rebuild + reinstall). JS/TS-only changes just hot reload.
   Every native module we expect is already installed, so ask before adding another one: it forces a rebuild for everyone.
+  Our own native code lives in local Expo modules under `modules/` (autolinked, Kotlin): today `modules/system-access`.
 - **`android/` is generated** (CNG, gitignored). Never hand-edit it. Change `app.json` or a config plugin in `plugins/`, and run
   `npm run prebuild:clean` if the native project looks stale.
 - **Contract = `docs/API.md`.** Copy its §4 types verbatim into `src/api/types.ts`. Use only its routes and fields, and **never compute
   levels or decide on warnings**: execute `response` (+ the `emergency` event). Screens follow API.md §3: Login / register (`app/login.tsx`,
-  with the address + Test) → Start trip (`POST /trips` with the token) → Drive (WS) → End (`POST /trips/{id}/end`) → Summary, History
+  no connection UI: the address is `app/connection.tsx`, reached from Settings or from "Change address" when login can't reach the
+  server) → Start trip (`POST /trips` with the token) → Drive (WS) → End (`POST /trips/{id}/end`) → Summary, History
   (`GET /trips` = my trips), Profile (`/auth/me`, logout). The token lives in `state/auth.ts`; `api/client.ts` sends it and logs out on 401.
+  Boot: `app-init.ts` checks the saved session before the splash hides (D37). Never render screens before `auth.ready`.
 - **Routing:** expo-router. Only screens and `_layout.tsx` go in `src/app/`. Everything else lives in `src/` (`api/`, `alerts/`, `settings/`,
   `components/`, `hooks/`). The import alias `@/` maps to `src/`.
 - **React Compiler is on:** don't hand-write `useMemo`/`useCallback`. Follow the Rules of React (no mutation during render, no
@@ -37,5 +40,19 @@ https://docs.expo.dev/versions/v58.0.0/ and https://docs.expo.dev/llms.txt inste
   not React context; side effects of alerts in `src/alerts/engine.ts`; visual alerts in `components/AlertOverlays.tsx` (global).
 - Selectors passed to `useStore`/`useLive`/`useSettings` must return primitives or existing references (never build new objects in them).
 - **UI:** dark-first (in-car), big touch targets, readable at arm's length, English strings. Flashing ≤ 3 Hz (D14).
+- **UI kit (`components/ui.tsx`), the user's standing requirements (2026-11-07 review):**
+  - Every page is a `Screen` (keyboard-aware scroll from react-native-keyboard-controller + safe area). Tab screens keep the default
+    edges; stack screens pass `STACK_EDGES`, full-screen pages `FULL_EDGES`. Nothing may sit under the system navigation buttons.
+  - `Button` is `md` everywhere. `sm` only inside rows, `lg` only for the one main action of a screen (Start trip, I'm OK). Buttons
+    next to each other have the same size. The primary variant (white, black text) is the default for actions.
+  - `TextField`: placeholders say what to type ("Enter your username"), never an example value ("ana"); optional fields get
+    `optional`; passwords use `secure` (show/hide eye). Chain fields with refs: `returnKeyType="next"` + `submitBehavior="submit"`
+    + `onSubmitEditing={() => next.current?.focus()}`; the last field submits. Validate on submit with inline `error`s, don't
+    disable the submit button.
+  - Settings-style lists are `Card flush` + `ListRow` + `Divider`; every row explains what it does in its subtitle.
+  - Copy: no brackets in UI text, labels say what happens ("Open system app settings", not "All app settings").
+  - Tab bar: custom `tabBarButton` (no Android ripple circle), `elevation: 0`; the system nav bar is transparent
+    (`expo-navigation-bar` `enforceContrast: false` in app.json), so the tab bar colour runs behind the system buttons.
+  - Connection state for UI comes from `live.link` (steady), not `live.status` (flickers while retrying).
 - **Done means:** `npm run lint` and `npm run typecheck` pass in `frontend/mobile`. If native config changed, also a successful
   `npm run android` on the device and a screenshot check (skill `android-device`).

@@ -6,7 +6,7 @@ import { api } from '@/api/client';
 import type { DangerMoment, TripReport, TripSummary } from '@/api/types';
 import { ScoreBadge } from '@/components/dashboard';
 import { ChartLegend, DriveChart, MomentList, MomentSheet } from '@/components/report';
-import { Banner, Card, Icon, Screen, SectionLabel, Txt } from '@/components/ui';
+import { Banner, Card, Icon, Screen, SectionLabel, STACK_EDGES, Txt } from '@/components/ui';
 import { behaviorMeta } from '@/config/behaviors';
 import { strings } from '@/config/strings';
 import { errorText, formatDateTime, formatDuration, formatScore } from '@/lib/format';
@@ -63,7 +63,7 @@ export default function TripSummaryScreen() {
 
   if (!summary) {
     return (
-      <Screen refreshControl={refreshControl}>
+      <Screen edges={STACK_EDGES} refreshControl={refreshControl}>
         {error ? <Banner icon="alert-circle-outline" text={error} color={colors.destructive} /> : <ActivityIndicator color={colors.foreground} />}
       </Screen>
     );
@@ -71,7 +71,7 @@ export default function TripSummaryScreen() {
 
   const color = levelColors[summary.level];
   return (
-    <Screen refreshControl={refreshControl}>
+    <Screen edges={STACK_EDGES} refreshControl={refreshControl}>
       <View style={styles.hero}>
         <ScoreBadge score={summary.average_score} level={summary.level} size={132} />
         <Txt size="lg" weight="800" style={{ color }}>

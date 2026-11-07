@@ -68,7 +68,7 @@ export const api = {
   register: (address: string, body: RegisterIn) => request<AuthOut>(address, '/auth/register', post(body)),
   login: (address: string, body: LoginIn) => request<AuthOut>(address, '/auth/login', post(body)),
   logout: (address: string) => request<null>(address, '/auth/logout', post()),
-  me: (address: string) => request<User>(address, '/auth/me'),
+  me: (address: string, timeoutMs?: number) => request<User>(address, '/auth/me', {}, timeoutMs),
   updateMe: (address: string, body: UserUpdate) =>
     request<User>(address, '/auth/me', { method: 'PATCH', body: JSON.stringify(body) }),
 

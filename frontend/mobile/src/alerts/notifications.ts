@@ -21,6 +21,8 @@ import type { TripState } from '@/api/types';
 import { strings } from '@/config/strings';
 import { colors } from '@/theme/colors';
 
+import { isDndAccessGranted } from '../../modules/system-access';
+
 // Channels are immutable once created on a device: bump the suffix to change sound/importance.
 const CHANNEL_ALARM = 'alarm_v1';
 const CHANNEL_DRIVE = 'drive_v1';
@@ -169,6 +171,8 @@ export interface PermissionState {
   notifications: boolean;
   fullScreen: boolean;
   batteryUnrestricted: boolean;
+  /** "Do not disturb permission" (notification policy access), read by our own native module. null = unknown. */
+  dnd: boolean | null;
 }
 
 export async function getPermissionState(): Promise<PermissionState> {
@@ -178,6 +182,7 @@ export async function getPermissionState(): Promise<PermissionState> {
     notifications: settings.authorizationStatus === AuthorizationStatus.AUTHORIZED,
     fullScreen: settings.android.fullScreenIntent === AndroidNotificationSetting.ENABLED,
     batteryUnrestricted: !batteryOptimized,
+    dnd: isDndAccessGranted(),
   };
 }
 

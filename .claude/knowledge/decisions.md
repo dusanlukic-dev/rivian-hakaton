@@ -189,3 +189,16 @@ driving), or show the model's risk directly (no speed, no labels from the simula
 Profile, history = my trips. Trips from the app always belong to the account; the backend keeps accepting token-less trips for the
 simulator and the dashboard sim panel. Token in AsyncStorage, not expo-secure-store (would be a new native module = rebuild; fine for
 the demo). `run.py --mock` starts the mocked camera + fake model with the backend so a fresh phone needs nothing else. 2026-11-07.
+
+**D37: Phone UX pass: boot check behind the splash, keyboard-controller, our own DND module, no connection UI on login.**
+User's review (2026-11-07): stale/offline flashes on cold start, keyboard covering inputs, no Next key flow, a car-computer box on
+the login screen, an always-"Open" DND row, inconsistent buttons, a ripple circle and a shadow in the tab bar.
+(1) **Boot check:** the native splash stays up until saved settings + session are read, the session is checked (`GET /auth/me`,
+≤ 2.5 s) and the live socket has a first answer (≤ 1.5 s), capped at 4 s. Offline: the saved session stays and is re-checked when
+the car answers; a 401 logs out. Alternatives: render optimistically (the flashes the user saw) or a JS splash (a second splash
+look). (2) **Keyboard:** `react-native-keyboard-controller` (Expo's recommendation, SDK 58 version 1.22.7) gives `KeyboardAwareScrollView`.
+With edge-to-edge Android no longer resizes the window, and `KeyboardAvoidingView` doesn't scroll to the focused input.
+(3) **DND state:** a 20-line local Expo module (`modules/system-access`) instead of a permanently unknown row. Both were native
+changes, so one rebuild. (4) **Login:** no connection UI. The address got its own screen (`app/connection.tsx`), reached from
+Settings or from "Change address" in the login error when the server is unreachable. Alternative: a gear on the login screen
+(the user didn't want car details before login). 2026-11-07.

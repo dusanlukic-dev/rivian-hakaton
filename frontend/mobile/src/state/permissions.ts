@@ -1,6 +1,6 @@
 import { AppState } from 'react-native';
 
-import { getPermissionState, type PermissionState } from '@/alerts/notifications';
+import { getPermissionState, setupNotifications, type PermissionState } from '@/alerts/notifications';
 import { createStore, useStore } from '@/lib/store';
 
 interface PermissionsState {
@@ -22,7 +22,15 @@ export function refreshPermissions(): Promise<void> {
   pending ??= (async () => {
     permissionsStore.set({ checking: true });
     try {
-      permissionsStore.set({ value: await getPermissionState() });
+      const before = permissionsStore.get().value;
+      const value = await getPermissionState();
+      permissionsStore.set({ value });
+      // Android applies a channel's "bypass Do Not Disturb" only if the app has DND access when the channel is
+      // submitted. Channels are re-submitted on every start (on the A54 `alarm_v1` went from mBypassDnd=false to
+      // true on the first start after access was granted); re-submit right away too, without waiting for a restart.
+      if (value.dnd && before?.dnd === false) {
+        await setupNotifications().catch((e: unknown) => console.warn('[permissions] channels', e));
+      }
     } catch (e) {
       console.warn('[permissions] check failed', e);
     } finally {

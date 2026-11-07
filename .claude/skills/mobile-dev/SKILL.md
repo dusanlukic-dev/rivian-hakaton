@@ -15,6 +15,7 @@ Run everything from `frontend/mobile/`. Check the phone first with the `android-
 | `app.json` (plugins, permissions, name, icons), `plugins/*.js`, `assets/sounds/*` used by notification channels | `npm run prebuild` → `npm run android` |
 | added/removed a package with native code (`npx expo install …`) | `npm run prebuild` → `npm run android` |
 | things look stale or weird after native changes | `npm run prebuild:clean` → `npm run android` |
+| our own native code (`modules/<name>/`, local Expo module: `expo-module.config.json` + `android/build.gradle` + Kotlin, no package.json needed) | autolinked: `npm run prebuild` → `npm run android`. JS side: `requireOptionalNativeModule` from `expo`, so an older dev build reports "unknown" instead of crashing |
 
 ## Commands
 
@@ -74,4 +75,7 @@ It's debug-signed, which is fine for sideloading. Updating an installed app need
 | App opens, red screen "Unable to load script" | Metro not running or not reachable: `npm start`, then `npm run adb:reverse` |
 | Native module "null"/"not found" at runtime | the installed dev build is older than package.json. Rebuild with `npm run android` |
 | Notification sound/importance won't change | channels are immutable. Use a new channel id or `adb shell pm clear dev.hakaton.driveralert` |
+| `Could not GET 'https://repo.maven.apache.org/...' > repo.maven.apache.org` while `curl` reaches it (2026-11-07, first build after adding react-native-keyboard-controller: its buildscript pulls AGP 4.2.2 + deps) | transient DNS failure inside the Gradle JVM on the hotspot. `cd android && ./gradlew --stop`, then build again (it passed the 2nd time, ~5 min) |
+| `npm run prebuild` printed "Cleared android code" although not `--clean` | it can regenerate `android/` anyway; harmless (CNG), but the next Gradle build is longer (~5 min with caches) and `local.properties` is gone (set `ANDROID_HOME`) |
+| Metro stops answering (`curl localhost:8081/status` times out, node at 100 % CPU) right after a native build | the old Metro chokes on the thousands of new files under `node_modules/*/android/build`. Restart it. If you can't (it's the user's window): `npx expo start --port 8082`, `adb reverse tcp:8082 tcp:8082`, launch with `url=http%3A%2F%2Flocalhost%3A8082` |
 | `ninja: error: mkdir(CMakeFiles/<lib>.dir/C_/Users/...): No such file or directory` (seen 2026-11-06 in react-native-screens) | **Windows 260-char path limit.** CMake embeds the absolute source path in object paths. Needs registry `LongPathsEnabled=1` (already set on this PC) **and** a long-path-aware Ninja ≥ 1.12. The SDK CMakes ship 1.10.2, so it was replaced with 1.13.2 in **every** `$ANDROID_HOME/cmake/*/bin/ninja.exe` (originals kept as `ninja-<ver>-original.exe`). Libraries without a pinned CMake (react-native-screens, worklets) use **3.22.1**, which AGP auto-installs during the first build; RN core uses 3.30.5. Redo the swap whenever a new CMake version appears in the SDK, or on a teammate's PC. The loop is in `.claude/knowledge/environment.md`. Alternative: a much shorter repo path |

@@ -1,7 +1,7 @@
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { ensureNotificationPermission } from '@/alerts/notifications';
 import { ApiError, api } from '@/api/client';
@@ -21,7 +21,7 @@ const KEEP_AWAKE_TAG = 'drive';
 const STALE_AFTER_MS = 3000;
 
 export default function DriveScreen() {
-  const status = useLive((s) => s.status);
+  const link = useLive((s) => s.link);
   const trip = useLive((s) => s.trip);
   const lastMessageAt = useLive((s) => s.lastMessageAt);
   const summary = useLive((s) => s.summary);
@@ -99,13 +99,15 @@ export default function DriveScreen() {
           busy={busy}
           onEnd={() => void endTrip(trip.trip_id)}
         />
-      ) : status === 'open' ? (
+      ) : link === 'online' ? (
         <Ready
           driverName={driverName}
           summary={summary}
           busy={busy}
           onStart={() => void startTrip()}
         />
+      ) : link === 'checking' ? (
+        <Connecting />
       ) : (
         <Offline address={address} />
       )}
@@ -168,7 +170,7 @@ function Ready({
             {strings.drive.drivingAs(driverName)}
           </Txt>
         ) : null}
-        <Button big label={strings.drive.startTrip} icon="play-circle" loading={busy} onPress={onStart} />
+        <Button size="lg" label={strings.drive.startTrip} icon="play-circle" loading={busy} onPress={onStart} />
       </Card>
       {summary ? (
         <Card>
@@ -196,20 +198,33 @@ function Ready({
   );
 }
 
-function Offline({ address }: { address: string }) {
+/** First connection attempt still running (a slow network at start-up): calm, no "offline" scare. */
+function Connecting() {
   return (
     <Card>
       <View style={styles.row}>
+        <ActivityIndicator color={colors.muted} />
         <Txt size="lg" weight="800" style={styles.flex}>
-          {strings.drive.offlineTitle}
+          {strings.drive.connectingTitle}
         </Txt>
       </View>
+      <Txt tone="muted">{strings.drive.connectingBody}</Txt>
+    </Card>
+  );
+}
+
+function Offline({ address }: { address: string }) {
+  return (
+    <Card>
+      <Txt size="lg" weight="800">
+        {strings.drive.offlineTitle}
+      </Txt>
       <Txt tone="muted">{strings.drive.offlineBody(address)}</Txt>
       <Button
         label={strings.drive.openSettings}
         icon="lan-connect"
         variant="secondary"
-        onPress={() => router.push('/settings')}
+        onPress={() => router.push('/connection')}
       />
     </Card>
   );

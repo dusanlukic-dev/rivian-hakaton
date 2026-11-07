@@ -1,12 +1,12 @@
 import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useCallback, useRef, useState } from 'react';
+import { Keyboard, StyleSheet, View, type TextInputInstance } from 'react-native';
 
 import { api } from '@/api/client';
 import type { User } from '@/api/types';
 import { Banner, Button, Card, Screen, ScreenHeader, SectionLabel, TextField, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
-import { errorText, formatDateTime } from '@/lib/format';
+import { errorText, formatDate } from '@/lib/format';
 import { authStore, setUser, signedOut, useAuth } from '@/state/auth';
 import { liveStore } from '@/state/live';
 import { settingsStore } from '@/state/settings';
@@ -35,29 +35,45 @@ export default function ProfileScreen() {
   );
 }
 
+type Form = { name: string; contactName: string; contactPhone: string };
+
+const fromUser = (user: User): Form => ({
+  name: user.display_name,
+  contactName: user.emergency_contact?.name ?? '',
+  contactPhone: user.emergency_contact?.phone ?? '',
+});
+
+const initialsOf = (name: string) =>
+  name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase())
+    .join('') || '?';
+
 function ProfileForm({ user }: { user: User }) {
-  const [form, setForm] = useState({
-    name: user.display_name,
-    contactName: user.emergency_contact?.name ?? '',
-    contactPhone: user.emergency_contact?.phone ?? '',
-  });
+  const [form, setForm] = useState<Form>(() => fromUser(user));
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const update = (patch: Partial<typeof form>) => {
+  const contactNameRef = useRef<TextInputInstance>(null);
+  const contactPhoneRef = useRef<TextInputInstance>(null);
+
+  const stored = fromUser(user);
+  const dirty =
+    form.name.trim() !== stored.name ||
+    form.contactName.trim() !== stored.contactName ||
+    form.contactPhone.trim() !== stored.contactPhone;
+
+  const update = (patch: Partial<Form>) => {
     setForm((f) => ({ ...f, ...patch }));
-    setSaved(false);
+    setJustSaved(false);
   };
-  const initials =
-    form.name
-      .split(/\s+/)
-      .filter(Boolean)
-      .slice(0, 2)
-      .map((part) => part[0]?.toUpperCase())
-      .join('') || '?';
 
   async function save() {
+    if (!dirty || saving) return;
+    Keyboard.dismiss();
     setSaving(true);
     setError(null);
     const phone = form.contactPhone.trim();
@@ -66,8 +82,9 @@ function ProfileForm({ user }: { user: User }) {
         display_name: form.name.trim() || user.username,
         emergency_contact: phone ? { name: form.contactName.trim() || strings.profile.contactFallback, phone } : null,
       });
-      setSaved(true);
       setUser(next);
+      setForm(fromUser(next)); // show exactly what the server stored (an empty name falls back to the username)
+      setJustSaved(true);
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -86,9 +103,9 @@ function ProfileForm({ user }: { user: User }) {
 
   return (
     <View style={styles.stack}>
-      <View style={styles.avatarRow}>
+      <Card style={styles.identity}>
         <View style={styles.avatar}>
-          <Txt size="xl">{initials}</Txt>
+          <Txt size="xl">{initialsOf(user.display_name)}</Txt>
         </View>
         <View style={styles.flex}>
           <Txt size="lg" weight="800">
@@ -98,20 +115,25 @@ function ProfileForm({ user }: { user: User }) {
             @{user.username}
           </Txt>
           <Txt size="xs" tone="subtle">
-            {strings.profile.memberSince(formatDateTime(user.created_at))}
+            {strings.profile.memberSince(formatDate(user.created_at))}
           </Txt>
         </View>
-      </View>
+      </Card>
 
       {error ? <Banner icon="alert-circle-outline" text={error} color={colors.destructive} /> : null}
 
+      <SectionLabel>{strings.profile.details}</SectionLabel>
       <Card>
         <TextField
           label={strings.profile.name}
+          placeholder={strings.profile.namePlaceholder}
           value={form.name}
           onChangeText={(name) => update({ name })}
           autoCapitalize="words"
-          placeholder={user.username}
+          autoComplete="name"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => contactNameRef.current?.focus()}
         />
       </Card>
 
@@ -121,28 +143,38 @@ function ProfileForm({ user }: { user: User }) {
           {strings.profile.contactHint}
         </Txt>
         <TextField
+          ref={contactNameRef}
           label={strings.profile.contactName}
+          placeholder={strings.profile.contactNamePlaceholder}
           value={form.contactName}
           onChangeText={(contactName) => update({ contactName })}
           autoCapitalize="words"
-          placeholder="Ana"
+          returnKeyType="next"
+          submitBehavior="submit"
+          onSubmitEditing={() => contactPhoneRef.current?.focus()}
         />
         <TextField
+          ref={contactPhoneRef}
           label={strings.profile.contactPhone}
+          placeholder={strings.profile.contactPhonePlaceholder}
           value={form.contactPhone}
           onChangeText={(contactPhone) => update({ contactPhone })}
           keyboardType="phone-pad"
-          placeholder="+381601234567"
+          autoComplete="tel"
+          returnKeyType="done"
+          onSubmitEditing={() => void save()}
         />
       </Card>
 
       <Button
-        big
-        label={saved ? strings.profile.saved : strings.profile.save}
-        icon={saved ? 'check-circle' : 'content-save'}
+        label={justSaved && !dirty ? strings.profile.saved : strings.profile.save}
+        icon={justSaved && !dirty ? 'check-circle' : 'content-save'}
         loading={saving}
+        disabled={!dirty}
         onPress={() => void save()}
       />
+
+      <SectionLabel>{strings.profile.account}</SectionLabel>
       <Button label={strings.profile.logout} icon="logout" variant="danger" loading={leaving} onPress={() => void logout()} />
     </View>
   );
@@ -151,7 +183,7 @@ function ProfileForm({ user }: { user: User }) {
 const styles = StyleSheet.create({
   stack: { gap: 16 },
   flex: { flex: 1 },
-  avatarRow: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  identity: { flexDirection: 'row', alignItems: 'center', gap: 16 },
   avatar: {
     width: 64,
     height: 64,

@@ -7,8 +7,15 @@ import { createStore, useStore } from '@/lib/store';
 
 import { settingsStore } from './settings';
 
+/**
+ * Whether the car computer answers. 'checking' until the first attempt on the current address resolves; it then
+ * stays 'offline' while the socket retries, so screens don't flicker between "connecting" and "offline".
+ */
+export type LinkState = 'checking' | 'online' | 'offline';
+
 export interface LiveState {
   status: LiveStatus | 'idle';
+  link: LinkState;
   /** Latest state of the active trip; null when no trip runs. */
   trip: TripState | null;
   /** +1 on every state-carrying message: the alert engine's "per message" rhythm (docs/API.md §7). */
@@ -32,6 +39,7 @@ const RECENT_SECTIONS = 30;
 
 export const liveStore = createStore<LiveState>({
   status: 'idle',
+  link: 'checking',
   trip: null,
   tick: 0,
   lastMessageAt: 0,
@@ -96,12 +104,32 @@ let started = false;
 function connect(address: string) {
   connection?.stop();
   connectedAddress = address;
+  liveStore.set({ link: 'checking' });
   connection = connectLive(address, {
     onMessage,
     onStatus: (status) => {
-      liveStore.set({ status });
+      if (status === 'open') liveStore.set({ status, link: 'online' });
+      else if (status === 'closed') liveStore.set({ status, link: 'offline' });
+      else liveStore.set({ status });
       if (status === 'open') void checkTripStillRuns(address);
     },
+  });
+}
+
+/** Resolves once the first connection attempt on the current address has an answer, or after `timeoutMs`. */
+export function waitForLink(timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    let unsubscribe = () => {};
+    const finish = () => {
+      clearTimeout(timer);
+      unsubscribe();
+      resolve();
+    };
+    const timer = setTimeout(finish, timeoutMs);
+    unsubscribe = liveStore.subscribe(() => {
+      if (liveStore.get().link !== 'checking') finish();
+    });
+    if (liveStore.get().link !== 'checking') finish();
   });
 }
 

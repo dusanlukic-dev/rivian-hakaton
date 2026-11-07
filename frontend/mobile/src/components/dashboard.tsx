@@ -118,11 +118,11 @@ export function Indicators({ response, stale }: { response: CarResponse; stale: 
   );
 }
 
-/** Connection to the car computer. */
+/** Connection to the car computer. Steady while the socket retries (see `LinkState`). */
 export function StatusPill() {
-  const status = useLive((s) => s.status);
-  const color = status === 'open' ? colors.ok : status === 'idle' ? colors.subtle : colors.warn;
-  return <Pill label={strings.connection[status]} color={color} />;
+  const link = useLive((s) => s.link);
+  const color = link === 'online' ? colors.ok : link === 'checking' ? colors.subtle : colors.warn;
+  return <Pill label={strings.link[link]} color={color} />;
 }
 
 /** Round score badge for lists and summaries. */

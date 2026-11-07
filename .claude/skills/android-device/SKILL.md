@@ -57,6 +57,16 @@ android device hub                                                 # live mirror
 ```
 Fallbacks: `adb shell screencap -p /sdcard/s.png && adb pull /sdcard/s.png <local>`, and `adb shell input tap X Y`.
 
+Gotchas (2026-11-07):
+- `android input tap "text=Log in"` "clicks" the Text node, which doesn't fire a React Native Pressable. Take the `center` of the
+  node from `android layout` and use `adb shell input tap X Y` (real pixels, 1080×2340 on the A54).
+- `adb shell input keyevent KEYCODE_ENTER` is a hardware Enter, not the keyboard's action key: focus moves but the soft keyboard
+  closes. To test Next/Go/Done, tap the key on the on-screen keyboard (bottom-right, about `986 2126` on the A54).
+- The dev client's floating gear button sits over the right edge mid-screen (about `970 1190`) and swallows taps there.
+- To catch flashes on cold start: `MSYS_NO_PATHCONV=1 adb shell screenrecord --time-limit 10 --size 540x1170 /sdcard/c.mp4` while
+  launching, `adb pull`, then `ffmpeg -i c.mp4 -vf "fps=5,scale=150:-1,tile=10x6" -frames:v 1 montage.png` (ffmpeg is on PATH).
+  In Git Bash, `/sdcard/...` needs `MSYS_NO_PATHCONV=1` or it turns into `C:/Program Files/Git/sdcard/...`.
+
 ## 5. Logs
 
 ```bash

@@ -2,7 +2,7 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-07, live score + accounts in the app + run.py --mock (Claude, for Matija).
+> Last updated: 2026-11-07, phone UX pass (boot check, keyboard, login/settings/profile redesign, DND module) (Claude, for Matija).
 
 ## Snapshot
 
@@ -13,7 +13,7 @@
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | `notebooks/risk_pipeline.py` + `risk_config.json` (ttcpavle). **Fixed (session 3):** it was watching the passenger (driver is on the RIGHT of this camera); face now searched in `head_roi`, look-down vs eyes-closed retuned, yolo11s/640, `--show` panel with every variable, checked on all 56 clips. Book: `.claude/knowledge/cv-pipeline.md`. **Session 4:** `--mode dev` (video + reduced metrics panel, `dev_overlay.py`) and `--mode prod` (headless, streams frames ~2/s + video to the backend from background threads; `--start-trip` for runs without the phone). Per-frame math only; trip summary/episodes moved to the backend. Run instructions: `notebooks/pokretanje.txt`. **One real path:** camera → coordinator → `model/worker.py`; their `--mode prod` → `/telemetry` is **debug only** (D34) |
 | Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
-| **Mobile app** | ✅ **Accounts (session 7, D36):** login / create-account screen first (with the car-computer address), token on every call, 401 → login, Profile = account (name, emergency contact, log out), History = my trips, summary/history headline the average. Verified on the A54: register → start → mocked drive (critical with the phone, safe ~6 s later) → end → summary + chart → history → logout → wrong password → login. ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section`, **verified on the A54** (chart, picture box, moment sheet, live strip). Phone fixes verified too: stuck test flash, app-specific settings pages, permission re-check |
+| **Mobile app** | ✅ **UX pass (session 8, D37), verified on the A54:** boot check behind the splash (session + first link answer, no stale/offline flash), keyboard-aware screens (react-native-keyboard-controller) with Next/Go chaining + show/hide password, login without any car-computer UI (own Connection screen; "Change address" only when the server is unreachable), Settings with a car-computer row + one-style Phone setup (DND read by our own module `modules/system-access`) + "Open system app settings", Profile with equal Save/Log out, placeholders that say what to type, tab bar without ripple/shadow, system nav bar in the tab bar colour. ✅ **Accounts (session 7, D36):** login / create-account screen first (with the car-computer address), token on every call, 401 → login, Profile = account (name, emergency contact, log out), History = my trips, summary/history headline the average. Verified on the A54: register → start → mocked drive (critical with the phone, safe ~6 s later) → end → summary + chart → history → logout → wrong password → login. ✅ core verified on the A54: Drive dashboard, alerts, History, Trip summary, Profile, Settings, QR scan. **New:** trip summary **drive chart** (react-native-svg: score line, dangerous/critical shading, moment nodes, picture boxes above critical moments, moment detail sheet) + Drive-screen "last minute" strip from WS `section`, **verified on the A54** (chart, picture box, moment sheet, live strip). Phone fixes verified too: stuck test flash, app-specific settings pages, permission re-check |
 | **Web dashboard** | ✅ car-screen mock at `/`: lamp, gauge, level bar, behaviour tiles, seat/sound indicators, red pulse, emergency overlay + siren, summary + **drive chart**, QR "connect phone", simulator panel (`?sim`). **`/trip/:id`** = any stored trip's summary + chart (headless-Chrome screenshot ✅). Build + lint OK |
 | Brand / copy | app name only in `config/brand.json` (both apps). Mobile UI copy in `frontend/mobile/src/config/strings.ts` |
 | Tooling | ✅ SDK, adb, `android` CLI, JDK 17 toolchain, Ninja swap, Python 3.13 venv, A54 authorized, **Docker Desktop** (Postgres + RustFS via `backend/docker-compose.yml`) |
@@ -30,9 +30,11 @@ adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8081 tcp:8081
 cd frontend/dashboard && npm run dev                          # http://localhost:5173 (?sim for the simulator panel, /trip/<id> for a report)
 backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # instead of camera + model; or tools/sim.py for exact states
 ```
-**Right now (end of session 7):** `run.py --mock` in one minimized window ("backend + mocked car :8000"), Postgres + RustFS in Docker,
-Metro on 8081 in its own window, the dashboard on 5173. The phone is logged in as `matija` (password `secret123`, a test account).
-Every trip gets the scripted detections (close the backend window to stop everything).
+**Right now (end of session 8):** `run.py --mock` in one minimized window ("backend + mocked car :8000"), Postgres + RustFS in Docker,
+the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after the native rebuild (restart it: close the window,
+`cd frontend/mobile && npm start`); session 8 ran a second Metro on **8082** (`adb reverse tcp:8082 tcp:8082`, app opened with
+`url=http%3A%2F%2Flocalhost%3A8082`). The A54 has the new dev build (keyboard-controller + system-access module), is logged in as
+`matija` (password `secret123`, a test account) and has all four Phone setup items on. Every trip gets the scripted detections.
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
@@ -70,11 +72,10 @@ Every trip gets the scripted detections (close the backend window to stop everyt
 - **"undefined" error after swiping the app away:** not reproduced (logcat clean; with a trip running the process survives via the
   foreground service, without one Android kills it at once). Fixed the likely sources (keep-awake / links / headless handler rejected
   without an Activity). If it comes back, note *where* it prints (Metro terminal or phone).
-- **DND row** in Phone setup always shows "Open": no installed library can read `isNotificationPolicyAccessGranted` (needs a tiny
-  native module). The other three rows refresh on return from Android settings.
 - **With camera + fake worker running, every trip gets scripted detections** (phone at 14–20 s of each minute, etc.). Close their
   windows (or don't start them) when testing something else.
-- The dev-client gear button overlaps the top-right status pill. It's dev builds only.
+- The dev-client gear button floats over the right edge mid-screen (covers e.g. the DND "Allow" button). Dev builds only; drag it away.
+- The splash image is still Expo's default logo (`assets/images/splash-icon.png`), not the app's. Polish item (Next up #9).
 - Web dashboard audio needs one click per page load ("Enable sound"), a browser rule. Its main chunk is 642 KB (Vite warning, harmless).
 - `node.exe` is blocked inbound on Public networks (Metro over Wi-Fi / LAN dashboard). USB + `adb reverse` works. Fix: `networking.md`.
 - **Windows long paths:** the SDK CMake Ninja was swapped to 1.13.2 (D18). **Android Studio's setup may reinstall CMake**, so re-check
@@ -109,7 +110,8 @@ Every trip gets the scripted detections (close the backend window to stop everyt
 ## Manual steps only a human can do
 
 - [x] Authorize USB debugging on the A54 · [x] Allow Python through the firewall
-- [x] On the A54: Settings tab → Phone setup → Notifications, Unrestricted battery, DND (all allowed, session 5)
+- [x] On the A54: Settings tab → Phone setup → Notifications, Unrestricted battery, DND (all allowed, session 5; DND was found off
+  in session 8 and switched on again: its confirmation dialog needs "Allow")
 - [ ] Replug the A54 USB cable (the link kept dropping at the end of session 5)
 - [ ] Android Studio install: when asked for the SDK location, choose the existing `%LOCALAPPDATA%\Android\Sdk`
 - [x] Docker Desktop installed (session 5): Postgres + RustFS run from `backend/docker-compose.yml` on this laptop
@@ -187,3 +189,15 @@ Every trip gets the scripted detections (close the backend window to stop everyt
   process group (uvicorn's reload Ctrl+C killed them). Dashboard summary card = average + lowest. Docs: API.md (§3 login, §4 summary
   comments re-copied into both apps, §7 score + levels), root CLAUDE.md, ARCHITECTURE, metrics-and-scoring, contract-notes, decisions,
   backend README/CLAUDE.md, skills. Verified: 95 backend tests, mobile typecheck + lint, dashboard tsc + lint, the full phone flow.
+- 2026-11-07, session 8 (Claude, for Matija): **phone UX pass** after the user's review (D37). Boot check: native splash until the
+  saved session is checked (`/auth/me`) and the car's first answer is in, so a cold start opens straight in its real state (recorded
+  before/after on the A54: the "Car computer offline" flash is gone); offline start keeps the session. Keyboard: react-native-keyboard-controller
+  `KeyboardAwareScrollView` in every `Screen`, Next/Go field chaining, show/hide password, inline validation. Login without the
+  car-computer box (address on its own Connection screen with explained QR/USB rows; "Change address" in the error when unreachable).
+  Settings: car-computer row, Phone setup rows all alike (DND now read by the new local Expo module `modules/system-access`; it
+  revealed DND was actually off), white "Open system app settings". Profile: equal Save/Log out in separate sections, Save only when
+  changed. Tab bar: no ripple circle, no elevation; `expo-navigation-bar` `enforceContrast: false` (nav area now #171717 = tab bar,
+  was a 40 % black scrim). Copy: no brackets, descriptive placeholders. Native rebuild done (first try hit a Gradle DNS hiccup).
+  Verified: mobile typecheck + lint, every changed screen on the A54 (screenshots), cold start online/offline, logout/login with
+  the keyboard, unreachable-server path, test warning. Docs: rules/mobile.md (UI kit rules), architecture, android-alerting (DND
+  dialog + channel bypass), decisions D37, mobile-dev + android-device skills.

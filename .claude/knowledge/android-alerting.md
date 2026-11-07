@@ -115,7 +115,17 @@ adb shell cmd appops set $P RUN_ANY_IN_BACKGROUND allow
   `NOTIFICATION_POLICY_ACCESS_SETTINGS` (all apps' DND list). That was the "it opens only the default page" report: our code,
   not the dev build. The package name is the same in dev and release.
 - `startActivityAsync` resolves when the settings page is closed, and the app also re-checks on every return to the foreground
-  (`state/permissions.ts`), so ticks update without leaving the tab. DND access can't be read by any installed library
-  (`isNotificationPolicyAccessGranted` would need a small native module), so that row always shows "Open".
+  (`state/permissions.ts`), so ticks update without leaving the tab.
+- **DND access is read by our own native module** (`frontend/mobile/modules/system-access`, 2026-11-07): no installed library
+  exposed `isNotificationPolicyAccessGranted`, so the row used to say "Open" forever. Now all four rows work the same (green "On" or
+  "Allow"). Verified on the A54: the row said "Allow" although the user remembered enabling it, and Android agreed. Flipping the
+  "Allow Do not Disturb" switch opens a **confirmation dialog** ("Allow Safety Reviewer to access Do not disturb?"), and only its
+  "Allow" grants access; dismissing it or pressing Deny leaves the switch off. That's the likely cause of the "I checked it but it still
+  says Open" report. Check over adb: `adb shell dumpsys notification | grep -A2 "Allowed condition providers"` lists the packages
+  with DND access; "Has user set" only means the switch was touched.
+- **A channel's DND bypass needs DND access at the moment the channel is submitted.** `alarm_v1` was created before access was
+  granted and showed `mBypassDnd=false` (dumpsys), although we pass `bypassDnd: true`. After granting, the next app start
+  re-submitted it (`setupNotifications()` runs on every boot) and Android flipped it to `mBypassDnd=true`. `refreshPermissions()`
+  also re-submits as soon as it sees DND access appear, so no restart is needed.
 - `expo-keep-awake` activate/deactivate **reject** when the Activity is gone (swipe-away during a trip: the foreground service keeps
   JS alive and the Drive screen unmounts later). The calls now have `.catch`.

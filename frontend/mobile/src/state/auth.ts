@@ -9,27 +9,32 @@ import { createStore, useStore } from '@/lib/store';
 export interface AuthState {
   token: string | null;
   user: User | null;
-  /** Loaded from storage. Until then the app renders nothing, so the login screen never flashes. */
+  /**
+   * The boot check is done (app-init.ts): the saved session was read and, if there is one, checked with the server.
+   * Until then the native splash screen stays up, so neither the login screen nor stale account data ever flash.
+   */
   ready: boolean;
+  /** The server confirmed the token in this app run. False = offline start with the saved session (checked later). */
+  verified: boolean;
 }
 
-export const authStore = createStore<AuthState>({ token: null, user: null, ready: false });
+export const authStore = createStore<AuthState>({ token: null, user: null, ready: false, verified: false });
 
-export async function loadAuth() {
-  await persist(authStore, 'auth.v1', ['token', 'user']);
-  authStore.set({ ready: true });
+/** Reads the saved session from storage. `ready` is set by the boot check, not here. */
+export function loadAuth() {
+  return persist(authStore, 'auth.v1', ['token', 'user']);
 }
 
 export function signedIn(out: AuthOut) {
-  authStore.set({ token: out.token, user: out.user });
+  authStore.set({ token: out.token, user: out.user, verified: true });
 }
 
 export function setUser(user: User) {
-  authStore.set({ user });
+  authStore.set({ user, verified: true });
 }
 
 export function signedOut() {
-  authStore.set({ token: null, user: null });
+  authStore.set({ token: null, user: null, verified: false });
 }
 
 export function useAuth<S>(select: (state: AuthState) => S): S {

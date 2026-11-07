@@ -98,7 +98,7 @@ function EmergencyOverlay() {
         </Txt>
       </View>
       <View style={styles.actions}>
-        <Button big label={strings.emergency.ack} icon="check-circle" onPress={ackEmergency} style={styles.ackButton} />
+        <Button size="lg" label={strings.emergency.ack} icon="check-circle" onPress={ackEmergency} style={styles.ackButton} />
         {contactPhone ? (
           <View style={styles.row}>
             <Button

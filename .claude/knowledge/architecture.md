@@ -50,18 +50,27 @@ app.config.ts            reads repo-root config/brand.json → app name + extra.
 src/api/                 types.ts (verbatim API.md §4) · client.ts (REST + auth; Bearer token on every call, 401 → logout)
                          · live.ts (WS, reconnect, kick) · address.ts
 src/lib/                 store.ts (createStore/useStore on useSyncExternalStore) · persist.ts (AsyncStorage) · format.ts
-src/state/               settings.ts · auth.ts (token + user, AsyncStorage `auth.v1`) · live.ts (socket status, active trip, tick,
-                         emergency, last summary, `preview` = local test alert, `sections` = last 30 WS sections; on reconnect it
-                         drops a trip the car no longer runs) · permissions.ts (re-check on foreground)
+src/app-init.ts          boot check (D37): storage → live socket → session check (GET /auth/me ≤ 2.5 s) + first link answer
+                         (≤ 1.5 s), cap 4 s, then `auth.ready` → the root layout hides the native splash. Offline: keeps the
+                         saved session and re-checks once the car answers
+src/state/               settings.ts · auth.ts (token + user, AsyncStorage `auth.v1`; `ready`, `verified`) · live.ts (socket
+                         `status`, steady `link` checking/online/offline, active trip, tick, emergency, last summary, `preview` =
+                         local test alert, `sections` = last 30 WS sections; on reconnect it drops a trip the car no longer runs)
+                         · permissions.ts (re-check on foreground; re-submits the alarm channel once DND access appears)
 src/alerts/              engine.ts executes `response` per message (vibration, sounds, voice, background notifications, emergency)
-                         · sounds.ts (expo-audio) · notifications.ts (channels, foreground service, app-specific settings intents)
-src/components/          ui.tsx · connection.tsx (car-computer address card: Settings + login) · dashboard.tsx (Lamp, LevelBar,
-                         BehaviorGrid, Indicators, StatusPill, ScoreBadge)
+                         · sounds.ts (expo-audio) · notifications.ts (channels, foreground service, app-specific settings intents,
+                         permission state incl. DND from modules/system-access)
+src/components/          ui.tsx (the UI kit: Screen = keyboard-aware scroll + safe-area edges, Button sm/md/lg, TextField with
+                         error/optional/secure eye, ListRow, Divider, Banner with action, TextLink) · dashboard.tsx (Lamp,
+                         LevelBar, BehaviorGrid, Indicators, StatusPill, ScoreBadge)
                          · AlertOverlays.tsx (2 Hz red flash only while state is fresh, emergency screen)
                          · report.tsx (DriveChart on react-native-svg, ChartLegend, MomentList, MomentSheet, RecentSections)
 src/config/              strings.ts (ALL UI copy) · brand.ts · behaviors.ts (label → icon)
-src/app/                 _layout (Stack.Protected: token → app, none → login) · login (log in / create account + address)
+src/app/                 _layout (KeyboardProvider; Stack.Protected: token → app, none → login) · login (log in / create
+                         account, no connection UI) · connection (car-computer address: Settings row, or "Change address"
+                         when login can't reach the server) · (tabs)/_layout (tab bar without ripple/elevation)
                          · (tabs)/index (Drive) · history (my trips) · profile (account, logout) · settings · trip/[id] · scan (QR)
+modules/system-access/   local Expo module (Kotlin): isDndAccessGranted() = NotificationManager.isNotificationPolicyAccessGranted
 ```
 
 **Rules:** only `src/api/` knows the wire format, and the UI tolerates unknown behaviour labels and unknown WS message types. The

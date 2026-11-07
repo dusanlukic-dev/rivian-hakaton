@@ -42,6 +42,12 @@
     "plugins": [
       "expo-router",
       [
+        "expo-navigation-bar",
+        {
+          "enforceContrast": false
+        }
+      ],
+      [
         "expo-splash-screen",
         {
           "backgroundColor": "#0B0D10",
