@@ -49,9 +49,10 @@ server `localhost:8001` over USB.
    ~1 GB instead of 3 GB); optional NVIDIA GPU for the model (onnxruntime-gpu + `gpus: all`).
 2. **Release APK** (user's next step): `npm run android:release`, or Dušan's verified recipe in README.md (short folder,
    `CMAKE_OBJECT_PATH_MAX=250`); on the phone Bluetooth on + Nearby devices allowed, server address set.
-2b. **Video-sim starts the trip** (Djolekapppp's `frontend/video-sim`, user: "later, before full dockerization"): it streams a
-   dataset clip into `WS /camera/ws` but needs a running trip; decide who starts it (the app over Bluetooth, or the sim with the
-   account's token). It shares the one camera slot with `klip_po_voznji.py`: run one or the other.
+2b. ~~**Video-sim starts the trip**~~ done (session 14): one clip = one trip, the score starts at 100 with every clip. A trip
+   started on the phone gets the loaded clip by itself (account, History); Send uses the trip in progress only while it has
+   had no frames, else starts a `video-sim` trip. Still one camera slot: no `klip_po_voznji.py` / `-Video` next to it
+   (`.\demo.ps1 -Camera 05_23`). Details: `frontend/video-sim/README.md`.
 3. **Backend folder split** (user's request, decide together with Docker): Fork A's WIP is local branch
    `worktree-agent-a336269a95214247a` (`backend/coordinator/`, `backend/server/`, `backend/shared/`, `start.ps1`); left: tests, dashboard
    with two targets + QR `driveralert://connect?server=…&car=…` (the app already parses it), `safety_client.py --server`, docs. It
@@ -84,6 +85,15 @@ server `localhost:8001` over USB.
   address (the app always scans first). Details: `docs/BLUETOOTH.md`.
 - Until the folder split lands, the server address :8001 needs the extra `run.py --role server --port 8001`; the dashboard's QR still
   shows the old single address.
+- **Model on DirectML crashes / hangs on Matija's laptop** (session 14, 2026-11-07 ~13:50): twice right after a new trip's `reset`.
+  Once `python.exe` died with `0xc0000005` in `igd12um64xeh.dll` (the **Intel** iGPU D3D12 driver, Windows Event Log → Application
+  Error), once it stayed connected but stopped answering (`detections` frozen, `frames_sent` rising, phone on "No data from the
+  camera"). Suspects: DirectML picks adapter 0 = the Intel iGPU, not the GTX 1650, and the phone-YOLO thread runs a second
+  DirectML session in parallel with pose/face. Workaround: `rivian_detector.py --device cpu` (stable, ran the tests after). Owner:
+  Dušan (`rivian_model/`). Check: `/coordinator/status` → `model.last_detection_age_s` growing while the camera sends.
+- **Bluetooth on the Xiaomi 15T** (session 14): the app sees the laptop ("LENOVO"), `BluetoothGatt.connect()` gets no answer for
+  15 s and the app gives up (logcat). The A54 connects to the same gateway. The Xiaomi works over Wi-Fi/USB (`localhost:8000` +
+  adb reverse). Not investigated yet.
 
 - **A54 USB link is flaky** (session 5): `adb reverse` emptied by itself, then the device went `offline`/missing while Windows still
   showed "ADB Interface". Replug / re-allow USB debugging, then re-apply `adb reverse`. All permissions are granted on the phone now.
@@ -272,3 +282,10 @@ server `localhost:8001` over USB.
   risky moments / driving time / emergencies, top 3 risks with more / fewer, and the tip for the biggest one. Verified: typecheck,
   lint, the math on sample trips. **Not yet seen on the A54** (no Metro/server running at the time).
 - 2026-11-07, agent: CUDA training env `rivian_model/.venv-train` (torch 2.15.0+cu132 + ultralytics, GTX 1650 verified). The live model stays on DirectML in `.venv`.
+- 2026-11-07, session 14 (Claude, for Matija): release APK built and installed on Matija's **Xiaomi 15T** (Android 16; built from a
+  copy in `C:\dev\rh` because of OneDrive and long paths; SDK `cmake\3.22.1` Ninja swapped to 1.12.1). **Video-sim: one clip = one
+  trip** (user: the score must start at 100 with every trip/clip): listens to `WS /ws` for trip starts/ends, a phone trip gets the
+  clip from the start, Send starts a new trip once the current one has had frames, camera socket retried while the old one closes.
+  Backend unchanged. Verified: 63 Vitest tests, build, lint; live on the Xiaomi over USB: Send into a scored trip → new trip at 100 →
+  27.9 critical; phone End/Start trip → clip by itself in the account's trip, 100 → 18.2 critical. Found: DirectML crash/hang on
+  the Intel iGPU (model restarted on CPU), Bluetooth GATT connect timeout on the Xiaomi (Known issues).
