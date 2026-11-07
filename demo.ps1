@@ -7,6 +7,11 @@ Svaki deo se otvara u svom PowerShell prozoru (tu je njegov log; zatvaranje proz
     .\demo.ps1 -Webcam "Integrated Camera"                                   # web kamera umesto klipa
     .\demo.ps1 -Model cv -Video ...                                          # model CV kolege, isti backend
     .\demo.ps1 -Port 8765 -Storage none -Video ...                           # proba: drugi port, bez baze
+    .\demo.ps1 -PoVoznji                                                     # svaka voznja iz aplikacije = sledeci klip
+
+-PoVoznji  umesto jedne kamere pokrece rivian_model\klip_po_voznji.py: svaka nova voznja dobija sledeci klip od pocetka
+           (spisak: -Klipovi, podrazumevano 022338, 032409, 032617, 005853). Ne ide uz -Video/-Webcam: koordinator
+           mesa frejmove dve kamere, pa model vidi "dva vozaca".
 
 -Model     nas (podrazumevano, rivian_model/) ili cv (model/worker.py)
 -Camera    zona vozaca za nas model: 08_14 ili 05_23. Bez nje se uzima iz imena klipa (05_23_* -> 05_23).
@@ -25,7 +30,9 @@ param(
     [ValidateSet("docker", "local", "none")] [string]$Storage = "docker",
     [string]$Speed = "cruise",
     [int]$Port = 8000,
-    [switch]$Dashboard
+    [switch]$Dashboard,
+    [switch]$PoVoznji,
+    [string[]]$Klipovi = @()
 )
 
 $ErrorActionPreference = "Stop"
@@ -52,6 +59,13 @@ if (Test-PortBusy $Port) {
     throw "Port $Port je zauzet (npr. mock_backend.py ili stari backend). Ugasi ga ili pokreni sa -Port 8765."
 }
 if ($Video -and -not (Test-Path $Video)) { throw "Nema klipa: $Video" }
+if (@($Video, $Webcam, $(if ($PoVoznji) { "x" } else { "" })) -ne "" | Select-Object -Skip 1) {
+    throw "Izaberi samo jednu kameru: -Video, -Webcam ili -PoVoznji. Dve kamere se u koordinatoru mesaju (model vidi dva vozaca)."
+}
+if ($PoVoznji -and -not $Camera) {
+    $Camera = "05_23"
+    if ($Klipovi.Count -gt 0 -and $Klipovi[0] -like "08_14*") { $Camera = "08_14" }
+}
 if ($Model -eq "nas") {
     foreach ($f in "yolo11n_640.onnx", "yolo11n-pose_384.onnx", "face_landmarker.task") {
         if (-not (Test-Path (Join-Path $Root "rivian_model\$f"))) {
@@ -120,8 +134,12 @@ if ($Video) {
     Open-Window "kamera (klip u petlji)" $Root "& '$BackendPy' tools\camera_stream.py --url $CameraWs --video '$Video'"
 } elseif ($Webcam) {
     Open-Window "kamera ($Webcam)" $Root "& '$BackendPy' tools\camera_stream.py --url $CameraWs --webcam '$Webcam'"
+} elseif ($PoVoznji) {
+    $lista = ""
+    if ($Klipovi.Count -gt 0) { $lista = "--klipovi " + ($Klipovi -join " ") }
+    Open-Window "kamera (klip po voznji)" $Root "python rivian_model\klip_po_voznji.py --port $Port $lista"
 } else {
-    Write-Host "  [--] kamera nije pokrenuta (dodaj -Video <klip> ili -Webcam <ime>)" -ForegroundColor Yellow
+    Write-Host "  [--] kamera nije pokrenuta (dodaj -Video <klip>, -Webcam <ime> ili -PoVoznji)" -ForegroundColor Yellow
 }
 
 # ---------------------------------------------------------------- 5. dashboard (opciono)
