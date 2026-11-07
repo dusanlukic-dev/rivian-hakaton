@@ -241,7 +241,8 @@ COORDINATOR_PORT=$CoordinatorPort
 SERVER_PORT=$ServerPort
 DASHBOARD_PORT=$DashboardPort
 "@
-[IO.File]::WriteAllText($EnvFile, $envText, (New-Object Text.UTF8Encoding $false))
+# LF only: after a Windows checkout this script has CRLF, and a stray \r would end up in every value.
+[IO.File]::WriteAllText($EnvFile, ($envText -replace "`r", "") + "`n", (New-Object Text.UTF8Encoding $false))
 Ok "docker/.env: IP $ip, kamera $CameraMode, zona vozaca $Camera, brzina $Speed"
 
 # ---------------------------------------------------------------- 4. izgradnja i pokretanje kontejnera
