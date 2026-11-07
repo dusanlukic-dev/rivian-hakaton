@@ -10,7 +10,7 @@ Target device: Galaxy A54 (One UI). Android only, see `decisions.md` D11 for iOS
 | Notifications, **foreground service**, **full-screen intent**, insistent sound, action buttons | `react-native-notify-kit` ~10.10 | Maintained Notifee fork; the original `@notifee/react-native` was archived 2026-04-07. Import: `import notifee from 'react-native-notify-kit'`. The Notifee docs apply: https://docs.page/marcocrupi/react-native-notify-kit |
 | **Alarm-stream** notification channel + custom channel sounds in `res/raw` | `expo-notifications` | `setNotificationChannelAsync(id, { audioAttributes: { usage: AndroidAudioUsage.ALARM, contentType: AndroidAudioContentType.SONIFICATION }, sound: 'alarm_critical.wav', bypassDnd: true, importance: MAX, vibrationPattern })`. Only used to *create channels*. Post notifications with notify-kit using the same `channelId`, which works because channels belong to the OS, not to a library |
 | In-app sounds (foreground) | `expo-audio` | Plays on the **media** stream (no usage option), so media volume matters. Background playback is enabled |
-| Voice ("Eyes on the road!") | `expo-speech` | Android TTS engine |
+| ~~Voice~~ | ~~`expo-speech`~~ | Removed (D53): the voice spoke over the alarm. The package is still in package.json, unused |
 | Screen stays on during Drive mode | `expo-keep-awake` | `useKeepAwake()` on the Drive screen |
 | Brightness boost during alerts | `expo-brightness` | Set 1.0 at level ≥ 2, restore afterwards |
 | Immersive full-screen alert | `expo-navigation-bar` | Hide the nav bar on the critical overlay |
@@ -40,9 +40,9 @@ The full field → effect table is in `metrics-and-scoring.md`.
 
 App open on the Drive screen with `useKeepAwake()`. The background colour is `dashboard_light`.
 
-- `vibrate_seat` → `Vibration.vibrate(300)` per message. `sound: low` → `chime` per message.
-- `sound: high` → `alarm_warning` per message + red pulse overlay (≤ 2 Hz) + brightness up.
-- `emergency` → full-screen red pulse + `alarm_critical` loop + continuous vibration + TTS + "Send SMS to <contact>" (proposal) + an "OK" button.
+- `vibrate_seat` → `Vibration.vibrate(300)` per message. No sound in yellow/orange (D53).
+- `sound: high` → red pulse overlay (≤ 2 Hz) + brightness up; at level `critical` also the calm `alarm_critical` bell per message.
+- `emergency` → full-screen red pulse + `alarm_siren` loop (stronger bell) + continuous vibration + "Send SMS to <contact>" (proposal) + an "OK" button. No voice (D53).
 - Optionally **also** post the alarm-channel notification in the foreground. Its sound then uses the alarm stream even when media volume is 0.
 
 ## Background / locked mode (stretch, the "wake from sleep" requirement)

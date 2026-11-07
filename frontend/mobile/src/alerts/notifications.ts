@@ -5,6 +5,7 @@ import {
   AndroidAudioUsage,
   AndroidImportance as ChannelImportance,
   AndroidNotificationVisibility,
+  deleteNotificationChannelAsync,
   setNotificationChannelAsync,
 } from 'expo-notifications';
 import { Platform } from 'react-native';
@@ -24,8 +25,11 @@ import { colors } from '@/theme/colors';
 import { isDndAccessGranted } from '../../modules/system-access';
 
 // Channels are immutable once created on a device: bump the suffix to change sound/importance.
-const CHANNEL_ALARM = 'alarm_v1';
+// alarm_v2: the emergency-only bell sound (alarm_siren.wav) replaced alarm_critical.wav; warnings moved to warning_v1.
+const CHANNEL_ALARM = 'alarm_v2';
+const CHANNEL_WARNING = 'warning_v1';
 const CHANNEL_DRIVE = 'drive_v1';
+const OLD_CHANNELS = ['alarm_v1'];
 const ID_DRIVE = 'drive';
 const ID_EMERGENCY = 'emergency';
 const ID_WARNING = 'warning';
@@ -41,10 +45,10 @@ const android = Platform.OS === 'android';
 export async function setupNotifications() {
   if (!android) return;
   await setNotificationChannelAsync(CHANNEL_ALARM, {
-    name: 'Driving alerts',
-    description: 'Loud alarm when you are distracted while driving',
+    name: 'Emergency alarm',
+    description: 'Alarm sound when the driver is not responding',
     importance: ChannelImportance.MAX,
-    sound: 'alarm_critical.wav',
+    sound: 'alarm_siren.wav',
     audioAttributes: {
       usage: AndroidAudioUsage.ALARM,
       contentType: AndroidAudioContentType.SONIFICATION,
@@ -54,6 +58,17 @@ export async function setupNotifications() {
     bypassDnd: true,
     lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
   });
+  // Warnings only show and vibrate: the app makes sound for the emergency alone.
+  await setNotificationChannelAsync(CHANNEL_WARNING, {
+    name: 'Driving warnings',
+    description: 'Silent heads-up when you are distracted while driving',
+    importance: ChannelImportance.HIGH,
+    sound: null,
+    vibrationPattern: [0, 350],
+    enableVibrate: true,
+    lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
+  });
+  for (const id of OLD_CHANNELS) await deleteNotificationChannelAsync(id).catch(() => {});
   await setNotificationChannelAsync(CHANNEL_DRIVE, {
     name: 'Drive mode',
     description: 'Shown while a trip is being monitored',
@@ -135,7 +150,7 @@ export async function showEmergency(state: TripState) {
   }
 }
 
-/** Heads-up alarm for loud warnings while the app is in the background. */
+/** Silent heads-up for warnings while the app is in the background (no sound: only the emergency rings). */
 export async function showWarning(message: string) {
   if (!android) return;
   try {
@@ -144,8 +159,8 @@ export async function showWarning(message: string) {
       title: strings.notifications.warningTitle,
       body: message,
       android: {
-        channelId: CHANNEL_ALARM,
-        category: AndroidCategory.ALARM,
+        channelId: CHANNEL_WARNING,
+        category: AndroidCategory.REMINDER,
         importance: AndroidImportance.HIGH,
         smallIcon: SMALL_ICON,
         color: colors.alarm,

@@ -243,11 +243,11 @@ function fakeState(level: SafetyLevel): TripState {
     trip_id: TEST_TRIP_ID,
     driver_id: 'test',
     status: 'active',
-    score: emergency ? 6.4 : 41.8,
+    score: emergency ? 6.4 : 24.6,
     level,
     active_behaviors: emergency ? { drowsy: 3 } : { looking_at_phone: 4 },
     response: {
-      dashboard_light: emergency ? 'red' : 'yellow',
+      dashboard_light: 'red',
       vibrate_seat: true,
       sound: 'high',
       message: emergency
@@ -285,7 +285,8 @@ export function runTestAlert(kind: 'warning' | 'emergency') {
   }
   clearInterval(previewTimer);
   let ticks = 0;
-  liveStore.set((s) => ({ preview: fakeState('high_risk'), tick: s.tick + 1 }));
+  // The red zone (critical): the lowest level the phone makes a sound for (D53), so the test is audible.
+  liveStore.set((s) => ({ preview: fakeState('critical'), tick: s.tick + 1 }));
   previewTimer = setInterval(() => {
     ticks += 1;
     if (ticks >= PREVIEW_TICKS) stopTestAlert();

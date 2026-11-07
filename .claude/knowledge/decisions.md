@@ -309,3 +309,18 @@ clean (closes its own earlier 'demo:' windows and stale backends from this repo,
 reserved ranges up front, and keeps `adb reverse` 8081/8000/8001 alive in a small window; `run.py` names the problem
 (owner PID or reserved range) instead of a raw bind error; test tools use OS-assigned ports. `tools/reserve-ports.ps1`
 (admin, once) makes our ports administered exclusions so Windows can't reserve them.
+
+**D53: The phone sounds only in the red zone and for the emergency, as bells, and never speaks (2026-11-07).** User:
+remove the human voice (it talked over the beeping), no sound in yellow (`warning`) or orange (`high_risk`), a milder
+sound in red (`critical`, "not as dangerous as the emergency") and a stronger one for the emergency, both easier on the ear
+than the old beeps. So the phone picks sound by **level**, not by `response.sound` (the backend says "loud" from orange
+up): `critical` (or the `emergency` level after "I'm OK") plays `alarm_critical.wav` once per message while
+`response.sound` is not `none`, so it stops when the phone goes away; the emergency event loops `alarm_siren.wav`.
+Warnings still vibrate, flash red and post a heads-up when backgrounded, now on a silent `warning_v1` channel.
+`expo-speech` calls and the "Voice prompts" setting are gone (the package stays in package.json, unused); the "Sound"
+setting reads "Sound (red zone and emergency)"; the Settings "Test warning" previews the red zone so it is audible.
+Sounds (tools/gen-sounds.mjs), measured: red zone = soft sine bell A5–C#6–E6 then a rest, 1.6 s, RMS 0.15, centroid
+1.3 kHz; emergency = two fast bright bursts C6–E6–G6–C7 per second, gently saturated, RMS 0.47, centroid 3.9 kHz (the old
+square-wave siren: RMS 0.66, centroid 6.1 kHz, 68 % of energy above 2 kHz vs 37 % now). The emergency notification
+channel moved to `alarm_v2` with the new emergency sound (`alarm_v1` is deleted on start). The car screen keeps its own
+warning sounds and gets the new emergency sound too.

@@ -93,9 +93,7 @@
         {
           "color": "#E5484D",
           "sounds": [
-            "./assets/sounds/chime.wav",
-            "./assets/sounds/alarm_warning.wav",
-            "./assets/sounds/alarm_critical.wav"
+            "./assets/sounds/alarm_siren.wav"
           ]
         }
       ],

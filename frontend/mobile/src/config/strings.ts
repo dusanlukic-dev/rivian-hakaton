@@ -70,12 +70,10 @@ export const strings = {
     call: (name: string) => `Call ${name}`,
     smsBody: (driver: string) =>
       `${brand.name}: ${driver || 'The driver'} just triggered a critical driving alert. Please check on them.`,
-    voice: 'Emergency. Focus on the road now.',
     // The driver collapsed (behavior `collapse`): the person who sees the screen is likely not the driver.
     collapseSubtitle: 'The driver is not responding',
     collapseSmsBody: (driver: string) =>
       `${brand.name}: ${driver || 'The driver'} slumped over at the wheel and is not responding. Please call them or emergency services now.`,
-    collapseVoice: 'Emergency. The driver is not responding.',
   },
   notifications: {
     driveBody: 'Watching for distractions. Keep your eyes on the road.',
@@ -181,10 +179,9 @@ export const strings = {
     connectionBluetooth: 'Over Bluetooth: live alerts, start and end of trips',
     connectionWifi: 'Over Wi-Fi or USB: live alerts, start and end of trips',
     alerts: 'Alerts',
-    sound: 'Sound',
+    sound: 'Sound (red zone and emergency)',
     vibration: 'Vibration',
     flash: 'Red flash',
-    voice: 'Voice prompts',
     keepAwake: 'Keep screen on during trips',
     tryAlerts: 'Try the alerts',
     tryHint: 'Preview what the driver gets. Works without the car.',

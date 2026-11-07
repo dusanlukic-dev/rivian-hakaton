@@ -68,9 +68,9 @@ Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#F
 | `dashboard_light` | full-bleed background / big lamp colour | colour + text of the ongoing Drive notification | the car's dashboard lamp |
 | `score`, `level` | big number / gauge + level name | notification title | gauge |
 | `vibrate_seat: true` | `Vibration.vibrate(300)` per message | same (the foreground service keeps JS alive) | seat-vibration icon pulses |
-| `sound: "low"` | `chime` per message | `chime` notification channel | `chime.wav` |
-| `sound: "high"` | `alarm_warning` per message + red pulse overlay (≤ 2 Hz) | alarm-stream notification; full-screen intent if locked | `alarm_warning.wav` + red pulse |
-| `emergency` event | full-screen red + `alarm_siren` loop + vibration + TTS + max brightness + Text/Call contact | full-screen intent wakes the phone, insistent `alarm_critical` (alarm channel) | full red pulse + `alarm_siren` loop until Dismiss |
+| `sound: "low"` | nothing (no sound on the phone, D53) | nothing | `chime.wav` |
+| `sound: "high"` | red pulse overlay (≤ 2 Hz); sound only at level `critical`: `alarm_critical` bell per message (D53) | silent heads-up notification (`warning_v1` channel) | `alarm_warning.wav` + red pulse |
+| `emergency` event | full-screen red + `alarm_siren` loop (stronger bell) + vibration + max brightness + Text/Call contact (no voice, D53) | full-screen intent wakes the phone, insistent `alarm_siren` (`alarm_v2` alarm channel) | full red pulse + `alarm_siren` loop until Dismiss |
 | `active_behaviors` | chips: icon + label + seconds | notification body | icon row, lit while active |
 | `section` (every 2 s) | "last minute" strip (30 bars: height = score, colour = danger) + what was seen in the last 2 s | – | – |
 | `trip_ended` | summary screen (average while driving + lowest + tips + drive chart) | notification "Trip ended" | summary card + drive chart |

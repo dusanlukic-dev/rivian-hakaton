@@ -24,12 +24,11 @@ export interface Settings {
   sound: boolean;
   vibration: boolean;
   flash: boolean;
-  voice: boolean;
   keepAwake: boolean;
 }
 
 /** The on/off alert preferences (Settings → Alerts). */
-export type AlertToggle = 'sound' | 'vibration' | 'flash' | 'voice' | 'keepAwake';
+export type AlertToggle = 'sound' | 'vibration' | 'flash' | 'keepAwake';
 
 type SettingsState = Settings & { ready: boolean };
 
@@ -50,7 +49,6 @@ export const settingsStore = createStore<SettingsState>({
   sound: true,
   vibration: true,
   flash: true,
-  voice: true,
   keepAwake: true,
   ready: false,
 });
@@ -67,7 +65,6 @@ export async function loadSettings() {
     'sound',
     'vibration',
     'flash',
-    'voice',
     'keepAwake',
   ]);
   settingsStore.set({ ready: true });

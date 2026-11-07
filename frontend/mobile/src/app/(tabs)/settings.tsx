@@ -147,7 +147,6 @@ const TOGGLES: { key: AlertToggle; icon: IconName; label: string }[] = [
   { key: 'sound', icon: 'volume-high', label: strings.settings.sound },
   { key: 'vibration', icon: 'vibrate', label: strings.settings.vibration },
   { key: 'flash', icon: 'alarm-light', label: strings.settings.flash },
-  { key: 'voice', icon: 'account-voice', label: strings.settings.voice },
   { key: 'keepAwake', icon: 'cellphone-screenshot', label: strings.settings.keepAwake },
 ];
 

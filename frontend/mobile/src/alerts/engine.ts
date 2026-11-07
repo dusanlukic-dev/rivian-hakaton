@@ -1,10 +1,7 @@
 import * as Brightness from 'expo-brightness';
-import * as Speech from 'expo-speech';
 import { AppState, Vibration } from 'react-native';
 
 import type { SafetyLevel, TripState } from '@/api/types';
-import { isCollapse } from '@/config/behaviors';
-import { strings } from '@/config/strings';
 import { ackEmergency, liveStore } from '@/state/live';
 import { settingsStore } from '@/state/settings';
 
@@ -13,14 +10,18 @@ import { sounds } from './sounds';
 
 /**
  * Executes the backend's `response` (docs/API.md §7): never decides levels itself.
- * Audio/haptics/voice/notifications live here; the red flash + emergency screen are in components/AlertOverlays.
+ * Haptics/notifications live here; the red flash + emergency screen are in components/AlertOverlays.
+ * Sound follows the level, not the backend's `response.sound` (which is loud from orange up), and there is no
+ * spoken voice (D53):
+ * - yellow (`warning`) and orange (`high_risk`): no sound, only vibration, the red pulse and the silent heads-up;
+ * - red (`critical`, and the `emergency` level once the driver has dismissed the emergency): the calm bell, only
+ *   while something risky is happening now (`response.sound` is not `none`), so it stops when the phone goes away;
+ * - the emergency event: the stronger bell, looped until the driver taps "I'm OK".
  */
 const RANK: Record<SafetyLevel, number> = { safe: 0, caution: 1, warning: 2, high_risk: 3, critical: 4, emergency: 5 };
 
 let started = false;
 let lastTick = 0;
-let lastLevel: SafetyLevel = 'safe';
-let lastSpokenAt = 0;
 let lastBackgroundWarningAt = 0;
 let emergencyOn = false;
 let driveServiceOn = false;
@@ -31,16 +32,9 @@ function onTick(trip: TripState) {
   const now = Date.now();
 
   if (prefs.vibration && response.vibrate_seat) Vibration.vibrate(350);
-  if (prefs.sound) {
-    if (response.sound === 'high') sounds.play('warning');
-    else if (response.sound === 'low') sounds.play('chime');
-  }
-  if (prefs.voice && RANK[trip.level] > RANK[lastLevel] && RANK[trip.level] >= RANK.warning && now - lastSpokenAt > 6000) {
-    lastSpokenAt = now;
-    Speech.speak(response.message, { rate: 1.05 });
-  }
-  lastLevel = trip.level;
+  if (prefs.sound && RANK[trip.level] >= RANK.critical && response.sound !== 'none') sounds.play('critical');
 
+  // Silent heads-up while the app is in the background (no sound: see the channel in notifications.ts).
   if (response.sound === 'high' && AppState.currentState !== 'active' && now - lastBackgroundWarningAt > 10_000) {
     lastBackgroundWarningAt = now;
     void notify.showWarning(response.message);
@@ -49,17 +43,16 @@ function onTick(trip: TripState) {
 
 function startEmergency(state: TripState) {
   const prefs = settingsStore.get();
+  sounds.stop('critical');
   if (prefs.sound) sounds.loop('siren');
   if (prefs.vibration) Vibration.vibrate([0, 700, 300], true);
   Brightness.setBrightnessAsync(1).catch(() => {});
-  if (prefs.voice) Speech.speak(isCollapse(state) ? strings.emergency.collapseVoice : strings.emergency.voice, { rate: 1 });
   if (AppState.currentState !== 'active') void notify.showEmergency(state);
 }
 
 function stopEmergency() {
   sounds.stop('siren');
   Vibration.cancel();
-  Speech.stop().catch(() => {});
   Brightness.restoreSystemBrightnessAsync().catch(() => {});
   void notify.cancelEmergency();
 }
@@ -88,7 +81,6 @@ export function startAlertEngine() {
     if (wantService !== driveServiceOn) {
       driveServiceOn = wantService;
       void (wantService ? notify.startDriveService() : notify.stopDriveService());
-      if (!wantService) lastLevel = 'safe';
     }
   });
 

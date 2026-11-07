@@ -3,11 +3,14 @@
 // and the web dashboard. Pure Node, no dependencies. Re-run after tweaking: `node tools/gen-sounds.mjs`
 //
 // Names must be valid Android resource names: lowercase letters, digits, underscore.
-//   chime.wav           level 1 "notice"   – soft two-tone ding
-//   alarm_warning.wav   level 2 "warning"  – 3 high beeps, 1 s loop
-//   alarm_critical.wav  level 3 "critical" – fast high/higher beeps, 1 s loop
-//   alarm_siren.wav     emergency – sweeping square-wave siren, 1 s loop (in-app only)
-// 2–4 kHz is where hearing is most sensitive, so these cut through road noise.
+//   chime.wav           level 1 "notice"   – soft two-tone ding (car screen)
+//   alarm_warning.wav   level 2 "warning"  – 3 high beeps, 1 s loop (car screen)
+//   alarm_critical.wav  red zone ("critical") – calm bell, three rising notes, then a rest (1.6 s). Phone only.
+//   alarm_siren.wav     emergency – fast, bright bell bursts, 1 s loop. Phone (in-app loop + the emergency
+//                       notification channel) and the car screen.
+// The phone plays only the last two (D53). The car screen's warning beeps sit at 2–4 kHz (where hearing is most
+// sensitive); the phone's bells are sine-based with soft attacks on purpose: drivers found the old square-wave
+// siren painful. The emergency is the stronger one through rhythm, brightness and loudness, not a harsh timbre.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -54,8 +57,26 @@ function toWav(samples) {
   return Buffer.concat([h, data]);
 }
 
+/** Scales to a peak of `peak` (overlapping notes would otherwise clip). */
+function normalize(buf, peak) {
+  let max = 0;
+  for (const v of buf) max = Math.max(max, Math.abs(v));
+  if (max > 0) for (let i = 0; i < buf.length; i++) buf[i] *= peak / max;
+  return buf;
+}
+
+/** Soft clipping (tanh): louder on average without a hard buzz. */
+function saturate(buf, drive) {
+  for (let i = 0; i < buf.length; i++) buf[i] = Math.tanh(drive * buf[i]);
+  return buf;
+}
+
 // Slightly "square-ish" timbre (fundamental + odd harmonic) reads as an alarm, not music.
 const BEEP = (f) => [[f, 1], [f * 3, 0.25]];
+// Sine bell with quiet 2nd/3rd harmonics: the phone's red-zone sound.
+const BELL = (f) => [[f, 1], [f * 2, 0.15], [f * 3, 0.05]];
+// Brighter bell (stronger harmonics): the emergency.
+const BRIGHT = (f) => [[f, 1], [f * 2, 0.35], [f * 3, 0.2], [f * 4, 0.08]];
 
 const sounds = {
   chime: render(0.7, (b) => {
@@ -65,20 +86,32 @@ const sounds = {
   alarm_warning: render(1.0, (b) => {
     for (let k = 0; k < 3; k++) tone(b, k * 0.18, 0.11, BEEP(3150), 0.7);
   }),
-  alarm_critical: render(1.0, (b) => {
-    for (let k = 0; k < 8; k++) tone(b, k * 0.125, 0.075, BEEP(k % 2 ? 3600 : 3000), 0.75);
-  }),
-  // Emergency: harsh "whoop" siren, 4 accelerating sweeps (1.6 → 4.2 kHz) per second, soft-clipped square
-  // wave + 3rd harmonic. Built to be impossible to ignore. In-app only (no notification channel uses it).
-  alarm_siren: render(1.0, (b) => {
-    let phase = 0;
-    for (let i = 0; i < b.length; i++) {
-      const k = ((i / RATE) * 4) % 1; // position inside a 0.25 s sweep
-      phase += (2 * Math.PI * (1600 + 2600 * k * k)) / RATE;
-      const s = Math.tanh(4 * Math.sin(phase)) * 0.8 + 0.2 * Math.sin(3 * phase);
-      b[i] += 0.85 * Math.min(1, k / 0.01, (1 - k) / 0.02) * s;
-    }
-  }),
+  // Red zone: A5 – C#6 – E6 once, soft sine bell (8 ms attack, exponential decay), then a rest. Played once per
+  // message while the level is critical and something risky is happening, so it repeats every ~1.6 s.
+  alarm_critical: normalize(
+    render(1.6, (b) => {
+      for (const [t, f] of [[0.0, 880], [0.16, 1108.73], [0.32, 1318.51]]) {
+        tone(b, t, 0.7, BELL(f), 0.5, { attack: 0.008, release: 0.12, decay: 0.22 });
+      }
+    }),
+    0.7,
+  ),
+  // Emergency: two quick rising bursts per second, C6 – E6 – G6 – C7, the brighter bell, shorter decay, gently
+  // saturated for loudness and peaked higher than the red-zone bell. Loops seamlessly every 1 s.
+  alarm_siren: normalize(
+    saturate(
+      render(1.0, (b) => {
+        for (const burst of [0, 0.5]) {
+          [1046.5, 1318.51, 1567.98, 2093].forEach((f, k) => {
+            // 0.27 s notes: the last one ends at 0.995 s, so the loop seam is silent (no click).
+            tone(b, burst + k * 0.075, 0.27, BRIGHT(f), 0.6, { attack: 0.004, release: 0.06, decay: 0.12 });
+          });
+        }
+      }),
+      2.2,
+    ),
+    0.95,
+  ),
 };
 
 for (const dir of OUT_DIRS) {
