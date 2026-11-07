@@ -47,6 +47,7 @@ BEHAVIORS = frozenset({
     "hands_off_wheel",   # ruke van volana
     "drowsy",            # pospan
     "eyes_off_road",     # pogled van puta
+    "collapse",          # vozač pao i ne pomera se: skor 0 i uzbuna odmah (posle 2 s)
 })
 
 
