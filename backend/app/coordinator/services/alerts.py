@@ -10,13 +10,13 @@ The score already says how dangerous the situation is now (services/scoring.py),
 
 from dataclasses import dataclass
 
-from app.coordinator.services.scoring import DEFAULT_CONFIG, ScoringConfig
+from app.coordinator.services.scoring import DEFAULT_CONFIG, ScoringConfig, collapse_confirmed
 from app.domain.enums import DashboardLight, SafetyLevel, SoundLevel
 from app.domain.levels import LEVEL_BANDS, level_for
 from app.domain.trip import CarResponse, Trip
 
 __all__ = [
-    "CAMERA_ALARM_MESSAGE", "LEVEL_BANDS", "POLICIES", "STANDING_MESSAGE", "LevelPolicy", "evaluate_response",
+    "CAMERA_ALARM_MESSAGE", "COLLAPSE_MESSAGE", "LEVEL_BANDS", "POLICIES", "STANDING_MESSAGE", "LevelPolicy", "evaluate_response",
     "level_for",
 ]
 
@@ -44,9 +44,13 @@ POLICIES: dict[SafetyLevel, LevelPolicy] = {
 
 CAMERA_ALARM_MESSAGE = "Danger detected - eyes on the road now."
 STANDING_MESSAGE = "Standing still - no warnings."
+COLLAPSE_MESSAGE = "Driver not responding - emergency contact alerted."
 
 
 def evaluate_response(trip: Trip, speed_kmh: float, cfg: ScoringConfig = DEFAULT_CONFIG) -> CarResponse:
+    # A collapsed driver is an emergency even in a stopped car, so this comes before the standing-still rule.
+    if collapse_confirmed(trip, cfg):
+        return CarResponse(DashboardLight.RED, True, SoundLevel.HIGH, COLLAPSE_MESSAGE)
     if speed_kmh < cfg.stationary_speed_kmh:
         return CarResponse(DashboardLight.GREEN, False, SoundLevel.NONE, STANDING_MESSAGE)
     level = level_for(trip.score)

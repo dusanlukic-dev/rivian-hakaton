@@ -9,4 +9,6 @@ TIPS: dict[Behavior, str] = {
     Behavior.HANDS_OFF_WHEEL: "Keep both hands on the wheel - it's your fastest way to react.",
     Behavior.DROWSY: "You showed signs of drowsiness - take a break at least every 2 hours and don't drive tired.",
     Behavior.EYES_OFF_ROAD: "Keep your eyes on the road - a glance away should never last longer than 2 seconds.",
+    Behavior.COLLAPSE: "You stopped responding at the wheel and your emergency contact was alerted - "
+    "please see a doctor before driving again.",
 }

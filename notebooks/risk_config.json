@@ -79,7 +79,7 @@
     "risk_tau_s": 0.50
   },
 
-  "groups": ["visual", "manual", "fatigue"],
+  "groups": ["visual", "manual", "fatigue", "medical"],
 
   "categories": {
     "phone_use": {
@@ -111,6 +111,11 @@
       "weight": 1.00, "base": 0.00, "T_crit_s": 0.9, "k": 7.0, "decay": 6.0,
       "on": 0.60, "off": 0.40,
       "membership": {"fatigue": 1.0}
+    },
+    "collapse": {
+      "weight": 1.00, "base": 0.50, "T_crit_s": 2.0, "k": 3.0, "decay": 6.0,
+      "on": 0.60, "off": 0.40,
+      "membership": {"medical": 1.0}
     }
   },
 
@@ -118,6 +123,7 @@
     {"name": "microsleep",       "type": "duration",  "category": "eyes_closed",   "min_s": 1.5, "floor": 0.75},
     {"name": "long_distraction", "type": "duration",  "category": "eyes_off_road", "min_s": 3.0, "floor": 0.50},
     {"name": "phone_sustained",  "type": "duration",  "category": "phone_use",     "min_s": 2.0, "floor": 0.50},
+    {"name": "collapse",         "type": "duration",  "category": "collapse",      "min_s": 2.0, "floor": 1.00},
     {"name": "vats",             "type": "vats", "window_s": 30.0, "cum_s": 10.0, "reset_on_road_s": 2.0, "floor": 0.50}
   ],
 

@@ -15,6 +15,10 @@ and climbs back as soon as it stops. Every tick:
 Calibration (daytime): a long phone look is "critical" in town and an emergency from ~70 km/h; a microsleep at
 speed is an emergency; hands off the wheel alone stays at caution/warning in town.
 
+Collapse (the driver slumped over and doesn't move, `rivian_model/`) is not a degree of danger but a medical
+emergency: once it has lasted ``collapse_confirm_s`` the score is 0 at once, at any speed (standing still too),
+and the emergency contact is alerted without waiting for ``emergency_hold_s`` (services/trips.py).
+
 All the knobs live in ``ScoringConfig`` so the team can tune them in one place.
 """
 
@@ -47,6 +51,8 @@ def _default_severity() -> dict[Behavior, Severity]:
         Behavior.TURNING_AROUND: Severity(0.25, 0.10, 0.70),  # usually together with LOOKING_BEHIND
         Behavior.EYES_OFF_ROAD: Severity(0.20, 0.08, 0.50),  # usually together with LOOKING_AT_PHONE
         Behavior.HANDS_OFF_WHEEL: Severity(0.15, 0.05, 0.45),
+        # Until it is confirmed (collapse_confirm_s) a collapse is very dangerous; once confirmed the score is 0.
+        Behavior.COLLAPSE: Severity(0.50, 0.25, 1.00),
     }
 
 
@@ -68,6 +74,9 @@ class ScoringConfig:
     rise_tau_s: float = 2.5  # how fast it comes back once things calm down (~95 % in 7.5 s)
     standing_rise_tau_s: float = 0.5  # standing still is safe at once: back to 100 in ~2 s
     emergency_hold_s: float = 2.0  # the emergency level must last this long (while moving) to alert the contact
+    # A collapse seen this long is confirmed: score 0 and the emergency, at any speed. Short dips (bending down
+    # to pick something up) stay below it; the model already requires the body to be still.
+    collapse_confirm_s: float = 2.0
     max_tick_gap_s: float = 5.0  # caps dt so a dropped connection can't swing the score
 
 
@@ -130,6 +139,11 @@ def exposure(
     return danger * factor
 
 
+def collapse_confirmed(trip: Trip, cfg: ScoringConfig = DEFAULT_CONFIG) -> bool:
+    """The driver has been slumped over and still for at least ``collapse_confirm_s``."""
+    return trip.active.get(Behavior.COLLAPSE, 0.0) >= cfg.collapse_confirm_s
+
+
 def target_score(exposure_now: float) -> float:
     return MAX_SCORE * (1.0 - min(max(exposure_now, 0.0), 1.0))
 
@@ -175,6 +189,8 @@ def apply_tick(
             tau = cfg.rise_tau_s if moving else cfg.standing_rise_tau_s
         trip.score += (target - trip.score) * (1.0 - math.exp(-dt / tau))
     trip.score = min(max(trip.score, 0.0), MAX_SCORE)
+    if collapse_confirmed(trip, cfg):
+        trip.score = 0.0  # a medical emergency, not a degree of danger: no smoothing, no speed factor
     trip.min_score = min(trip.min_score, trip.score)
 
     if moving:
