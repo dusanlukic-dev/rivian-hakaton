@@ -14,7 +14,7 @@ saobraćajnom semaforu.
 | 75–90 | kratko ometanje | zeleno-žuto svetlo, poruka na ekranu |
 | 35–75 | rizično ponašanje | žuto svetlo, vibracija sedišta i zvučni signal |
 | 10–35 | ozbiljna opasnost (npr. duži pogled u telefon u brzini) | crveno svetlo, vibracija i glasan alarm |
-| 0 | vozač ne reaguje (onesvestio se, pao na volan) | glasan alarm, telefon nudi poruku ili poziv kontaktu za hitne slučajeve |
+| 0 | vozač ne reaguje (onesvestio se, pao na volan) | glasan alarm, telefon sam pošalje SMS kontaktu za hitne slučajeve i nudi poziv |
 
 Sistem je pravedan prema vozaču. Ocena se kvari samo dok se rizično ponašanje zaista dešava, a vraća se na 100 čim
 prestane, pa jedan pogled u retrovizor ne ostavlja trag. Dok kola stoje, nema ni upozorenja ni kazne. Brzina pojačava
@@ -30,7 +30,7 @@ poslednje vožnje: da li vozi sve bezbednije i koje mu navike prave najveći riz
 - pogled skrenut sa puta duže od par sekundi;
 - zatvorene oči i mikrospavanje;
 - kolaps: vozač je pao napred i ne pomera se. To je **hitan slučaj**: uzbuna kreće čak i kad kola stoje, a telefon
-  odmah nudi poziv kontaktu za hitne slučajeve.
+  odmah, bez ičije potvrde, pošalje SMS kontaktu za hitne slučajeve i nudi poziv.
 
 Privatnost je ugrađena od početka. Slike iz kabine vidi samo vozač, u svom izveštaju. Kompanija ili osiguravač vide
 samo brojeve: ocene, vrste grešaka i koliko su trajale, nikada lice vozača.
