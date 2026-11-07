@@ -7,6 +7,13 @@ Svaki deo se otvara u svom PowerShell prozoru (tu je njegov log; zatvaranje proz
     .\demo.ps1 -PoVoznji                                                         # svaka voznja iz aplikacije = sledeci klip
     .\demo.ps1 -Webcam "Integrated Camera"                                       # web kamera umesto klipa
     .\demo.ps1 -Storage none -NoBle -Video ...                                   # bez servera i bez Bluetooth-a
+    .\demo.ps1 -Stop                                                             # ugasi sve sto je demo pokrenuo
+
+Svako pokretanje krece od cistog stanja: gasi prozore 'demo: ...' od proslog puta i stari backend iz ovog repoa koji
+drzi port 8000/8001 (tudje procese ne dira, za njih kaze ko drzi port). Port koji je Windows rezervisao (Hyper-V/WSL/
+Docker, WinError 10013) prijavi odmah: jednom, kao administrator, tools\reserve-ports.ps1.
+Telefon preko USB-a: prozor 'demo: telefon USB' drzi adb reverse za 8081/8000/8001 i vraca ga posle svakog
+ponovnog ukljucivanja kabla (-NoAdb: bez njega).
 
 Telefon: auto preko Bluetooth-a (Settings -> Car connection -> Cars nearby), server na http://<IP laptopa>:8001/api/v1
 (preko USB-a: adb reverse tcp:8001 tcp:8001, adresa localhost:8001). Wi-Fi veza sa autom: <IP laptopa>:8000.
@@ -34,6 +41,8 @@ param(
     [int]$ServerPort = 8001,
     [string]$CarName = "Rivian demo car",
     [switch]$NoBle,
+    [switch]$NoAdb,
+    [switch]$Stop,
     [switch]$Dashboard,
     [switch]$PoVoznji,
     [string[]]$Klipovi = @(),
@@ -53,8 +62,44 @@ function Open-Window([string]$Title, [string]$Dir, [string]$Command) {
     Write-Host "  [ok] $Title" -ForegroundColor Green
 }
 
-function Test-PortBusy([int]$P) {
-    return [bool](Get-NetTCPConnection -LocalPort $P -State Listen -ErrorAction SilentlyContinue)
+function Get-PortOwner([int]$P) {
+    $c = Get-NetTCPConnection -LocalPort $P -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $c) { return $null }
+    return Get-CimInstance Win32_Process -Filter "ProcessId=$($c.OwningProcess)"
+}
+
+function Stop-Tree([int]$ProcessId) {
+    taskkill /T /F /PID $ProcessId 2>&1 | Out-Null
+}
+
+function Stop-Demo {
+    # The windows this script opened (their command line carries the 'demo: ...' title) and their children...
+    $windows = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+        Where-Object { $_.CommandLine -like "*WindowTitle = 'demo: *" -and $_.ProcessId -ne $PID }
+    foreach ($w in $windows) { Stop-Tree $w.ProcessId }
+    # ...and a backend from this repo still holding our ports (an orphaned uvicorn worker keeps serving old code).
+    foreach ($p in @($Port, $ServerPort)) {
+        $owner = Get-PortOwner $p
+        if ($owner -and $owner.CommandLine -like "*$Root*") {
+            Stop-Tree $owner.ProcessId
+            Write-Host "  [ok] port ${p}: stopped an old backend (PID $($owner.ProcessId))" -ForegroundColor Green
+        }
+    }
+    if ($windows) { Write-Host "  [ok] closed $(@($windows).Count) old 'demo:' window(s)" -ForegroundColor Green }
+}
+
+function Test-PortReserved([int]$P) {
+    # Ranges Windows reserved for Hyper-V/WSL/Docker; administered ones (marked *, tools\reserve-ports.ps1) are ours.
+    foreach ($line in (netsh interface ipv4 show excludedportrange protocol=tcp)) {
+        if ($line -match '^\s*(\d+)\s+(\d+)\s*$' -and $P -ge [int]$Matches[1] -and $P -le [int]$Matches[2]) { return $true }
+    }
+    return $false
+}
+
+if ($Stop) {
+    Stop-Demo
+    Write-Host "Demo ugasen." -ForegroundColor Cyan
+    return
 }
 
 function Wait-Http([string]$Url, [string]$What) {
@@ -76,9 +121,16 @@ foreach ($f in "yolo11n_640.onnx", "yolo11n-pose_384.onnx", "face_landmarker.tas
         throw "Nema rivian_model\$f. Jednom: rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py"
     }
 }
+Stop-Demo   # od cistog stanja: prozori od proslog puta bi se inace javili novom koordinatoru (dva modela, dve kamere)
 $ports = @($Port) + $(if ($Storage -ne "none") { @($ServerPort) } else { @() })
 foreach ($p in $ports) {
-    if (Test-PortBusy $p) { throw "Port $p je zauzet (stari backend?). Ugasi ga ili izaberi -Port / -ServerPort." }
+    if (Test-PortReserved $p) {
+        throw "Windows je rezervisao port $p (Hyper-V/WSL/Docker). Jednom, kao administrator: tools\reserve-ports.ps1; ili -Port / -ServerPort."
+    }
+    $owner = Get-PortOwner $p
+    if ($owner) {
+        throw "Port $p drzi $($owner.Name) (PID $($owner.ProcessId)): $($owner.CommandLine). Ugasi ga ili izaberi -Port / -ServerPort."
+    }
 }
 if ($Video -and -not (Test-Path $Video)) { throw "Nema klipa: $Video" }
 if (@($Video, $Webcam, $(if ($PoVoznji) { "x" } else { "" })) -ne "" | Select-Object -Skip 1) {
@@ -125,8 +177,24 @@ Wait-Http "http://127.0.0.1:$Port/api/v1/coordinator/status" "Koordinator"
 
 # ---------------------------------------------------------------- 3. Bluetooth veza sa telefonom
 if (-not $NoBle) {
-    Open-Window "Bluetooth ($CarName)" $Root `
-        "& '$BackendPy' backend\coordinator\car_link\gateway.py --coordinator http://127.0.0.1:$Port/api/v1 --name '$CarName'"
+    $gateway = Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine -like "*car_link*gateway.py*" }
+    if ($gateway) {   # two gateways would fight over the Bluetooth adapter; it follows the new coordinator by itself
+        Write-Host "  [ok] Bluetooth gateway vec radi (PID $(@($gateway)[0].ProcessId)), ostaje" -ForegroundColor Green
+    } else {
+        Open-Window "Bluetooth ($CarName)" $Root `
+            "& '$BackendPy' backend\coordinator\car_link\gateway.py --coordinator http://127.0.0.1:$Port/api/v1 --name '$CarName'"
+    }
+}
+
+# ---------------------------------------------------------------- 3b. telefon preko USB-a: adb reverse stalno vazi
+$adb = Join-Path $env:LOCALAPPDATA "Android\Sdk\platform-tools\adb.exe"
+if (-not (Test-Path $adb)) { $adb = (Get-Command adb -ErrorAction SilentlyContinue).Source }
+if ($adb -and -not $NoAdb) {
+    # Only single quotes inside: Start-Process passes this command line to powershell.exe as it is.
+    $keep = "while (`$true) { if ((& '$adb' get-state 2>`$null) -eq 'device') { `$list = (& '$adb' reverse --list 2>`$null) -join ' '; " +
+            "foreach (`$p in 8081, $Port, $ServerPort) { `$r = 'tcp:' + `$p; if (`$list -notmatch (`$r + ' ' + `$r)) { " +
+            "& '$adb' reverse `$r `$r | Out-Null; Write-Host ((Get-Date -Format 'HH:mm:ss') + ' adb reverse ' + `$r) } } }; Start-Sleep -Seconds 3 }"
+    Open-Window "telefon USB (adb reverse 8081, $Port, $ServerPort)" $Root $keep
 }
 
 # ---------------------------------------------------------------- 4. model
