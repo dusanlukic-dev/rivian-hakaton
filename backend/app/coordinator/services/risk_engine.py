@@ -1,14 +1,11 @@
-"""The CV team's per-frame risk model, extracted into the coordinator: model evidence -> risk, alert, active categories.
+"""The per-frame risk engine of the coordinator: model evidence -> risk, alert, active categories.
 
-Source: `RiskEngine` in `notebooks/risk_pipeline.py` (CV team, commit 76d38e7: per-frame math only), copied
-without editing their file. The model worker only *detects* (perception + FeatureExtractor -> evidence p_i per
-category, `model/worker.py`); the coordinator computes everything after that: this engine, then our 0-100 score
-(`scoring.py`) and the car's reaction (`alerts.py`). The whole-trip statistics of the model (episodes, alert
-time, rules) are `app/services/model_report.py`, which the coordinator feeds with every tick.
-
-The code below is identical to the original. `tests/test_risk_engine.py` replays random evidence through this copy
-and the original and requires identical records, so a change on either side shows up. Until the CV code is
-cleaned up, tune thresholds in `notebooks/risk_config.json` (both read it).
+Origin: `RiskEngine` of the CV team's `notebooks/risk_pipeline.py` (commit 76d38e7), copied unchanged. Their
+pipeline was removed when the model in `rivian_model/` replaced it (2026-11-07), so this is now the only copy.
+The model only *detects* (`rivian_model/rivian_detector.py`: evidence p_i per category); the coordinator computes
+everything after that: this engine, then our 0-100 score (`scoring.py`) and the car's reaction (`alerts.py`).
+The whole-trip statistics of the model (episodes, alert time, rules) are `app/services/model_report.py`, which
+the coordinator feeds with every tick. Thresholds: `notebooks/risk_config.json`.
 
 Per step, in order (MATEMATICKI_MODEL.md, CV team):
   1. EMA smoothing of each category's evidence (evidence_tau_s)

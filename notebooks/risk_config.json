@@ -1,78 +1,6 @@
 {
-  "version": "1.0",
-  "description": "Konfiguracija modela rizika vozaca (cabin kamera, samo vozac). Sve formule: MATEMATICKI_MODEL.md",
-
-  "video": {
-    "process_every_n_frames": 3,
-    "input_width": 960,
-    "driver_side": "right",
-    "driver_roi": [0.35, 0.0, 1.0, 1.0],
-    "head_roi": [0.35, 0.0, 0.9, 0.65],
-    "steering_wheel_roi": [0.66, 0.55, 1.0, 1.0],
-    "yolo_full_res": true,
-    "_roi_help": "ROI = [x0, y0, x1, y1] as fractions of the frame (0..1, origin top-left). This camera faces backwards, so the driver (LHD car) is on the RIGHT of the image. Set them with: python risk_pipeline.py --video clip.mp4 --pick-roi"
-  },
-
-  "schedule": {
-    "face_every_n": 1,
-    "hands_every_n": 2,
-    "objects_every_n": 2,
-    "clip_every_s": 0.0,
-    "max_result_age_s": 0.6
-  },
-
-  "models": {
-    "face_landmarker": "models/face_landmarker.task",
-    "hand_landmarker": "models/hand_landmarker.task",
-    "yolo_onnx": "models/yolo11s_640.onnx",
-    "yolo_input": 640,
-    "yolo_conf": 0.20,
-    "face_num": 2,
-    "face_min_conf": 0.4,
-    "hands_num": 4,
-    "clip_model": "ViT-B-32",
-    "clip_pretrained": "laion2b_s34b_b79k"
-  },
-
-  "calibration": {
-    "mode": "auto",
-    "prior_yaw_deg": 34.0,
-    "prior_pitch_deg": 8.0,
-    "max_shift_deg": 10.0,
-    "min_samples": 15,
-    "duration_s": 10.0,
-    "yaw_thr_deg": 25.0,
-    "pitch_thr_deg": 18.0,
-    "angle_softness_deg": 4.0,
-    "gaze_down_thr": 0.35,
-    "eye_closed_thr": 0.75,
-    "calib_max_closure": 0.45,
-    "calib_max_gaze_down": 0.25,
-    "face_missing_p": 0.60,
-    "no_hands_detected_p": 0.30
-  },
-
-  "phone": {
-    "conf_full": 0.5,
-    "prox_sigma": 0.15,
-    "hold_tau_s": 1.0
-  },
-
-  "hands": {
-    "one_on_other_unseen_p": 0.20,
-    "one_on_other_off_p": 0.45,
-    "none_on_p": 0.85
-  },
-
-  "drowsiness": {
-    "perclos_window_s": 60.0,
-    "perclos_normal": 0.08,
-    "perclos_high": 0.25,
-    "yawn_jaw_thr": 0.55,
-    "yawn_min_s": 1.5,
-    "yawn_window_s": 300.0,
-    "yawns_high": 3
-  },
+  "version": "1.1",
+  "description": "Koordinatorov RiskEngine (backend/app/coordinator/services/risk_engine.py): dokaz modela po kategoriji -> rizik, aktivne kategorije, pravila i alarm. Dokaze salje model (rivian_model/rivian_detector.py: phone_use, eyes_off_road, eyes_closed, collapse); kategorija koju model ne salje ima dokaz 0.",
 
   "smoothing": {
     "evidence_tau_s": 0.30,
@@ -139,20 +67,5 @@
     "rise_hold_s": 0.3,
     "fall_hold_s": 1.0,
     "min_display_s": 2.0
-  },
-
-  "logging": {
-    "out_dir": "logs",
-    "frame_log_hz": 5.0,
-    "flush_every_s": 1.0,
-    "_report_help": "Trip summary, behavior episodes and alert episodes are computed by the backend from the frame stream: backend/app/services/model_report.py (ModelReportConfig). Offline: cd backend && python -m app.services.model_report <frames.jsonl>"
-  },
-
-  "backend": {
-    "url": "http://127.0.0.1:8000/api/v1",
-    "send_hz": 2.0,
-    "video_fps": 8.0,
-    "send_video": true,
-    "_help": "--mode prod (and dev with --backend) sends the frame record ~send_hz times a second plus on every alert change, and JPEG video for the risky-moment clips."
   }
 }

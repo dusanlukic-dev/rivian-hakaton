@@ -2,8 +2,8 @@
 
     camera ──JPEG──► on_video_frame ─┬─► VideoCache (5 min)
                                      └─► ModelLink ──► model worker ──evidence──► on_detection
-                                                                                     │ RiskEngine (CV team's math)
-    debug only: simulator labels, risk_pipeline --mode prod ──POST /telemetry────────┤ (on_telemetry)
+                                                                                     │ RiskEngine (risk_engine.py)
+    debug only: simulator labels, recorded frame records ──POST /telemetry───────────┤ (on_telemetry)
                                                                                      ▼
                                 speed (mock / phone) ──► on_tick: score + car response (scoring.py, alerts.py)
                                                            ├─► ModelReportBuilder: the model's whole-trip report
@@ -162,7 +162,7 @@ class Coordinator:
         if self._risk_config is None:
             try:
                 self._risk_config = load_risk_config(self.cfg.risk_config_file)
-                logger.info("Risk engine (CV team's model) uses %s", self.cfg.risk_config_file)
+                logger.info("Risk engine uses %s", self.cfg.risk_config_file)
             except Exception as e:
                 self._risk_error = f"{type(e).__name__}: {e}"
                 logger.warning(
@@ -254,7 +254,7 @@ class Coordinator:
     async def on_telemetry(self, trip: Trip, tick: TelemetryTick) -> TripState:
         """POST /telemetry: the simulator's labels, or a frame record from a model that scored it by itself.
 
-        A frame record (`risk_pipeline.py --mode prod`) is a **debug feed**: the pipeline ran its own RiskEngine, so
+        A frame record (`notebooks/safety_client.py --replay`) is a **debug feed**: it was scored elsewhere, so
         the coordinator only maps its result instead of computing the risk. The real path is camera -> coordinator
         -> model worker. While a worker is connected it drives the score, and frame records are refused
         (DebugFeedRefused) so the two never score one trip together.
@@ -267,7 +267,7 @@ class Coordinator:
                 self._debug_trips.add(trip.id)
                 logger.warning(
                     "Trip %s is fed by the debug path (frame records on POST /telemetry, the pipeline's own risk). "
-                    "Real path: camera -> coordinator -> model worker (model/worker.py).", trip.id,
+                    "Real path: camera -> coordinator -> model worker (rivian_model/rivian_detector.py).", trip.id,
                 )
         return await self.on_tick(trip, tick)
 

@@ -1,30 +1,18 @@
-"""The coordinator's RiskEngine is a copy of the CV team's (notebooks/risk_pipeline.py). It must stay identical.
+"""The coordinator's RiskEngine: model evidence -> risk, active categories, rules, alert.
 
-The original is imported straight from the CV team's file (it needs numpy, nothing else at import time), so a
-change on either side shows up here. Whole-trip statistics are app/services/model_report.py (test_model_report.py).
+It started as a copy of the CV team's engine (their pipeline is gone since the model in rivian_model/ replaced it,
+2026-11-07), so this is now the only copy. Whole-trip statistics are app/services/model_report.py
+(test_model_report.py); the collapse category is covered in test_collapse.py.
 """
 
-import importlib.util
 import random
 
 import pytest
 
-from app.coordinator.services.risk_engine import RiskEngine, load_risk_config
+from app.coordinator.services.risk_engine import LEVELS, RiskEngine, load_risk_config
 from app.core.config import REPO_DIR
 
-PIPELINE = REPO_DIR / "notebooks" / "risk_pipeline.py"
 CONFIG = load_risk_config(REPO_DIR / "notebooks" / "risk_config.json")
-
-
-@pytest.fixture(scope="module")
-def original():
-    pytest.importorskip("numpy")
-    if not PIPELINE.exists():
-        pytest.skip("notebooks/risk_pipeline.py is not in this checkout")
-    spec = importlib.util.spec_from_file_location("cv_risk_pipeline", PIPELINE)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def evidence_stream(seed: int, steps: int):
@@ -42,11 +30,22 @@ def evidence_stream(seed: int, steps: int):
         yield t, dict(level)
 
 
-@pytest.mark.parametrize("seed", range(5))
-def test_extracted_engine_matches_the_cv_original(original, seed):
-    ours, theirs = RiskEngine(CONFIG), original.RiskEngine(CONFIG)
-    for t, evidence in evidence_stream(seed, 4000):
-        assert ours.step(t, evidence) == theirs.step(t, evidence)
+@pytest.mark.parametrize("seed", range(3))
+def test_records_stay_in_range_on_random_evidence(seed):
+    engine = RiskEngine(CONFIG)
+    for t, evidence in evidence_stream(seed, 3000):
+        record = engine.step(t, evidence)
+        assert 0.0 <= record["risk"]["final"] <= 1.0
+        assert record["alert"]["level"] in LEVELS
+        assert set(record["categories"]) == set(CONFIG["categories"])
+
+
+def test_a_category_the_model_does_not_send_stays_inactive():
+    engine = RiskEngine(CONFIG)
+    record = {}
+    for i in range(50):  # the model in rivian_model/ never sends hands_off_wheel
+        record = engine.step(i * 0.1, {"phone_use": 0.05})
+    assert not record["categories"]["hands_off_wheel"]["active"] and record["alert"]["level"] == "green"
 
 
 def test_sustained_phone_use_goes_red():

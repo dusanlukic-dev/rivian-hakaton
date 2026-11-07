@@ -32,7 +32,7 @@ class Settings(BaseSettings):
     section_s: float = 2.0
     # Model detections arrive 5-10 per second; the phone gets `state` about this often (and at once on a change).
     live_state_interval_s: float = 0.5
-    # The CV team's thresholds for the extracted risk engine. Empty = <repo>/notebooks/risk_config.json
+    # Thresholds of the coordinator's risk engine. Empty = <repo>/notebooks/risk_config.json
     risk_config_path: str = ""
     # Camera frames kept for pulling the image of a dangerous moment: "disk" (diskcache) or "memory".
     video_cache: str = "disk"

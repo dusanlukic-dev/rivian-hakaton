@@ -2,7 +2,7 @@
 
     camera ──WS /camera/ws (JPEG per message) or POST /video/frames──► video cache + model worker
     model worker ◄──WS /model/ws──► coordinator (routes/model.py)
-    debug only: simulator labels / risk_pipeline --mode prod frame records ──POST /telemetry──► score
+    debug only: simulator labels / recorded frame records ──POST /telemetry──► score
     phone, dashboard ◄──WS /ws── trip_started, state, emergency, section, trip_ended
 """
 
@@ -27,7 +27,7 @@ ONE_CAMERA = "Another camera is already streaming: the coordinator takes one cab
 NO_ACTIVE_TRIP = "No active trip - start one from the app first"
 MODEL_WORKER_DRIVES = (
     "A model worker is connected and drives the score: frame records on /telemetry are a debug feed "
-    "(risk_pipeline.py --mode prod). Stop the worker to use it."
+    "(a recorded stream, safety_client.py --replay). Stop the worker to use it."
 )
 
 

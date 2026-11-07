@@ -1,7 +1,8 @@
 """The camera model's own trip report, built from the stream of its frame records.
 
-The CV pipeline (notebooks/risk_pipeline.py) only computes the per-frame risk and sends each frame
-record to POST /telemetry. Everything about the whole drive is computed here, from that stream:
+A frame record is what the coordinator's RiskEngine makes of one detection of the model
+(rivian_model/rivian_detector.py), or what arrives on POST /telemetry (debug feed). Everything about the
+whole drive is computed here, from that stream:
 
     frame record ──► CameraView ──► ModelReportBuilder.add(t, dt, view, moving)
                                        ├─ risk statistics (mean, RMS, p95, max, model score)
@@ -9,13 +10,12 @@ record to POST /telemetry. Everything about the whole drive is computed here, fr
                                        ├─ per-category active time and behavior episodes
                                        └─ alert episodes (green → yellow/red → green) with their causes
 
-It is the same math the pipeline used to run for its summary.json / events.jsonl. Standing time
-(< 5 km/h) is not counted, like the rest of the trip statistics.
+It is the same math the CV team's pipeline used to run for its summary.json / events.jsonl. Standing
+time (< 5 km/h) is not counted, like the rest of the trip statistics.
 
-Standard library only (plus app.domain), so the pipeline's dev mode can import it too. Offline,
-from backend/:
+Standard library only (plus app.domain). Offline, from backend/, on a recorded frame stream:
 
-    python -m app.services.model_report ../notebooks/logs/<run>/frames.jsonl [--json]
+    python -m app.services.model_report <frames.jsonl> [--json]
 """
 
 from __future__ import annotations

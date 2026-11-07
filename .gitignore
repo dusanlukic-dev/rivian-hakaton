@@ -24,12 +24,8 @@ venv/
 .mypy_cache/
 .ruff_cache/
 
-# CV pipeline (notebooks/setup_models.*, risk_pipeline.py): downloaded models, run logs and
-# cabin-camera recordings. Large, and the videos are private: never commit them.
-notebooks/models/
-notebooks/logs/
-notebooks/*.pt
-notebooks/*.onnx
+# Camera model: rivian_model/.gitignore keeps its weights (*.onnx, *.task, *.pt) and the warm-up frame out.
+# Cabin-camera recordings are large and private (faces of real people): never commit them.
 *.mp4
 *.avi
 *.mov

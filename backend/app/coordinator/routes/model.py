@@ -9,5 +9,5 @@ router = APIRouter(tags=["model (coordinator)"])
 
 @router.websocket("/model/ws")
 async def model_worker(websocket: WebSocket, coordinator: CoordinatorDep) -> None:
-    """`model/worker.py` connects here: frames go out as binary messages, detections come back as JSON."""
+    """The model (`rivian_model/rivian_detector.py`) connects here: frames go out as binary messages, detections come back as JSON."""
     await coordinator.model.serve(websocket)

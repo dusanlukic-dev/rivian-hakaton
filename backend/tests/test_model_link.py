@@ -95,7 +95,7 @@ def test_slow_model_gets_the_newest_frame_and_lost_frames_time_out(client, clock
 
 
 def test_debug_feed_is_refused_while_a_model_worker_drives(client, coordinator):
-    """risk_pipeline.py --mode prod posts frame records it scored itself: a debug feed, never mixed with the worker."""
+    """A recorded frame stream (scored elsewhere) on /telemetry is a debug feed, never mixed with the worker."""
     with client.websocket_connect(f"{API}/model/ws") as model:
         model.send_json({"type": "hello", "worker": "fake", "version": "test"})
         trip_id = start_trip(client)["trip_id"]

@@ -1,4 +1,4 @@
-"""Live link between the coordinator and the model worker (`model/worker.py`, its own process / container).
+"""Live link between the coordinator and the model worker (`rivian_model/rivian_detector.py`, its own process / container).
 
 The worker connects to the coordinator: `ws://<coordinator>:8000/api/v1/model/ws`. Dialing in means no extra
 port or firewall rule on the model's side, and either side can restart; the worker reconnects on its own.
@@ -7,14 +7,14 @@ port or firewall rule on the model's side, and either side can restart; the work
                                     header = {"type": "frame", "id": 41, "t": 12.375, "trip_id": "..."}
                             text:   {"type": "reset", "trip_id": "..."}   new trip: start the detectors fresh
                                     {"type": "idle"}                      no trip: stop sending
-    worker -> coordinator   text:   {"type": "hello", "worker": "cv-pipeline", "version": "...", "categories": [...]}
+    worker -> coordinator   text:   {"type": "hello", "worker": "rivian-pose", "version": "...", "categories": [...]}
                                     {"type": "detection", "id": 41, "t": 12.375, "trip_id": "...",
                                      "evidence": {"phone_use": 0.82, "eyes_off_road": 0.9, ...},
                                      "perception": {...}, "ms": 84.2}
                                     {"type": "error", "id": 41, "message": "..."}
 
 `t` = seconds since the trip started (the worker's detectors use it as their clock). Evidence is the raw p_i per
-category, what the CV team's FeatureExtractor outputs; everything after that (smoothing, durations, risk, alert,
+category, what the model's DriverLogic outputs (rivian_model/features.py); everything after that (smoothing, durations, risk, alert,
 our score) is computed by the coordinator.
 
 Flow control: one frame in flight. New camera frames replace the waiting one (the newest frame wins), so a slow
