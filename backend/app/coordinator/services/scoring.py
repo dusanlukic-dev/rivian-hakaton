@@ -52,8 +52,9 @@ def _default_severity() -> dict[Behavior, Severity]:
         Behavior.TURNING_AROUND: Severity(0.25, 0.10, 0.70),  # usually together with LOOKING_BEHIND
         Behavior.EYES_OFF_ROAD: Severity(0.20, 0.08, 0.50),  # usually together with LOOKING_AT_PHONE
         Behavior.HANDS_OFF_WHEEL: Severity(0.15, 0.05, 0.45),
-        # Until it is confirmed (collapse_confirm_s) a collapse is very dangerous; once confirmed the score is 0.
-        Behavior.COLLAPSE: Severity(0.50, 0.25, 1.00),
+        # No weight before it is confirmed (collapse_confirm_s): a short slump (getting out, picking something up)
+        # must not cost points. Once confirmed, apply_tick sets the score to 0 directly.
+        Behavior.COLLAPSE: Severity(0.0, 0.0, 0.0),
     }
 
 

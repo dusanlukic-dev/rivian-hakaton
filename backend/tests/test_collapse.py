@@ -99,9 +99,19 @@ def test_risk_config_raises_a_red_alert_for_a_collapse():
     assert "collapse" in rec["rules_triggered"] and rec["alert"]["level"] == "red"
 
 
-def test_collapse_ramps_before_it_is_confirmed():
+def test_an_unconfirmed_collapse_costs_no_points():
     trip = new_trip()
     apply_tick(trip, DAY, 55, COLLAPSE)
     apply_tick(trip, DAY + timedelta(seconds=1), 55, COLLAPSE)
-    assert 0 < trip.score < 100 and not collapse_confirmed(trip)
+    assert trip.score == 100 and not collapse_confirmed(trip)
     assert DEFAULT_CONFIG.collapse_confirm_s == 2.0
+
+
+def test_a_short_slump_while_driving_keeps_the_score():
+    # 032409 (getting out of the car): the model saw a collapse for ~0.3 s and the score fell 80 -> 47.
+    trip = new_trip()
+    ticks(trip, 3, speed=55)
+    for _ in range(3):
+        ticks(trip, 0.3, speed=55, behaviors=COLLAPSE)
+        ticks(trip, 2.0, speed=55)
+    assert trip.score == 100 and trip.min_score == 100 and not trip.emergency_alert_sent
