@@ -39,12 +39,19 @@ def test_confirmed_collapse_zeroes_the_score_and_alerts_once_at_driving_speed():
     fired = ticks(trip, 3, speed=55, behaviors=COLLAPSE)
     assert fired.count(True) == 1  # the contact is alerted once
     first = fired.index(True)
-    assert 1.9 <= (first + 1) * 0.1 <= 2.2  # right after collapse_confirm_s, no extra emergency_hold_s
+    assert 1.9 <= (first + 1) * 0.1 <= 2.2  # right after collapse_confirm_s
     assert trip.score == 0 and level_for(trip.score) is SafetyLevel.EMERGENCY
     assert trip.emergency_alert_sent
     response = evaluate_response(trip, 55)
     assert (response.dashboard_light, response.vibrate_seat, response.sound, response.message) == (
         DashboardLight.RED, True, SoundLevel.HIGH, COLLAPSE_MESSAGE)
+
+
+def test_nothing_but_a_collapse_alerts_the_contact():
+    trip = new_trip()
+    fired = ticks(trip, 10, speed=130, behaviors={Behavior.DROWSY, Behavior.LOOKING_AT_PHONE})
+    assert True not in fired and not trip.emergency_alert_sent
+    assert trip.score >= 10 and level_for(trip.score) is SafetyLevel.CRITICAL
 
 
 def test_collapse_in_a_stopped_car_is_still_an_emergency():

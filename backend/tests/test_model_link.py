@@ -62,7 +62,9 @@ def test_model_worker_drives_the_score(client, clock, coordinator, jpeg_frames):
     assert len(sections) == 9 and all(s["ticks"] >= 10 for s in sections[:-1])
     critical = [s for s in sections if s["danger"] == "critical"]
     assert critical and all(s["has_image"] for s in critical)  # the analysed frame of the riskiest moment
-    assert all(s["categories"]["phone_use"]["active"] for s in critical)
+    # Every critical section is the phone: seen by the model, or its bridged tail (scoring.Debounce).
+    assert all(s["behaviors"].get("looking_at_phone") for s in critical)
+    assert any(s["categories"]["phone_use"]["active"] for s in critical)
     [moment] = [m for m in report["moments"] if m["danger"] == "critical"]
     assert 9 <= moment["t_start"] + 2 and moment["t_end"] <= 18 and moment["image_url"]
     assert "looking_at_phone" in moment["behaviors"] and moment["alert"] == "red"

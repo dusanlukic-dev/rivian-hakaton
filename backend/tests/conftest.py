@@ -178,6 +178,15 @@ def send_tick(client, ts, speed=None, behaviors=(), frame=None):
     return res.json()
 
 
+def send_ticks(client, start, seconds, speed=None, behaviors=(), frame=None, step=0.5):
+    """A behavior held for `seconds` (ticks every `step` from `start`), the way a camera reports it: a single tick is
+    shorter than any behavior's onset (scoring.Debounce). Returns the last state."""
+    state = {}
+    for i in range(round(seconds / step) + 1):
+        state = send_tick(client, start + timedelta(seconds=i * step), speed, behaviors, frame)
+    return state
+
+
 def send_video(client, jpeg: bytes):
     res = client.post(f"{API}/video/frames", content=jpeg, headers={"Content-Type": "image/jpeg"})
     assert res.status_code == 204, res.text

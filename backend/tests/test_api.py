@@ -1,6 +1,6 @@
 from datetime import timedelta
 
-from tests.conftest import API, CONTACT, DAY, MODEL_FRAME, NIGHT, send_tick, start_trip
+from tests.conftest import API, CONTACT, DAY, MODEL_FRAME, NIGHT, send_tick, send_ticks, start_trip
 
 
 def test_health(client):
@@ -14,15 +14,20 @@ def test_full_trip_flow(client):
     assert state["level"] == "safe"
     assert state["response"]["dashboard_light"] == "green"
 
-    # Phone use on the highway at night until the score bottoms out.
+    # Phone use on the highway at night until the score bottoms out: as bad as driving gets, not an emergency.
     for i in range(60):
         state = send_tick(client, NIGHT + timedelta(seconds=i), 130, ["looking_at_phone"])
     assert state["trip_id"] == trip_id
-    assert state["level"] == "emergency"
-    assert state["emergency_alert_sent"] is True
+    assert state["level"] == "critical" and state["score"] >= 10
+    assert state["emergency_alert_sent"] is False
     assert state["response"]["dashboard_light"] == "red"
     assert state["response"]["sound"] == "high"
     assert state["active_behaviors"]["looking_at_phone"] > 0
+    # The driver collapses: the one emergency, the contact is alerted.
+    for i in range(60, 64):
+        state = send_tick(client, NIGHT + timedelta(seconds=i), 130, ["collapse"])
+    assert state["level"] == "emergency" and state["score"] == 0
+    assert state["emergency_alert_sent"] is True
 
     summary = client.post(f"{API}/trips/{trip_id}/end").json()
     assert summary["status"] == "ended"
@@ -47,28 +52,33 @@ def test_websocket_pushes_live_events(client):
         send_tick(client, NIGHT, 130, ["looking_at_phone"])
         update = ws.receive_json()
         assert update["type"] == "state"
-        assert update["data"]["score"] < 100
 
         for i in range(1, 60):
             send_tick(client, NIGHT + timedelta(seconds=i), 130, ["looking_at_phone"])
+        for i in range(60, 64):  # then the driver collapses: the one emergency
+            send_tick(client, NIGHT + timedelta(seconds=i), 130, ["collapse"])
         client.post(f"{API}/trips/{trip_id}/end")
 
         messages = []
         while not messages or messages[-1]["type"] != "trip_ended":
             messages.append(ws.receive_json())
         types = [m["type"] for m in messages]
-        assert types.count("state") == 59  # one per telemetry tick (the simulator path isn't throttled)
+        assert types.count("state") == 63  # one per telemetry tick (the simulator path isn't throttled)
+        states = [m["data"] for m in messages if m["type"] == "state"]
+        assert min(s["score"] for s in states[:59]) >= 10 and states[30]["level"] == "critical"  # phone: critical
         assert types.count("emergency") == 1
         assert types[types.index("emergency") - 1] == "state"  # right after the state of the same tick
-        # A section summary every 2 s of driving: 60 s -> 30 (the last one closes with the trip).
+        # A section summary every 2 s of driving: 64 s -> 32 (the last one closes with the trip).
         sections = [m["data"] for m in messages if m["type"] == "section"]
-        assert len(sections) == 30
-        assert [s["seq"] for s in sections] == list(range(30))
-        # Phone at 130 km/h at night: the loud alarm sounds from the first second, so every section is critical.
+        assert len(sections) == 32
+        assert [s["seq"] for s in sections] == list(range(32))
+        # Phone at 130 km/h at night: the loud alarm sounds from the first second it counts, so every section is
+        # critical; the collapse at the end is too.
         dangers = [s["danger"] for s in sections]
         assert set(dangers) == {"critical"}
-        assert sections[-1]["behaviors"]["looking_at_phone"] > 0 and sections[-1]["image_url"] is None
-        assert messages[-1]["data"]["final_score"] < 10
+        assert sections[10]["behaviors"]["looking_at_phone"] > 0 and sections[-1]["image_url"] is None
+        assert sections[-1]["behaviors"]["collapse"] > 0
+        assert messages[-1]["data"]["final_score"] == 0
 
 
 def test_websocket_sends_current_state_on_connect(client):
@@ -111,8 +121,16 @@ def test_model_frame_is_scored_and_forwarded(client):
     start_trip(client)
     with client.websocket_connect(f"{API}/ws") as ws:
         ws.receive_json()  # current state on connect
-        state = send_frame(client, DAY, 60, MODEL_FRAME)  # the model's red alert (risk 0.82) at 60 km/h
-        pushed = ws.receive_json()
+        first = send_frame(client, DAY, 60, MODEL_FRAME)  # the model's red alert (risk 0.82) at 60 km/h
+        assert ws.receive_json()["data"] == first
+        # Its red alert makes the car react at once and its risk counts in the score, but a behavior counts only
+        # once it has been seen for its onset (phone 1 s, eyes off the road 2 s).
+        assert first["active_behaviors"] == {} and first["score"] < 35 and first["response"]["sound"] == "high"
+        for i in range(1, 6):
+            state = send_frame(client, DAY + timedelta(seconds=i * 0.5), 60, MODEL_FRAME)
+            pushed = ws.receive_json()
+            while pushed["type"] != "state":  # a section closes every 2 s on the same socket
+                pushed = ws.receive_json()
 
     assert pushed["data"] == state
     # Active categories become backend labels and cost points; inactive ones don't.
@@ -128,8 +146,8 @@ def test_model_frame_is_scored_and_forwarded(client):
     assert "perception" not in str(state)
 
     # The model's own risk counts in the live score, and its red alert makes the car react right away.
-    assert state["score"] < 35 and state["level"] in ("critical", "emergency")
-    assert state["emergency_alert_sent"] is False  # the emergency level must last 2 s first
+    assert state["score"] < 35 and state["level"] == "critical"
+    assert state["emergency_alert_sent"] is False  # only a collapse alerts the contact
     assert state["response"]["vibrate_seat"] is True
     assert state["response"]["sound"] == "high"
 

@@ -19,6 +19,18 @@ class BehaviorStat:
 
 
 @dataclass
+class Episode:
+    """One stretch of a behavior as the camera reports it, short gaps bridged (services/scoring.py)."""
+
+    age_s: float = 0.0  # since it started, gaps included
+    seen_s: float = 0.0  # time it was actually seen
+    gap_s: float = 0.0  # since it was last seen (0 while it is)
+    confirmed: bool = False  # seen long enough to count (Debounce.onset_s)
+    counted: bool = False  # counted as an occurrence in the statistics
+    stats_s: float = 0.0  # how much of age_s the statistics already hold
+
+
+@dataclass
 class CarResponse:
     """What the car should do right now: dashboard light, seat vibration, sound."""
 
@@ -68,14 +80,13 @@ class Trip:
     elapsed_s: float = 0.0
     moving_s: float = 0.0  # seconds driven at >= 5 km/h (standing still isn't part of the statistics)
     score_seconds: float = 0.0  # integral of the score over moving time, for the average
-    emergency_streak_s: float = 0.0  # how long the emergency level has lasted while moving
-    collapse_seen_s: float | None = None  # elapsed_s when a confirmed collapse was last seen (scoring.collapse_hold_s)
     last_tick_at: datetime | None = None
 
-    # Behaviors currently visible on camera -> how long they have lasted (seconds).
+    # Behaviors happening now -> how long they have lasted (seconds): the confirmed episodes below, short gaps
+    # included. Everything downstream (score, car response, sections, the app's tiles) reads this.
     active: dict[Behavior, float] = field(default_factory=dict)
-    # Active behaviors already counted as an occurrence (counted once per streak, while moving).
-    counted: set[Behavior] = field(default_factory=set)
+    # Every behavior the camera has seen recently, confirmed or not (services/scoring.py, `Debounce`).
+    episodes: dict[Behavior, Episode] = field(default_factory=dict)
     stats: dict[Behavior, BehaviorStat] = field(default_factory=dict)
 
     response: CarResponse = field(default_factory=CarResponse)

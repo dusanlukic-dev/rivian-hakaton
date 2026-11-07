@@ -12,8 +12,8 @@ from app.server.repositories.users import UserRepository
 from app.server.services.auth import AuthService, AuthUnavailable, get_auth_service, hash_password, verify_password
 from app.server.services.storage import TripStore
 from tests.conftest import (
-    API, CONTACT, DAY, MODEL_FRAME, app_client, bearer, flush, make_coordinator, register, send_tick, send_video,
-    start_trip,
+    API, CONTACT, DAY, MODEL_FRAME, app_client, bearer, flush, make_coordinator, register, send_tick, send_ticks,
+    send_video, start_trip,
 )
 
 
@@ -75,7 +75,7 @@ def test_trip_belongs_to_the_logged_in_driver(client):
     state = start_trip(client, headers=bearer(ana), driver_id="ignored")
     trip_id = state["trip_id"]
     assert state["driver_id"] == "ana"  # the account, not the body
-    send_tick(client, DAY, 60, ["looking_at_phone"])
+    send_ticks(client, DAY, 2, 60, ["looking_at_phone"])
     end_trip(client, trip_id)  # the car may end it without the token
 
     mine = client.get(f"{API}/trips", headers=bearer(ana)).json()
@@ -112,7 +112,7 @@ def test_report_has_everything_for_one_drive(client, clock, jpeg_frames):
     ana = register(client, "ana")
     trip_id = start_trip(client, headers=bearer(ana))["trip_id"]
     ts = DAY
-    for i in range(16):  # 8 s: 2 s clean, 3 s phone (model frame, red alert), 3 s clean; video at every tick
+    for i in range(24):  # 12 s: 2 s clean, 3 s phone (model frame, red alert), 7 s clean; video at every tick
         ts += timedelta(seconds=0.5)
         clock.advance(0.5)
         send_video(client, jpeg_frames[i % len(jpeg_frames)])
@@ -124,15 +124,18 @@ def test_report_has_everything_for_one_drive(client, clock, jpeg_frames):
     assert report["trip"]["trip_id"] == trip_id and report["trip"]["status"] == "ended"
     assert report["section_s"] == 2.0
     sections = report["sections"]
-    assert [s["seq"] for s in sections] == [0, 1, 2, 3]
-    assert [s["danger"] for s in sections] == ["none", "critical", "critical", "none"]
+    assert [s["seq"] for s in sections] == [0, 1, 2, 3, 4, 5]
+    dangers = [s["danger"] for s in sections]
+    # The phone's bridge (scoring.Debounce) keeps the call going ~2.5 s after the last frame that saw it.
+    assert dangers[:3] == ["none", "critical", "critical"] and dangers[-2:] == ["none", "none"]
     assert sections[0]["score_start"] == 100 and sections[-1]["score_end"] == report["trip"]["final_score"]
     assert sections[1]["categories"]["phone_use"]["active"] is True and sections[1]["alert"] == "red"
     assert all(s["has_image"] and s["image_url"].endswith(".jpg") for s in sections[1:3])
-    assert all(s["image_url"] is None for s in (sections[0], sections[3]))
+    assert all(s["image_url"] is None for s in (sections[0], sections[-1]))
     [moment] = report["moments"]
-    assert moment["danger"] == "critical" and moment["section_ids"] == [sections[1]["section_id"], sections[2]["section_id"]]
-    assert list(moment["behaviors"]) == ["eyes_off_road", "looking_at_phone"]
+    assert moment["danger"] == "critical"
+    assert moment["section_ids"][:2] == [sections[1]["section_id"], sections[2]["section_id"]]
+    assert set(moment["behaviors"]) == {"eyes_off_road", "looking_at_phone"}
     assert moment["image_url"] in (sections[1]["image_url"], sections[2]["image_url"])
     assert 2.0 <= moment["peak_t"] <= 6.0 and moment["score_drop"] > 0
     image = client.get(moment["image_url"])
@@ -141,7 +144,7 @@ def test_report_has_everything_for_one_drive(client, clock, jpeg_frames):
     # The same sections as the separate endpoint.
     assert client.get(f"{API}/trips/{trip_id}/sections", headers=bearer(ana)).json() == sections
     later = client.get(f"{API}/trips/{trip_id}/sections", params={"after_seq": 1}, headers=bearer(ana)).json()
-    assert [s["seq"] for s in later] == [2, 3]
+    assert [s["seq"] for s in later] == [2, 3, 4, 5]
 
 
 def test_running_summary_and_restart(tmp_path, clock, speed):
@@ -178,7 +181,7 @@ def test_running_summary_and_restart(tmp_path, clock, speed):
         assert [t["trip_id"] for t in client.get(f"{API}/trips", headers=headers).json()] == [trip_id]
         report = client.get(f"{API}/trips/{trip_id}/report", headers=headers).json()
         assert len(report["sections"]) == 6  # the open section was delivered when the first process stopped
-        assert report["moments"][0]["behaviors"] == {"looking_at_phone": 11.5}
+        assert report["moments"][0]["behaviors"] == {"looking_at_phone": 11.0}  # counted after its 1 s onset
 
 
 class FlakyAuth(AuthService):

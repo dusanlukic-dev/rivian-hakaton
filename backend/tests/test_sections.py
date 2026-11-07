@@ -58,7 +58,8 @@ def test_sections_fold_two_seconds_of_ticks(client, clock):
     assert clean["danger"] == "none" and clean["behaviors"] == {} and clean["risk"] is None
     assert (clean["speed_kmh"], clean["speed_source"]) == (50, "telemetry")
     assert model["danger"] == "critical"  # the model's red alert while moving
-    assert model["behaviors"] == {"eyes_off_road": 2.0, "looking_at_phone": 2.0}
+    # A behavior counts once it has been seen for its onset (scoring.Debounce): phone after 1 s, eyes off the road 2 s.
+    assert model["behaviors"] == {"eyes_off_road": 0.5, "looking_at_phone": 1.5}
     assert (model["alert"], model["risk"], model["risk_max"]) == ("red", 0.819, 0.819)
     assert model["rules_triggered"] == ["long_distraction", "phone_sustained"]
     assert model["categories"]["phone_use"] == {"p": 0.715, "p_max": 0.715, "active": True, "r": 0.534, "run_s": 3.2}
@@ -83,7 +84,7 @@ def test_dangerous_sections_carry_the_riskiest_frame(client, clock, jpeg_frames)
     drive.run(4, behaviors=PHONE)  # dangerous: phone while moving
     drive.run(2)  # one quiet section: still the same moment
     drive.run(2, behaviors=PHONE)
-    drive.run(6)  # long enough to end the moment
+    drive.run(8)  # long enough to end the moment (the phone's own bridge + one quiet section)
     drive.run(2, behaviors=["drowsy"])
     end_trip(client, trip_id)
 
@@ -95,7 +96,8 @@ def test_dangerous_sections_carry_the_riskiest_frame(client, clock, jpeg_frames)
     assert all(s["t_start"] <= s["image_t"] <= s["t_end"] for s in risky)
     first, second = data["moments"]
     assert list(first["behaviors"]) == ["looking_at_phone"] and first["behaviors"]["looking_at_phone"] >= 5
-    assert first["t_start"] == 2 and first["t_end"] == 10  # the quiet section in the middle is bridged
+    # The quiet section in the middle is bridged, and the call goes on ~2.5 s after the last phone (scoring.Debounce).
+    assert first["t_start"] == 2 and 10 <= first["t_end"] <= 14
     assert list(second["behaviors"]) == ["drowsy"]
     for moment in data["moments"]:
         assert moment["image_url"] and moment["t_start"] <= moment["peak_t"] <= moment["t_end"]

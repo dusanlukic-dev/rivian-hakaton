@@ -33,7 +33,7 @@ def test_every_behavior_has_a_severity_and_a_tip():
     assert set(TIPS) == set(Behavior)
 
 
-def test_score_comes_back_as_soon_as_the_driver_does():
+def test_score_comes_back_once_the_driver_does():
     trip = new_trip()
     drive(trip, 5, speed=50)
     assert trip.score == 100
@@ -41,11 +41,36 @@ def test_score_comes_back_as_soon_as_the_driver_does():
     assert level_for(trip.score) in (SafetyLevel.HIGH_RISK, SafetyLevel.CRITICAL)
     low = trip.score
     drive(trip, 1, speed=50)
-    assert low < trip.score < 90  # rising, but one clean second doesn't erase the warning
-    drive(trip, 7, speed=50)
-    assert trip.score > 95  # a few clean seconds: back to safe
+    assert trip.score <= low  # the model lost the phone for a second: still the same call (bridge)
+    drive(trip, 12, speed=50)
+    assert trip.score > 95  # a few clean seconds after the bridge: back to safe
     drive(trip, 3, speed=50, behaviors=PHONE)  # and it drops again the next time: a live reading, not a balance
     assert trip.score < 50
+
+
+def test_a_flickering_phone_is_one_smooth_call():
+    trip = new_trip()
+    drive(trip, 0, speed=50)
+    scores = []
+    for _ in range(6):  # a 12 s call; the model loses the phone for half a second every 2 s
+        drive(trip, 1.5, speed=50, behaviors=PHONE, step=0.25)
+        scores.append(trip.score)
+        drive(trip, 0.5, speed=50, step=0.25)
+        scores.append(trip.score)
+        assert Behavior.LOOKING_AT_PHONE in trip.active  # the gap doesn't end it
+    assert scores == sorted(scores, reverse=True)  # only goes down while the call lasts: no saw-tooth
+    assert trip.stats[Behavior.LOOKING_AT_PHONE].occurrences == 1
+
+
+def test_a_glance_is_not_eyes_off_the_road():
+    trip = new_trip()
+    drive(trip, 0, speed=50)
+    for _ in range(3):  # 1.5 s glances at a mirror, 3 s apart: normal driving
+        drive(trip, 1.5, speed=50, behaviors={Behavior.EYES_OFF_ROAD})
+        drive(trip, 3, speed=50)
+    assert trip.score == 100 and trip.stats == {} and not trip.active
+    drive(trip, 3, speed=50, behaviors={Behavior.EYES_OFF_ROAD})  # longer than 2 s: now it counts
+    assert Behavior.EYES_OFF_ROAD in trip.active and trip.score < 90
 
 
 def test_the_longer_it_lasts_the_worse_it_gets():
@@ -103,30 +128,27 @@ def test_the_models_risk_counts():
     drive(calm, 3, speed=90, model_risk=0.02)  # what the CV risk engine gives for a calm driver
     drive(alarmed, 3, speed=90, model_risk=0.9)  # its red alert (e.g. a microsleep)
     assert level_for(calm.score) is SafetyLevel.SAFE
-    assert level_for(alarmed.score) in (SafetyLevel.CRITICAL, SafetyLevel.EMERGENCY)
+    assert level_for(alarmed.score) is SafetyLevel.CRITICAL
 
 
 def test_statistics_count_only_while_moving():
     trip = new_trip()
     drive(trip, 3, speed=40, behaviors=PHONE)
-    drive(trip, 2, speed=40)
+    drive(trip, 5, speed=40)  # longer than the phone's bridge: the next look is a new occurrence
     drive(trip, 3, speed=40, behaviors=PHONE)
     drive(trip, 4, speed=0, behaviors=PHONE)
     stat = trip.stats[Behavior.LOOKING_AT_PHONE]
     assert stat.occurrences == 2 and stat.total_seconds == pytest.approx(6, abs=0.6)
-    assert trip.moving_s == pytest.approx(8, abs=0.6) and trip.elapsed_s == pytest.approx(12, abs=0.6)
-    assert trip.min_score < trip.average_score < 100  # the average covers the 8 s of driving only
+    assert trip.moving_s == pytest.approx(11, abs=0.6) and trip.elapsed_s == pytest.approx(15, abs=0.6)
+    assert trip.min_score < trip.average_score < 100  # the average covers the 11 s of driving only
 
 
-def test_emergency_must_last_while_moving():
+def test_only_a_collapse_is_an_emergency():
     trip = new_trip()
     drive(trip, 0, speed=130)
-    drive(trip, 1.5, speed=130, behaviors={Behavior.DROWSY})
-    assert level_for(trip.score) is SafetyLevel.EMERGENCY and trip.emergency_streak_s < DEFAULT_CONFIG.emergency_hold_s
-    drive(trip, 1.5, speed=130, behaviors={Behavior.DROWSY})
-    assert trip.emergency_streak_s >= DEFAULT_CONFIG.emergency_hold_s
-    drive(trip, 0.5, speed=0, behaviors={Behavior.DROWSY})
-    assert trip.emergency_streak_s == 0
+    drive(trip, 10, speed=130, behaviors={Behavior.DROWSY} | PHONE, model_risk=1.0)  # as bad as it gets otherwise
+    assert trip.score >= 10 and level_for(trip.score) is SafetyLevel.CRITICAL
+    assert DEFAULT_CONFIG.score_floor == 10
 
 
 @pytest.mark.parametrize(
