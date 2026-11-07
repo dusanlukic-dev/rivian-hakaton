@@ -2,7 +2,7 @@
 # Podrazumevano pokreće rivian_detector.py: model koji se sam javlja koordinatoru
 # (protokol iz rivian-hakaton/model/worker.py) i za svaki frejm vraća dokaz po kategoriji.
 #
-# Izgradnja:
+# Izgradnja (težine pravi sam, vidi setup_models.py ispod; ceo auto: ../start.ps1 i docker/car.yml):
 #   docker build -t rivian-model .
 # Model za koordinator (koordinator na laptopu, port 8000):
 #   docker run --rm -e COORDINATOR_URL=ws://host.docker.internal:8000/api/v1/model/ws rivian-model
@@ -32,13 +32,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends libegl1 libgles
  && rm -rf /var/lib/apt/lists/*
 
 # Ultralytics pri učitavanju ONNX modela traži paket onnx i bez njega ga SAM skida sa interneta u toku rada.
-# U autu nema interneta: onnx ide u image, a automatsko instaliranje i online provere su isključeni.
-RUN pip install onnx==1.23.2
+# onnxslim treba samo setup_models.py (ONNX export).
+RUN pip install onnx==1.23.2 onnxslim
+
+# Težine modela nisu u gitu: pravi ih setup_models.py pri izgradnji (yolo11n*.pt sa Ultralytics GitHub-a -> ONNX,
+# face_landmarker.task sa Google-a). Internet treba samo ovde, jednom; sloj ostaje u kešu dok se fajl ne promeni.
+WORKDIR /app
+COPY setup_models.py ./
+RUN python setup_models.py && rm -f /app/*.pt
+
+# U autu nema interneta: automatsko instaliranje i online provere su isključeni.
 ENV YOLO_AUTOINSTALL=false YOLO_OFFLINE=true
 
-WORKDIR /app
 COPY pipeline.py features.py scoring.py sender.py rivian_detector.py rois.json ./
-COPY face_landmarker.task yolo11n_640.onnx yolo11n-pose_384.onnx ./
 
 ENTRYPOINT ["python"]
 CMD ["rivian_detector.py"]

@@ -1,0 +1,10 @@
+# The whole system in Docker, one project: the car, the server and the dashboard, each part in its own container.
+# Run it with ./start.ps1 (checks and installs Docker, finds the dataset, writes docker/.env, builds, starts, and adds
+# the host-only parts: Bluetooth gateway + adb reverse). Instructions: DOCKER.md.
+# Plain Docker works too: `docker compose up -d --build` (settings come from docker/.env, defaults otherwise).
+name: rivian
+
+include:
+  - docker/server.yml     # server :8001 + Postgres + RustFS
+  - docker/car.yml        # coordinator :8000 + model + camera
+  - docker/dashboard.yml  # dashboard :5173

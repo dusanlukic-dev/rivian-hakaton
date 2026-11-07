@@ -320,3 +320,17 @@ length; the trend is the recent half minus the earlier half (middle trip of an o
 shown from 4 trips; a behavior's direction compares occurrences per driving minute (x1.25 = more/fewer). Bars are coloured by
 each trip's backend `level`; the app never makes a level for the aggregate. If the history grows large, or the dashboard needs
 the same numbers, move this to a server endpoint.
+
+**D52: Everything in Docker, one script (2026-11-07).** User: every part in its own isolated container, three composes (car:
+coordinator + model + camera; server: server + Postgres + RustFS; dashboard), one global compose or script that sets up, installs and
+starts everything, and short instructions. Done as: root `docker-compose.yml` (`include:` of `docker/car.yml`, `docker/server.yml`,
+`docker/dashboard.yml`; one project `rivian`, one network) + `start.ps1` as the only entry point (Docker install via winget, Docker
+Desktop start, dataset discovery, `docker/.env`, build/up, health waits, host-only parts). Choices: one backend Dockerfile, two image
+tags (`APP` picks coordinator or server); Postgres/RustFS not published on the host (images go through the server's `/media`, so
+nothing needs S3's port, and no clash with `backend/docker-compose.yml`); the dashboard as a production build behind nginx that routes
+`/api` per docs/API.md §5 ([S] auth, media, analytics, stored trip summary/report/sections, GET /trips → server; the rest →
+coordinator), upstreams resolved per request so containers can restart in any order; the phone QR's IP is runtime config
+(`runtime-config.js` from `HOST_IP`), since a build-time IP would be the container's; the model image runs `setup_models.py` in the
+build (weights aren't in git) and uses the CPU (DirectML is Windows-only; ~10 fps, keeps up); the camera plays dataset clips (no webcam
+in Docker Desktop) and skips or replaces missing clips instead of crash-looping. The Bluetooth gateway and adb reverse stay on the host
+(radio, USB). `demo.ps1` stays as the native, GPU path.

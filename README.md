@@ -14,13 +14,19 @@ notebooks/            risk_config.json (the coordinator's risk thresholds), safe
 frontend/mobile/      Expo SDK 58 / React Native 0.88 Android app (dev build)
 frontend/dashboard/   Vite + React 19 + Tailwind + shadcn mock car screen
 tools/                camera_stream.py (clip / webcam -> coordinator), sim.py (exact states), gen-sounds.mjs
-demo.ps1              the whole car on this laptop, one window per part
+start.ps1             the whole system in Docker, one command (docker-compose.yml, docker/): DOCKER.md
+demo.ps1              the whole car natively on this laptop (no Docker), one window per part
 docs/                 API.md (contract), ARCHITECTURE.md (coordinator / server / model), BLUETOOTH.md, DATABASE.md
 PROGRESS.md           live status board: start here
 .claude/              agent rules, skills, knowledge books (architecture, contract notes, Android alerting, networking…)
 ```
 
 ## Quick start
+
+**Everything in Docker, one command** (installs Docker Desktop if needed, builds, starts; instructions: [DOCKER.md](DOCKER.md))
+```powershell
+.\start.ps1
+```
 
 **Backend + simulated drive** (Python 3.13; 3.15 can't install `fastapi[standard]` yet)
 ```bash

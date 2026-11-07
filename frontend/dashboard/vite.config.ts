@@ -86,7 +86,8 @@ export default defineConfig(async ({ mode }) => {
     // Declared in src/types/declarations/globals.d.ts
     define: {
       __BRAND__: JSON.stringify(brand),
-      __LAN_IP__: JSON.stringify(await lanIp()),
+      // LAN_IP set (even empty) wins: the Docker build sets it empty, the container's own IP would be wrong for the phone
+      __LAN_IP__: JSON.stringify(env.LAN_IP ?? (await lanIp())),
       __BACKEND_PORT__: JSON.stringify(backendPort(target)),
     },
     plugins: [

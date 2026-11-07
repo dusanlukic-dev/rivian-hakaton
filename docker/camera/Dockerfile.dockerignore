@@ -1,0 +1,5 @@
+# Build context = repo root. Only these files go into the camera image.
+*
+!tools/camera_stream.py
+!rivian_model/klip_po_voznji.py
+!docker/camera/entrypoint.sh
