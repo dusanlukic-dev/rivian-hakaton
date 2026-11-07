@@ -60,5 +60,24 @@ Demo (svaki deo u svom prozoru; port 8000 mora biti slobodan):
 Brzina auta je fiksna (`cruise`, 50–62 km/h), da demo svaki put izgleda isto. Opcije su na vrhu `demo.ps1`.
 Poređenje modela na 4 klipa: `rivian_model/POREDJENJE_MODELA.md` i `rivian_model/run_compare.py`.
 
+### APK za telefon bez kabla i bez Android Studija (provereno 7. 11. 2026)
+
+Release APK sa ugrađenim JS-om (ne treba Metro). Treba: JDK 17, Android SDK u `%LOCALAPPDATA%\Android\Sdk`
+(`platforms;android-37.0`, `build-tools;37.0.0`, `ndk;27.1.12297006`, `cmake;3.30.5`, `cmake;3.22.1`, instalirano sa
+`cmdline-tools\latest\bin\android.exe --no-metrics sdk install ...`, ne sa `sdkmanager.bat`: `cmd` deli `;` u imenu paketa)
+i Ninja 1.13.2 u oba `cmake\*\bin\`. Bez `LongPathsEnabled` build mora iz kratkog foldera (`git worktree add --detach C:\r nas-demo`;
+`subst` ne radi, codegen puca na „different roots“) i uz `CMAKE_OBJECT_PATH_MAX=250` u generisanom `android/app/build.gradle`:
+```powershell
+cd C:\r\frontend\mobile; npm ci; $env:CI=1; npx expo prebuild --platform android --no-install
+# android\app\build.gradle, u defaultConfig { ... }:  externalNativeBuild { cmake { arguments "-DCMAKE_OBJECT_PATH_MAX=250" } }
+$env:ANDROID_HOME="$env:LOCALAPPDATA\Android\Sdk"; $env:JAVA_HOME="C:\Program Files\Java\jdk-17"
+$env:JAVA_TOOL_OPTIONS="-Djavax.net.ssl.trustStoreType=Windows-ROOT"   # AVG presrece HTTPS: Java koristi Windows sertifikate
+cd android; .\gradlew.bat assembleRelease -PreactNativeArchitectures=arm64-v8a   # ~10-20 min; APK: app\build\outputs\apk\release\
+```
+Na telefon preko Wi-Fi-ja: `python -m http.server 8766 --bind 0.0.0.0` u folderu sa APK-om, pa na telefonu
+`http://<IP laptopa>:8766/<ime>.apk` i „instaliraj nepoznate aplikacije“. U aplikaciji adresa backenda: `<IP laptopa>:8000`.
+Proba (031246 u petlji, `demo.ps1 -Port 8000 -Storage docker`): 3 vožnje sa telefona, sve sa kolapsom → skor 0 + uzbuna,
+sačuvane na serveru (Postgres) sa sekcijama.
+
 **Demo network:** the phone hosts a mobile hotspot, the laptop joins it, and the app connects to the IP that `run.py` prints. The Windows
 firewall must allow Python on Public networks. See [`.claude/knowledge/networking.md`](.claude/knowledge/networking.md).
