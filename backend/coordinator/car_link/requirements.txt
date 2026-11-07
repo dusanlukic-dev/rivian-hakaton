@@ -1,0 +1,13 @@
+# The car link gateway (docs/BLUETOOTH.md): Windows Bluetooth LE peripheral + the coordinator's local API.
+# pywinrt 3.2.1 has Python 3.13 wheels. (bless, the usual wrapper, pins 2023 betas without them.)
+winrt-runtime==3.2.1; sys_platform == "win32"
+winrt-Windows.Devices.Bluetooth==3.2.1; sys_platform == "win32"
+winrt-Windows.Devices.Bluetooth.Advertisement==3.2.1; sys_platform == "win32"
+winrt-Windows.Devices.Bluetooth.GenericAttributeProfile==3.2.1; sys_platform == "win32"
+winrt-Windows.Devices.Enumeration==3.2.1; sys_platform == "win32"
+winrt-Windows.Devices.Radios==3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation==3.2.1; sys_platform == "win32"
+winrt-Windows.Foundation.Collections==3.2.1; sys_platform == "win32"
+winrt-Windows.Storage.Streams==3.2.1; sys_platform == "win32"
+httpx>=0.28
+websockets>=13
