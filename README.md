@@ -43,5 +43,22 @@ npm run adb:reverse         # the phone's localhost:8000 then reaches the laptop
 Requirements: Node 20+, Android SDK (`ANDROID_HOME`), a JDK 17 the Gradle toolchain can find, and on Windows a long-path-aware Ninja.
 See [`.claude/skills/mobile-dev/SKILL.md`](.claude/skills/mobile-dev/SKILL.md) and [`.claude/knowledge/environment.md`](.claude/knowledge/environment.md).
 
+## Demo sa našim modelom (grana `nas-demo`)
+
+Ova kopija (`rivian-demo`) koristi **naš model** (`rivian_model/`) i ima **kolaps** od modela do telefona
+(skor 0 + uzbuna odmah, i dok auto stoji). Ostalo je isto kao na `main`. Jednom:
+```powershell
+cd backend;      py -3.13 -m venv .venv; .venv\Scripts\python.exe -m pip install -r requirements.txt; cd ..
+cd rivian_model; python setup_models.py; cd ..      # modeli (nisu u gitu); treba ultralytics, onnxruntime, mediapipe
+```
+Demo (svaki deo u svom prozoru; port 8000 mora biti slobodan):
+```powershell
+.\demo.ps1 -Video "<dataset>\05_23_62_031246_video_inCabin.mp4" -Dashboard   # kolaps -> uzbuna
+.\demo.ps1 -Video "<dataset>\08_14_62_092916_video_inCabin.mp4"              # telefon
+.\demo.ps1 -Model cv -Video ...                                               # model CV kolege, isti backend
+```
+Brzina auta je fiksna (`cruise`, 50–62 km/h), da demo svaki put izgleda isto. Opcije su na vrhu `demo.ps1`.
+Poređenje modela na 4 klipa: `rivian_model/POREDJENJE_MODELA.md` i `rivian_model/run_compare.py`.
+
 **Demo network:** the phone hosts a mobile hotspot, the laptop joins it, and the app connects to the IP that `run.py` prints. The Windows
 firewall must allow Python on Public networks. See [`.claude/knowledge/networking.md`](.claude/knowledge/networking.md).

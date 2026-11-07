@@ -69,6 +69,7 @@ class Trip:
     moving_s: float = 0.0  # seconds driven at >= 5 km/h (standing still isn't part of the statistics)
     score_seconds: float = 0.0  # integral of the score over moving time, for the average
     emergency_streak_s: float = 0.0  # how long the emergency level has lasted while moving
+    collapse_seen_s: float | None = None  # elapsed_s when a confirmed collapse was last seen (scoring.collapse_hold_s)
     last_tick_at: datetime | None = None
 
     # Behaviors currently visible on camera -> how long they have lasted (seconds).

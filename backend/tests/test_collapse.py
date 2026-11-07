@@ -63,11 +63,24 @@ def test_a_short_slump_is_not_an_emergency():
     assert trip.score == 100 and not trip.emergency_alert_sent
 
 
+def test_a_flickering_signal_keeps_the_emergency():
+    trip = new_trip()
+    ticks(trip, 2.5, speed=55, behaviors=COLLAPSE)
+    assert trip.score == 0
+    for _ in range(4):  # the model loses the slumped pose for half a second, then finds it again
+        ticks(trip, 0.5, speed=55)
+        assert trip.score == 0 and evaluate_response(trip, 55).message == COLLAPSE_MESSAGE
+        ticks(trip, 0.5, speed=55, behaviors=COLLAPSE)
+        assert trip.score == 0
+
+
 def test_the_score_comes_back_when_the_driver_sits_up():
     trip = new_trip()
     ticks(trip, 3, speed=55, behaviors=COLLAPSE)
+    ticks(trip, DEFAULT_CONFIG.collapse_hold_s - 0.5, speed=55)
+    assert trip.score == 0  # still held
     ticks(trip, 10, speed=55)
-    assert trip.score > 90 and Behavior.COLLAPSE not in trip.active
+    assert trip.score > 90 and not collapse_confirmed(trip)
 
 
 def test_model_category_collapse_maps_to_the_behavior():
