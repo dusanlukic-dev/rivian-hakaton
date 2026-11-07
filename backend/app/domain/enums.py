@@ -10,6 +10,7 @@ class Behavior(StrEnum):
     HANDS_OFF_WHEEL = "hands_off_wheel"    # ruke van volana
     DROWSY = "drowsy"                      # pospan
     EYES_OFF_ROAD = "eyes_off_road"        # pogled van puta
+    COLLAPSE = "collapse"                  # vozač pao (na volan) i ne pomera se: hitan slučaj (naš model)
 
 
 class SafetyLevel(StrEnum):

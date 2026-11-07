@@ -82,7 +82,8 @@ export type Behavior =
   | "turning_around"   // okreće se telom
   | "hands_off_wheel"  // ruke van volana
   | "drowsy"           // pospan
-  | "eyes_off_road";   // pogled van puta
+  | "eyes_off_road"    // pogled van puta
+  | "collapse";        // vozač pao i ne pomera se (rivian_model): skor 0 i uzbuna odmah, i dok auto stoji
 
 export type SafetyLevel = "safe" | "caution" | "warning" | "high_risk" | "critical" | "emergency";
 export type DashboardLight = "green" | "green_yellow" | "yellow" | "red";
@@ -728,6 +729,7 @@ Nazivi ponašanja za prikaz:
 | `hands_off_wheel` | Ruke van volana | Hands off the wheel |
 | `drowsy` | Pospanost | Drowsiness |
 | `eyes_off_road` | Pogled van puta | Eyes off the road |
+| `collapse` | Vozač ne reaguje | Driver not responding |
 
 **Uzbuna (`emergency`):** prikaži preko celog ekrana (crveno, glasan zvuk). Backend trenutno **ne
 šalje pravi SMS**, samo loguje. Predlog, još nije dogovoreno: aplikacija ponudi slanje SMS-a kontaktu
