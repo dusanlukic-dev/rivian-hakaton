@@ -56,3 +56,6 @@ CLAUDE.local.md
 Thumbs.db
 .idea/
 *.swp
+
+# Claude Code agent worktrees (local checkouts of branches)
+.claude/worktrees/
