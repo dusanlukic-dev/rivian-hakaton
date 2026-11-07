@@ -282,6 +282,10 @@ server `localhost:8001` over USB.
   risky moments / driving time / emergencies, top 3 risks with more / fewer, and the tip for the biggest one. Verified: typecheck,
   lint, the math on sample trips. **Not yet seen on the A54** (no Metro/server running at the time).
 - 2026-11-07, agent: CUDA training env `rivian_model/.venv-train` (torch 2.15.0+cu132 + ultralytics, GTX 1650 verified). The live model stays on DirectML in `.venv`.
+- 2026-11-07, session 15 (Claude, for the user): docs for readers outside the team: `DOCKER.md` rewritten (short architecture,
+  start, phone app build/install, ports, a word on endpoints), new `O_PROJEKTU.md` (client: problem, levels, value for insurers)
+  and `KAKO_RADI_MODEL.md` (video → model → RiskEngine → score → sections). Facts checked against `alerts.py`, `risk_config.json`,
+  `rivian_detector.py`, `rivian_model/ATRIBUTI.md`.
 - 2026-11-07, session 14 (Claude, for Matija): release APK built and installed on Matija's **Xiaomi 15T** (Android 16; built from a
   copy in `C:\dev\rh` because of OneDrive and long paths; SDK `cmake\3.22.1` Ninja swapped to 1.12.1). **Video-sim: one clip = one
   trip** (user: the score must start at 100 with every trip/clip): listens to `WS /ws` for trip starts/ends, a phone trip gets the

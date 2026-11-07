@@ -1,61 +1,58 @@
-# Pokretanje u Docker-u
+# Pokretanje
 
-Ceo sistem se pokreće **jednom skriptom**, iz korena repoa (PowerShell):
+Sistem ima tri dela. **Automobil** je u našem slučaju laptop: na njemu rade kamera (pušta snimke iz dataseta), model koji
+na svakom frejmu prepoznaje ometanje i **koordinator** koji od toga računa ocenu pažnje i odlučuje kako kola reaguju.
+**Server** je „van kola“: čuva naloge, vožnje i slike i pravi izveštaj posle vožnje. Treći deo su ekrani: **aplikacija
+na telefonu** vozača i **dashboard**, web prikaz ekrana u kolima. Svaki deo radi u svom Docker kontejneru, a sve se
+pokreće jednom skriptom.
+
+| Deo | Kontejneri | Port na laptopu |
+|---|---|---|
+| automobil (`docker/car.yml`) | koordinator, model, kamera | 8000 |
+| server (`docker/server.yml`) | server, Postgres, RustFS (slike) | 8001 |
+| dashboard (`docker/dashboard.yml`) | nginx sa web aplikacijom | 5173 |
+
+Telefon sa kolima razgovara preko koordinatora (WebSocket `/api/v1/ws` za stanje uživo, REST za početak i kraj vožnje),
+a sa serverom preko REST-a (`/api/v1/auth`, `/api/v1/trips`, izveštaj). Baza i skladište slika vidljivi su samo unutar
+Docker-a.
+
+## Pokretanje sistema
+
+Iz korena repoa, u PowerShell-u:
 
 ```powershell
 .\start.ps1
 ```
 
-Skripta sama radi sve redom:
-1. instalira Docker Desktop ako ga nema (winget), pa ga pokrene i sačeka;
-2. ugasi ostatke `demo.ps1` i proveri portove 8000, 8001 i 5173;
-3. nađe dataset sa klipovima (`*_video_inCabin.mp4`) i upiše podešavanja u `docker/.env` (IP laptopa, klipovi, zona vozača);
-4. izgradi i pokrene kontejnere i sačeka da se svi jave;
-5. na samom laptopu pokrene ono što ne može u Docker: **Bluetooth gateway** (svoj venv, Python instalira ako ga nema) i
-   **adb reverse** za telefon preko USB-a;
-6. ispiše adrese i otvori dashboard.
-
-Prvo pokretanje traje ~10 minuta (model ima ~3 GB, težine se prave pri izgradnji). Posle toga oko minut.
-
-## Šta radi gde
-
-| Compose | Kontejneri | Port na laptopu |
-|---|---|---|
-| `docker/car.yml` (auto) | `coordinator`, `model` (CPU), `camera` (klipovi iz dataseta) | 8000 |
-| `docker/server.yml` (server) | `server`, `postgres`, `rustfs` (baza i slike samo unutar Docker-a) | 8001 |
-| `docker/dashboard.yml` (ekran u kolima) | `dashboard` (nginx: build + proxy ka `/api`) | 5173 |
-| `docker-compose.yml` (sve) | uključuje sva tri | |
-
-Bluetooth gateway i adb reverse rade na laptopu, svaki u svom prozoru `rivian: ...`.
-
-## Telefon
-
-- **Bluetooth** (podrazumevano u aplikaciji): Settings → Car connection → "Rivian demo car".
-- **Server** u aplikaciji: `http://<IP laptopa>:8001/api/v1` preko hotspota, ili `localhost:8001` preko USB-a.
-- **Wi-Fi veza sa autom** (umesto Bluetooth-a): `<IP laptopa>:8000`.
-- Svaka nova vožnja iz aplikacije dobija sledeći klip (podrazumevano kolaps, pa telefon, pa telefon u krilu; klipovi
-  kojih nema u datasetu se zamene drugim iz iste serije).
-
-## Česte komande
+Skripta instalira i pokrene Docker Desktop ako ga nema, nađe dataset sa klipovima, upiše podešavanja u `docker/.env`,
+izgradi i pokrene kontejnere i sačeka da se svi jave. Na samom laptopu zatim otvori dva prozora za ono što ne može u
+Docker: **Bluetooth gateway** (veza telefona sa kolima preko Bluetooth-a) i **adb reverse** (telefon na USB kablu). Na
+kraju ispiše adrese i otvori dashboard. Prvo pokretanje traje ~10 minuta jer se gradi model od ~3 GB, a svako sledeće
+oko minut.
 
 ```powershell
-.\start.ps1 -Status                     # šta radi (kontejneri, kamera, model, server)
-.\start.ps1 -Logs                       # logovi svih (Ctrl+C izlaz); jedan deo: -Logs -Service model
-.\start.ps1 -Stop                       # ugasi sve, podaci ostaju
-.\start.ps1 -Reset                      # ugasi sve i obriši bazu i slike (posle promene tabela)
-.\start.ps1 -Dataset "D:\Hackathon dataset 2026"                         # gde su klipovi (zapamti se)
-.\start.ps1 -Clips 05_23_62_031246 05_23_62_022338                       # svoji klipovi po vožnji
-.\start.ps1 -CameraMode loop -Video 05_23_62_031246_video_inCabin.mp4    # jedan klip u petlji
-.\start.ps1 -CameraMode test            # bez dataseta: test slika
-.\start.ps1 -Speed city -NoBle -NoAdb   # brzina; bez Bluetooth-a; bez USB-a
+.\start.ps1 -Status       # šta radi
+.\start.ps1 -Logs         # logovi (-Service model za jedan deo)
+.\start.ps1 -Stop         # ugasi sve, podaci ostaju
+.\start.ps1 -Reset        # ugasi sve i obriši bazu
+.\start.ps1 -Dataset "D:\Hackathon dataset 2026"   # gde su klipovi, ako ih skripta ne nađe sama
 ```
 
-Posle izmene koda samo ponovo `.\start.ps1`: izgradi se samo ono što se promenilo.
+## Aplikacija na telefonu
 
-## Dobro je znati
+Aplikacija se ne pravi u Docker-u, nego se gradi kao Android APK iz `frontend/mobile` (treba Node, JDK 17 i Android SDK).
+Za demo je najbolji **release APK**, koji nosi ceo kod u sebi: `npm run android:release` ga izgradi i instalira na
+telefon povezan kablom. Ako izgradnja na Windows-u padne zbog predugačkih putanja, recept je u `README.md`
+(„Release APK without Android Studio“). Gotov APK se može instalirati i preko `adb install <apk>`.
 
-- Model u Docker-u radi na **CPU-u** (~10 fps, stiže svaki frejm). DirectML (GPU) postoji samo nativno: `demo.ps1`.
-- Web kamera ne radi u Docker-u na Windows-u: kamera pušta klipove iz dataseta.
-- Baza: `docker compose exec postgres psql -U safety` (iz korena repoa).
-- Jedan deo sam: `docker compose -f docker/server.yml up -d` (podešavanja za takav rad su u `docker/.env.example`).
-- `demo.ps1` (sve nativno, bez Docker-a) i dalje radi; ne pokreći ga zajedno sa `start.ps1` (isti portovi).
+U aplikaciji se pri prvom otvaranju upisuje **adresa servera** (zupčanik na ekranu za prijavu), pa se pravi nalog:
+
+- preko hotspota ili Wi-Fi-ja: `<IP laptopa>:8001` (IP ispiše `start.ps1`);
+- preko USB kabla: `localhost:8001`.
+
+Vezu sa kolima biraš posle prijave, u Settings → Car connection: Bluetooth („Rivian demo car“) ili Wi-Fi na
+`<IP laptopa>:8000`. Svaka vožnja pokrenuta sa telefona dobija sledeći klip iz dataseta.
+
+Ako telefon ne stiže do servera, otvori `http://<IP laptopa>:8001/api/v1/health` u browseru telefona. Kad se ni to ne
+otvori, problem je u mreži ili firewall-u laptopa, a ne u aplikaciji. Model u Docker-u radi na procesoru; varijanta
+bez Docker-a (`demo.ps1`) može da koristi grafičku karticu, ali ne pokreći obe istovremeno jer koriste iste portove.
