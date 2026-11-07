@@ -1,7 +1,7 @@
 # rivian_model: naš model (pažnja vozača) za koordinator
 
-Ovo je **drugi model**, pored modela CV tima (`notebooks/risk_pipeline.py` + `model/worker.py`). Na ovoj grani
-(`rivian-model`) se **ne menja ništa van ovog foldera**.
+Ovo je **drugi model**, pored modela CV tima (`notebooks/risk_pipeline.py` + `model/worker.py`). U ovoj kopiji
+(`rivian-demo`, grana `nas-demo`) je **podrazumevani model za demo**. CV model i dalje radi istim backendom (`demo.ps1 -Model cv`).
 
 ## Šta radi
 
@@ -15,8 +15,10 @@ i za svaki frejm vraća dokaz 0–1 po kategoriji:
 | zatvorene oči | `eyes_closed` | MediaPipe blendshapes, u odnosu na lični nivo |
 | **pad vozača** | `collapse` | yolo11n-pose: glava ispod ramena + telo miruje ≥ 1 s |
 
-Koordinator `collapse` za sada **ignoriše**, jer ga nema u `notebooks/risk_config.json`. Da bi radio, treba ga
-dodati u config, u `Behavior` i hitni put. To nije urađeno na ovoj grani.
+**Kolaps radi do kraja** u ovoj kopiji: kategorija `collapse` u `notebooks/risk_config.json` (crveni alarm modela),
+`Behavior.COLLAPSE` u backendu, a potvrđen kolaps (2 s) daje skor 0, crveno, glasan alarm i poruku kontaktu odmah,
+i kad auto stoji (`backend/app/coordinator/services/scoring.py`, `tests/test_collapse.py`). Aplikacija i dashboard
+prikazuju „Driver not responding“.
 
 ## Pokretanje
 

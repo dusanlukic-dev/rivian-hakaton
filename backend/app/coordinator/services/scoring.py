@@ -17,7 +17,8 @@ speed is an emergency; hands off the wheel alone stays at caution/warning in tow
 
 Collapse (the driver slumped over and doesn't move, `rivian_model/`) is not a degree of danger but a medical
 emergency: once it has lasted ``collapse_confirm_s`` the score is 0 at once, at any speed (standing still too),
-and the emergency contact is alerted without waiting for ``emergency_hold_s`` (services/trips.py).
+and the emergency contact is alerted without waiting for ``emergency_hold_s`` (services/trips.py). It then holds
+for ``collapse_hold_s`` after it was last seen, so a flickering signal doesn't bounce the score.
 
 All the knobs live in ``ScoringConfig`` so the team can tune them in one place.
 """
@@ -77,6 +78,9 @@ class ScoringConfig:
     # A collapse seen this long is confirmed: score 0 and the emergency, at any speed. Short dips (bending down
     # to pick something up) stay below it; the model already requires the body to be still.
     collapse_confirm_s: float = 2.0
+    # Once confirmed, the collapse holds this long after it was last seen: the model's signal flickers while the
+    # driver lies on the wheel, and the score must not bounce 0 -> 20 -> 0 in a medical emergency.
+    collapse_hold_s: float = 10.0
     max_tick_gap_s: float = 5.0  # caps dt so a dropped connection can't swing the score
 
 
@@ -140,8 +144,10 @@ def exposure(
 
 
 def collapse_confirmed(trip: Trip, cfg: ScoringConfig = DEFAULT_CONFIG) -> bool:
-    """The driver has been slumped over and still for at least ``collapse_confirm_s``."""
-    return trip.active.get(Behavior.COLLAPSE, 0.0) >= cfg.collapse_confirm_s
+    """The driver has been slumped over and still for ``collapse_confirm_s``, now or within ``collapse_hold_s``."""
+    if trip.active.get(Behavior.COLLAPSE, 0.0) >= cfg.collapse_confirm_s:
+        return True
+    return trip.collapse_seen_s is not None and trip.elapsed_s - trip.collapse_seen_s <= cfg.collapse_hold_s
 
 
 def target_score(exposure_now: float) -> float:
@@ -189,6 +195,9 @@ def apply_tick(
             tau = cfg.rise_tau_s if moving else cfg.standing_rise_tau_s
         trip.score += (target - trip.score) * (1.0 - math.exp(-dt / tau))
     trip.score = min(max(trip.score, 0.0), MAX_SCORE)
+    trip.elapsed_s += dt
+    if trip.active.get(Behavior.COLLAPSE, 0.0) >= cfg.collapse_confirm_s:
+        trip.collapse_seen_s = trip.elapsed_s
     if collapse_confirmed(trip, cfg):
         trip.score = 0.0  # a medical emergency, not a degree of danger: no smoothing, no speed factor
     trip.min_score = min(trip.min_score, trip.score)
@@ -206,4 +215,3 @@ def apply_tick(
         trip.emergency_streak_s += dt
     else:
         trip.emergency_streak_s = 0.0
-    trip.elapsed_s += dt

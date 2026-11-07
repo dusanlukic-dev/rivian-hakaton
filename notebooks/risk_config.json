@@ -114,7 +114,7 @@
     },
     "collapse": {
       "weight": 1.00, "base": 0.50, "T_crit_s": 2.0, "k": 3.0, "decay": 6.0,
-      "on": 0.60, "off": 0.40,
+      "on": 0.50, "off": 0.25,
       "membership": {"medical": 1.0}
     }
   },

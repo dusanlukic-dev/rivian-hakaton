@@ -1,21 +1,21 @@
 """Jedan klip kroz pravi koordinator: start voznje -> camera_stream.py (30 s) -> kraj voznje.
 
-Kod tima se ne menja: koristi se njihov tools/camera_stream.py i REST koordinatora.
+Koristi tools/camera_stream.py i REST koordinatora iz ovog repoa (rivian-demo, folder iznad rivian_model/).
 Rezultati prvog poredjenja (6. 11.): POREDJENJE_MODELA.md.
 
 Pokretanje (laptop na struji, port 8765 jer je 8000 korisnikov; svaka komanda u svom terminalu):
 
-  1) Koordinator (checkout tima C:\\Users\\PC\\rivian-hakaton-main, folder backend), fiksna brzina, bez servera:
+  1) Koordinator (folder backend), fiksna brzina, bez servera:
        $env:SPEED_SCENARIO="cruise"; $env:SERVER_URL="http://127.0.0.1:8799/api/v1"
        .venv\\Scripts\\python.exe run.py --role coordinator --port 8765 --no-reload
 
   2) JEDAN model (nikad dva istovremeno):
        nas:  python rivian_detector.py --coordinator ws://127.0.0.1:8765/api/v1/model/ws --camera 08_14
              (za klipove 05_23_* restartovati sa --camera 05_23)
-       CV:   (u rivian-hakaton-main) python model\\worker.py --coordinator ws://127.0.0.1:8765/api/v1/model/ws
+       CV:   (koren repoa) python model\\worker.py --coordinator ws://127.0.0.1:8765/api/v1/model/ws
 
   3) Klip (python iz backend venv-a, jer ima imageio-ffmpeg i websockets za camera_stream.py):
-       C:\\Users\\PC\\rivian-hakaton-main\\backend\\.venv\\Scripts\\python.exe run_compare.py `
+       ..\\backend\\.venv\\Scripts\\python.exe run_compare.py `
            --clip "<dataset>\\08_14_62_092916_video_inCabin.mp4" --label nas --out out_cmp
 
 Izlaz: <out>/<label>_<klip>.json (rezime, intervali ponasanja, status modela) i <label>_<klip>_timeline.jsonl.
@@ -28,7 +28,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-REPO = Path(r"C:\Users\PC\rivian-hakaton-main")
+REPO = Path(__file__).resolve().parents[1]   # koren repoa (rivian_model/ je u njemu)
 PY = REPO / "backend" / ".venv" / "Scripts" / "python.exe"
 
 
