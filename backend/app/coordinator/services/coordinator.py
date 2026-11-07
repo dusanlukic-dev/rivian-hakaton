@@ -339,6 +339,11 @@ class Coordinator:
     def camera_connected(self, delta: int) -> None:
         self._camera_clients = max(self._camera_clients + delta, 0)
 
+    @property
+    def camera_clients(self) -> int:
+        """Cameras streaming on WS /camera/ws right now (routes/live.py lets only one in)."""
+        return self._camera_clients
+
     def on_video_frame(self, jpeg: bytes) -> bool:
         """One camera JPEG. False if no trip is active (the frame is dropped)."""
         if self.repo.active() is None:

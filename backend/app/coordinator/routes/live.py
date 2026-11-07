@@ -6,6 +6,8 @@
     phone, dashboard ◄──WS /ws── trip_started, state, emergency, section, trip_ended
 """
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request, Response, WebSocket, WebSocketDisconnect, status
 
 from app.coordinator.deps import CoordinatorDep, Hub, TripRepo
@@ -16,8 +18,12 @@ from app.domain.enums import LiveEvent
 from app.schemas.trip import TelemetryTick, TripState
 
 router = APIRouter(tags=["live (coordinator)"])
+logger = logging.getLogger(__name__)
 
 MAX_FRAME_BYTES = 2_000_000
+# The car has one cabin camera (on the rear-view mirror). A second stream would interleave two people's frames
+# into one model, which then sees "two drivers" (rivian_model, 7. 11.). The first camera keeps the slot.
+ONE_CAMERA = "Another camera is already streaming: the coordinator takes one cabin camera"
 NO_ACTIVE_TRIP = "No active trip - start one from the app first"
 MODEL_WORKER_DRIVES = (
     "A model worker is connected and drives the score: frame records on /telemetry are a debug feed "
@@ -76,10 +82,16 @@ async def camera_stream(websocket: WebSocket, coordinator: CoordinatorDep) -> No
     """The camera's stream: one binary message per JPEG frame (`tools/camera_stream.py`).
 
     Frames are dropped while no trip is active; the socket stays open. Text messages are ignored.
+    Only one camera at a time: while one streams, a second connection is refused (policy violation, 1008);
+    tools/camera_stream.py keeps retrying and takes over once the first one disconnects.
     """
-    await websocket.accept()
-    coordinator.camera_connected(+1)
+    if coordinator.camera_clients >= 1:
+        logger.warning("Second camera refused on /camera/ws: one is already streaming")
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=ONE_CAMERA)
+        return
+    coordinator.camera_connected(+1)  # before the first await, so two simultaneous connections can't both pass
     try:
+        await websocket.accept()
         while True:
             message = await websocket.receive()
             if message["type"] == "websocket.disconnect":
