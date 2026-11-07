@@ -27,7 +27,8 @@ report. The laptop plays the car's computer, and the phone's hotspot is the in-c
 | `frontend/mobile/` | Expo SDK 58 / RN 0.88 **dev build** for the driver's phone | us |
 | `frontend/dashboard/` | Vite 8 + React 19 + Tailwind v4 + shadcn car-screen mock | us |
 | `tools/` | `gen-sounds.mjs` (alert WAVs for both apps), `camera_stream.py` (clip / webcam → coordinator), `sim.py` (exact states) | us |
-| `demo.ps1` | the whole car on this laptop, one window per part (storage, server, coordinator, Bluetooth, model, camera) | us + Dušan |
+| `start.ps1`, `docker-compose.yml`, `docker/` | **the whole system in Docker, one command** (D52): `docker/car.yml` (coordinator, model, camera), `docker/server.yml` (server, Postgres, RustFS), `docker/dashboard.yml` (nginx build + /api proxy); Bluetooth gateway + adb reverse stay on the host. `DOCKER.md` | us |
+| `demo.ps1` | the whole car natively on this laptop (no Docker), one window per part (storage, server, coordinator, Bluetooth, model, camera) | us + Dušan |
 | `.claude/knowledge/`, `.claude/rules/`, `.claude/skills/` | knowledge books, auto-loaded rules, workflows | everyone |
 
 ## Knowledge books (read the relevant one before working in an area)

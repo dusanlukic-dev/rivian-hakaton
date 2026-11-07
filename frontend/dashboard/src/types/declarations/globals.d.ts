@@ -8,3 +8,8 @@ declare const __LAN_IP__: string
 
 /** The backend port the phone should use: VITE_API_URL's port when it runs on this laptop, else 8000 */
 declare const __BACKEND_PORT__: number
+
+/** public/runtime-config.js, written by the Docker image at container start (empty in `npm run dev`) */
+interface Window {
+  __RUNTIME__?: { lanIp?: string; backendPort?: number }
+}

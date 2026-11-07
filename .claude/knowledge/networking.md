@@ -76,3 +76,11 @@ Multiple adapters exist (VirtualBox `192.168.56.1`, Hyper-V `192.168.16.1`), so 
   `adb kill-server`, phone re-authorized). `demo.ps1 -Stop` stops all of it.
 - The video-sim (`frontend/video-sim`, port 5174) streams into the same `WS /camera/ws` as `camera_stream.py` /
   `klip_po_voznji.py`: one camera at a time (a second is refused with HTTP 403), so close the per-trip camera window first.
+
+## Docker stack (2026-11-07, D52)
+
+- Ports published by Docker Desktop are served on the host by `com.docker.backend.exe` on all interfaces (plus `wslrelay` on ::1).
+  Docker Desktop's install adds the inbound rule **"Docker Desktop Backend"** (Public, Allow), so the phone on the hotspot reaches
+  8000/8001/5173 without a rule of ours (verified via the LAN IP). `start.ps1` warns if that rule is missing.
+- Inside Docker the parts find each other by service name (`coordinator:8000`, `server:8001`, `postgres:5432`, `rustfs:9000`).
+  Postgres and RustFS have no host ports in this stack.

@@ -2,7 +2,7 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-07 ~13:00, session 11: smooth score + emergency only for a collapse, model on the GPU, ports that can't break the demo (Claude, for Matija).
+> Last updated: 2026-11-07, session 13: the whole system in Docker with one script, `start.ps1` (Claude, for the user).
 
 ## Snapshot
 
@@ -11,6 +11,7 @@
 | Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Checked against the user's definition (session 6):** the car = camera + model + coordinator, the server is outside; `/telemetry` frame records are a debug feed (409 while a model worker is connected), a phone login never blocks the car (offline: stale token cache, or the token rides along as `TripMeta.owner_token`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 92 tests. Speed is mocked by the coordinator (phone GPS opt-in). **Session 7: the score is live** (D35: danger now × speed factor, falls and recovers within seconds, nothing while standing), summaries headline `average_score`. 95 tests. **Session 10:** collapse (score 0 + emergency at once, also standing still) and one camera (Dušan, D45). **Session 11:** behaviors are debounced episodes (onset + bridge, D46), so the score is a smooth curve (phone clip: 0 reversals, was 8) and glances don't count; only a confirmed collapse is an emergency, everything else bottoms out at 10 (D47). 108 tests + 38 gateway tests |
 | **Car link (Bluetooth)** | ✅ **session 9, D38–D42:** phone ↔ car over **Bluetooth LE** (default; WebSocket over Wi-Fi/USB is the fallback in Settings → Car connection), phone ↔ server over HTTP(S) at its **own address** (gear on the login screen; `localhost:8001` over USB, laptop IP:8001 on the hotspot, later an ngrok link). Laptop: `backend/coordinator/car_link/gateway.py` (own process, pywinrt GATT server, bridges the coordinator's WS + [K] REST; coordinator unchanged). Phone: local Expo module `modules/car-link` + `src/api/carlink.ts`. Protocol: `docs/BLUETOOTH.md` (frames ≤ 244 B, indications, state coalescing, 2 s ping / 7 s watchdog). **Verified on the A54:** permission flow, connect (~10 s from cold start), start trip (201), live score + sections (180 msgs, 0 lost), end trip (200) → summary + report from the server on :8001, reconnect after a gateway restart (~10 s) and after phone Bluetooth off/on (~4 s). 38 tests in `backend/coordinator/car_link` |
 | Camera + model | ✅ **Dušan's `rivian_model/` is the model (session 10, D44)**: own venv `rivian_model/.venv` (Python 3.13, CPU torch), weights via `setup_models.py`, **on the GPU when there is one** (DirectML on Windows, GTX 1650 here: ~25 ms per frame, phone detector on every frame; CPU fallback ~43 ms; D48), warm-up without a dataset frame (D49), every frame of the 10 fps stream. Camera: `tools/camera_stream.py` (clip / webcam) or `rivian_model/klip_po_voznji.py` (each trip = next dataset clip). **Verified with dataset clips:** 6 REST runs (phone, texting, calm, collapse → emergency at 13.8 s), the A54 over Bluetooth (collapse overlay, phone critical, summaries with pictures, history) and the dashboard overlay. `demo.ps1` starts the whole car. Book: `cv-pipeline.md` |
+| **Docker** | ✅ **session 13, D52:** `.\start.ps1` is the only script: installs/starts Docker Desktop, stops `demo.ps1` leftovers, checks ports, finds the dataset, writes `docker/.env` (laptop IP, clips, driver zone), `docker compose up -d --build`, waits for every part, then on the host the Bluetooth gateway (own venv) + adb reverse keeper. Three composes: `docker/car.yml` (coordinator :8000, model on CPU, camera from clips), `docker/server.yml` (server :8001, Postgres + RustFS internal only), `docker/dashboard.yml` (nginx :5173, proxies /api by route to coordinator or server); root `docker-compose.yml` includes them. **Verified on this laptop:** clean builds of all 5 images (the model builds its own weights), collapse clip → emergency at ~13 s at 10 fps with every frame detected on CPU, report + image + history + live WS + POST /trips through the dashboard proxy, coordinator reachable on the LAN IP, start / rerun / -Status / -Stop. Not yet: the A54 against it, a second PC |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | **Removed (session 10, D44):** the CV team's `risk_pipeline.py`, `dev_overlay.py`, `setup_models.*` and `model/worker.py` (restore: `git show 8d05c97:<path>`). `notebooks/risk_config.json` stays, trimmed to what the coordinator's `RiskEngine` reads, plus `collapse` |
 | Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
@@ -43,10 +44,9 @@ server `localhost:8001` over USB.
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
-1. **Dockerize every part** (user's next step: start only on the user's go): images for server, coordinator, model
-   (`rivian_model/Dockerfile`, verified by Dušan: ~3 GB because Ultralytics pulls torch; ONNX Runtime alone would be ~1 GB) and
-   dashboard, one compose with Postgres + RustFS, so every PC runs the car with one command. The Bluetooth gateway stays on the Windows
-   host (it needs the radio). Camera series (`--camera`) and the dataset folder become compose settings.
+1. **Docker follow-ups** (D52; the stack itself is done: `start.ps1`, `DOCKER.md`): try `start.ps1` on a second PC from a fresh
+   clone; check the phone flow (Bluetooth + USB) against the containers on the A54; a smaller model image (ONNX Runtime without torch,
+   ~1 GB instead of 3 GB); optional NVIDIA GPU for the model (onnxruntime-gpu + `gpus: all`).
 2. **Release APK** (user's next step): `npm run android:release`, or Dušan's verified recipe in README.md (short folder,
    `CMAKE_OBJECT_PATH_MAX=250`); on the phone Bluetooth on + Nearby devices allowed, server address set.
 2b. **Video-sim starts the trip** (Djolekapppp's `frontend/video-sim`, user: "later, before full dockerization"): it streams a
@@ -70,7 +70,8 @@ server `localhost:8001` over USB.
 10. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level, the dashboard QR for the split addresses.
 11. **When the server really runs outside the car:** outbox on disk, and the phone's two addresses or a reverse proxy
     (`docs/ARCHITECTURE.md` → Planirano).
-12. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+12. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, streaks, driver leaderboard (analytics endpoint). Trends over
+    recent trips are done (D51): check the card on the A54 with a few real trips.
 
 ## In progress
 
@@ -89,6 +90,9 @@ server `localhost:8001` over USB.
 - **"undefined" error after swiping the app away:** not reproduced (logcat clean; with a trip running the process survives via the
   foreground service, without one Android kills it at once). Fixed the likely sources (keep-awake / links / headless handler rejected
   without an Activity). If it comes back, note *where* it prints (Metro terminal or phone).
+- **Docker:** the model runs on the CPU there (DirectML is Windows-only; ~10 fps, keeps up on this laptop); no webcam in Docker
+  on Windows (clips only); this laptop's dataset (`D:\Hackathon dataset 2026`) lacks the default clips 021254 and 005853, so the
+  camera tops up with other 05_23 clips. Don't run `demo.ps1` and `start.ps1` together (same ports; `start.ps1` stops the demo).
 - **The model's driver zone is per camera series** (`--camera 05_23|08_14`): clips of the other series give wrong detections.
   `demo.ps1` takes it from the clip name, `klip_po_voznji.py` refuses a mixed list. While `klip_po_voznji.py` runs, every phone
   trip gets the next clip (then none).
@@ -258,3 +262,13 @@ server `localhost:8001` over USB.
   adb reverse keeper; `run.py` explains a taken or reserved port; test tools use free ports; `tools/reserve-ports.ps1`. Pulled
   Djolekapppp's `frontend/video-sim`. Verified: 108 backend + 38 gateway tests, offline detector on CPU and GPU, live runs on 5 clips,
   demo.ps1 restart twice, adb keeper restores a removed port in < 5 s.
+- 2026-11-07, session 13 (Claude, for the user): **everything in Docker** (D52): `start.ps1`, `docker-compose.yml` +
+  `docker/{car,server,dashboard}.yml`, images `backend/Dockerfile` (coordinator + server), `rivian_model/Dockerfile` (now builds its own
+  weights), `docker/camera/`, `frontend/dashboard/Dockerfile` (nginx, runtime `HOST_IP` for the QR), `DOCKER.md`;
+  `klip_po_voznji.py --host`. Verified end to end on this laptop (Snapshot → Docker); the phone not yet against the containers.
+- 2026-11-07, session 12 (Claude, for the user): **Drive-screen trends card** (D51): `frontend/mobile/src/components/trends.tsx` +
+  `src/lib/trends.ts`, from `GET /trips`, shown whenever no trip runs. Ranges Last 5 / Last 10 / 30 days, test trips < 20 s left
+  out; average score with the trend (recent half vs earlier), a bar per trip coloured by its level (tap → that trip), clean trips /
+  risky moments / driving time / emergencies, top 3 risks with more / fewer, and the tip for the biggest one. Verified: typecheck,
+  lint, the math on sample trips. **Not yet seen on the A54** (no Metro/server running at the time).
+- 2026-11-07, agent: CUDA training env `rivian_model/.venv-train` (torch 2.15.0+cu132 + ultralytics, GTX 1650 verified). The live model stays on DirectML in `.venv`.

@@ -3,9 +3,13 @@ import { QrCodeIcon } from '@hugeicons/core-free-icons'
 import { QRCodeSVG } from 'qrcode.react'
 import { Card } from '@/components/ui/card'
 
-/** QR of the backend address for the phone app: plain `<lan-ip>:<port>` (LAN IP found by vite.config.ts at dev/build time) */
+/**
+ * QR of the backend address for the phone app: plain `<lan-ip>:<port>`. In Docker the host's IP comes at run time
+ * (public/runtime-config.js, from start.ps1); in dev, vite.config.ts finds it at dev/build time.
+ */
 const ConnectPhoneCard = () => {
-  const address = `${__LAN_IP__ || location.hostname}:${__BACKEND_PORT__}`
+  const runtime = window.__RUNTIME__
+  const address = `${runtime?.lanIp || __LAN_IP__ || location.hostname}:${runtime?.backendPort || __BACKEND_PORT__}`
   return (
     <Card className="gap-4 p-5 text-sm">
       <div className="flex items-center gap-2">

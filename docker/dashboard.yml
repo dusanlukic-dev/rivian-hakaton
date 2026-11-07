@@ -1,0 +1,19 @@
+# The car-screen dashboard (web), on the host's port 5173. nginx serves the build and proxies /api to the coordinator
+# and the server, so the browser only ever talks to this one address.
+# Whole system: ../start.ps1 (or `docker compose up -d --build` in the repo root). Alone: docker compose -f docker/dashboard.yml up -d
+# (then COORDINATOR_UPSTREAM=host.docker.internal:8000 and SERVER_UPSTREAM=host.docker.internal:8001 in docker/.env).
+# Settings: docker/.env (start.ps1 writes it; example: docker/.env.example).
+services:
+  dashboard:
+    build:
+      context: ..
+      dockerfile: frontend/dashboard/Dockerfile
+    image: rivian-dashboard:local
+    environment:
+      HOST_IP: ${HOST_IP:-}
+      BACKEND_PORT: ${COORDINATOR_PORT:-8000}
+      COORDINATOR_UPSTREAM: ${COORDINATOR_UPSTREAM:-coordinator:8000}
+      SERVER_UPSTREAM: ${SERVER_UPSTREAM:-server:8001}
+    ports:
+      - "${DASHBOARD_PORT:-5173}:80"
+    restart: unless-stopped

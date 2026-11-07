@@ -1,0 +1,7 @@
+# Build context = repo root. Only these files go into the backend image.
+*
+!backend/requirements.txt
+!backend/app/**
+!notebooks/risk_config.json
+**/__pycache__
+**/*.pyc

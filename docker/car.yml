@@ -1,0 +1,53 @@
+# The car: coordinator (live score, car response, sections), model (camera frames -> evidence) and the cabin camera
+# (dataset clips). The coordinator is on the host's port 8000 (phone over Wi-Fi/USB, Bluetooth gateway, dashboard).
+# Whole system: ../start.ps1 (or `docker compose up -d --build` in the repo root). Alone: docker compose -f docker/car.yml up -d
+# (then SERVER_URL=http://host.docker.internal:8001/api/v1 in docker/.env if the server runs elsewhere on this PC).
+# Settings: docker/.env (start.ps1 writes it; example: docker/.env.example).
+services:
+  coordinator:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: rivian-coordinator:local
+    environment:
+      APP: app.coordinator.main:app
+      PORT: "8000"
+      SERVER_URL: ${SERVER_URL:-http://server:8001/api/v1}
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+      SPEED_SCENARIO: ${SPEED_SCENARIO:-cruise}
+    ports:
+      - "${COORDINATOR_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  model:
+    build: ../rivian_model
+    image: rivian-model:local
+    # CPU in Docker (DirectML is Windows-only); the driver zone follows the camera series of the clips.
+    command: ["rivian_detector.py", "--camera", "${MODEL_CAMERA:-05_23}", "--device", "cpu",
+              "--coordinator", "ws://coordinator:8000/api/v1/model/ws"]
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    restart: unless-stopped
+
+  camera:
+    build:
+      context: ..
+      dockerfile: docker/camera/Dockerfile
+    image: rivian-camera:local
+    environment:
+      COORDINATOR_HOST: coordinator
+      COORDINATOR_PORT: "8000"
+      CAMERA_MODE: ${CAMERA_MODE:-per-trip}
+      CLIPS: ${CLIPS:-05_23_62_031246 05_23_62_021254 05_23_62_005853}
+      VIDEO: ${VIDEO:-}
+      MODEL_CAMERA: ${MODEL_CAMERA:-05_23}
+    volumes:
+      - type: bind
+        source: ${DATASET_DIR:-./camera/no-dataset}
+        target: /dataset
+        read_only: true
+    depends_on:
+      coordinator:
+        condition: service_healthy
+    restart: unless-stopped

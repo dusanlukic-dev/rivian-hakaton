@@ -1,0 +1,55 @@
+# The server (outside the car): accounts, trips, sections, images, history, reports.
+# Postgres and RustFS (S3) are reachable only inside Docker; the API is on the host's port 8001 (phone + coordinator).
+# Whole system: ../start.ps1 (or `docker compose up -d --build` in the repo root). Alone: docker compose -f docker/server.yml up -d
+# Settings: docker/.env (start.ps1 writes it; example: docker/.env.example).
+services:
+  postgres:
+    image: postgres:18.6
+    environment:
+      POSTGRES_USER: safety
+      POSTGRES_PASSWORD: safety
+      POSTGRES_DB: safety
+    volumes:
+      - pgdata:/var/lib/postgresql  # Postgres 18 images keep their data under this directory
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "safety", "-d", "safety"]
+      interval: 5s
+      retries: 20
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:1.0.4
+    environment:
+      RUSTFS_ACCESS_KEY: safety
+      RUSTFS_SECRET_KEY: safety-secret
+    volumes:
+      - rustfs:/data
+    restart: unless-stopped
+
+  server:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    image: rivian-server:local
+    environment:
+      APP: app.server.main:app
+      PORT: "8001"
+      DATABASE_URL: postgresql+asyncpg://safety:safety@postgres:5432/safety
+      S3_ENDPOINT_URL: http://rustfs:9000
+      S3_ACCESS_KEY: safety
+      S3_SECRET_KEY: safety-secret
+      INTERNAL_TOKEN: ${INTERNAL_TOKEN:-dev-internal-token}
+    ports:
+      - "${SERVER_PORT:-8001}:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rustfs:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+    name: rivian-pgdata
+  rustfs:
+    name: rivian-rustfs
