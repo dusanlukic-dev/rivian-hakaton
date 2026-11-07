@@ -2,15 +2,15 @@
 
 > Live status board for humans and agents. **Read it first, update it last** (`.claude/rules/progress.md`).
 > Keep it short and link to files. Details belong in `.claude/knowledge/`. Domain rules: root `CLAUDE.md`. Contract: `docs/API.md`.
-> Last updated: 2026-11-07 ~11:50, session 10: Dušan's model merged into main and tested end to end with dataset clips (Claude, for Matija).
+> Last updated: 2026-11-07 ~13:00, session 11: smooth score + emergency only for a collapse, model on the GPU, ports that can't break the demo (Claude, for Matija).
 
 ## Snapshot
 
 | area | state |
 |---|---|
-| Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Checked against the user's definition (session 6):** the car = camera + model + coordinator, the server is outside; `/telemetry` frame records are a debug feed (409 while a model worker is connected), a phone login never blocks the car (offline: stale token cache, or the token rides along as `TripMeta.owner_token`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 92 tests. Speed is mocked by the coordinator (phone GPS opt-in). **Session 7: the score is live** (D35: danger now × speed factor, falls and recovers within seconds, nothing while standing), summaries headline `average_score`. 95 tests. **Session 10:** collapse (score 0 + emergency at once, also standing still) and one camera (Dušan, D45); 105 tests + 38 gateway tests |
+| Backend (FastAPI) | ✅ **two parts** (`docs/ARCHITECTURE.md`), one process on :8000 (`python run.py`; split with `--role` + `SERVER_URL`). **Coordinator** (`app/coordinator`): phone WS, camera stream (`WS /camera/ws`, `POST /video/frames`), **model worker link** (`WS /model/ws`), the CV team's `RiskEngine` (extracted, identical to the original: test), score + car response, **5 min video cache** (diskcache), a **section summary every 2 s** (score, what was seen, `danger`, image of the riskiest frame when dangerous) to the phone (WS `section`) and to the server (outbox, retries while it's down), plus the camera model's trip report (`app/services/model_report.py`). **Checked against the user's definition (session 6):** the car = camera + model + coordinator, the server is outside; `/telemetry` frame records are a debug feed (409 while a model worker is connected), a phone login never blocks the car (offline: stale token cache, or the token rides along as `TripMeta.owner_token`). **Server** (`app/server`): accounts, Postgres (`trips`, `trip_sections`) + RustFS images, history, **`GET /trips/{id}/report`** = summary + user + sections + **moments** (merged dangerous sections with an image) + `model`. 92 tests. Speed is mocked by the coordinator (phone GPS opt-in). **Session 7: the score is live** (D35: danger now × speed factor, falls and recovers within seconds, nothing while standing), summaries headline `average_score`. 95 tests. **Session 10:** collapse (score 0 + emergency at once, also standing still) and one camera (Dušan, D45). **Session 11:** behaviors are debounced episodes (onset + bridge, D46), so the score is a smooth curve (phone clip: 0 reversals, was 8) and glances don't count; only a confirmed collapse is an emergency, everything else bottoms out at 10 (D47). 108 tests + 38 gateway tests |
 | **Car link (Bluetooth)** | ✅ **session 9, D38–D42:** phone ↔ car over **Bluetooth LE** (default; WebSocket over Wi-Fi/USB is the fallback in Settings → Car connection), phone ↔ server over HTTP(S) at its **own address** (gear on the login screen; `localhost:8001` over USB, laptop IP:8001 on the hotspot, later an ngrok link). Laptop: `backend/coordinator/car_link/gateway.py` (own process, pywinrt GATT server, bridges the coordinator's WS + [K] REST; coordinator unchanged). Phone: local Expo module `modules/car-link` + `src/api/carlink.ts`. Protocol: `docs/BLUETOOTH.md` (frames ≤ 244 B, indications, state coalescing, 2 s ping / 7 s watchdog). **Verified on the A54:** permission flow, connect (~10 s from cold start), start trip (201), live score + sections (180 msgs, 0 lost), end trip (200) → summary + report from the server on :8001, reconnect after a gateway restart (~10 s) and after phone Bluetooth off/on (~4 s). 38 tests in `backend/coordinator/car_link` |
-| Camera + model | ✅ **Dušan's `rivian_model/` is the model (session 10, D44)**: own venv `rivian_model/.venv` (Python 3.13, CPU torch), weights via `setup_models.py`, ~40 ms per frame here, every frame of the 10 fps stream. Camera: `tools/camera_stream.py` (clip / webcam) or `rivian_model/klip_po_voznji.py` (each trip = next dataset clip). **Verified with dataset clips:** 6 REST runs (phone, texting, calm, collapse → emergency at 13.8 s), the A54 over Bluetooth (collapse overlay, phone critical, summaries with pictures, history) and the dashboard overlay. `demo.ps1` starts the whole car. Book: `cv-pipeline.md` |
+| Camera + model | ✅ **Dušan's `rivian_model/` is the model (session 10, D44)**: own venv `rivian_model/.venv` (Python 3.13, CPU torch), weights via `setup_models.py`, **on the GPU when there is one** (DirectML on Windows, GTX 1650 here: ~25 ms per frame, phone detector on every frame; CPU fallback ~43 ms; D48), warm-up without a dataset frame (D49), every frame of the 10 fps stream. Camera: `tools/camera_stream.py` (clip / webcam) or `rivian_model/klip_po_voznji.py` (each trip = next dataset clip). **Verified with dataset clips:** 6 REST runs (phone, texting, calm, collapse → emergency at 13.8 s), the A54 over Bluetooth (collapse overlay, phone critical, summaries with pictures, history) and the dashboard overlay. `demo.ps1` starts the whole car. Book: `cv-pipeline.md` |
 | Simulators | ✅ `notebooks/safety_client.py` (full demo drive, `--replay frames.jsonl`, `--video 0` streams the webcam so dangerous moments get images, `--backend-speed`) + `tools/sim.py` (exact states, see skill `backend-local`) |
 | CV models | **Removed (session 10, D44):** the CV team's `risk_pipeline.py`, `dev_overlay.py`, `setup_models.*` and `model/worker.py` (restore: `git show 8d05c97:<path>`). `notebooks/risk_config.json` stays, trimmed to what the coordinator's `RiskEngine` reads, plus `collapse` |
 | Contract | ✅ `docs/API.md` (source of truth; §5 tags each route [K] coordinator / [S] server). New: WS `section`, report `sections` + `moments` (+ `model`). Internal contracts: `docs/ARCHITECTURE.md`. Frontend notes: `.claude/knowledge/contract-notes.md` |
@@ -22,8 +22,9 @@
 ## How to see it
 
 ```powershell
-.\demo.ps1 -PoVoznji -NoBle   # whole car, one window per part: Docker storage, server :8001, coordinator :8000 (cruise), model (05_23),
-                              # per-trip clips; without -NoBle it also starts the Bluetooth gateway
+.\demo.ps1 -PoVoznji          # whole car, one window per part: Docker storage, server :8001, coordinator :8000 (cruise), model (05_23,
+                              # GPU if any), per-trip clips, Bluetooth gateway (kept if one runs), adb reverse keeper; starts clean
+.\demo.ps1 -Stop              # stops everything demo.ps1 started
 # the pieces, from the repo root:
 cd backend; docker compose up -d                                                        # Postgres :5433 + RustFS :9000
 cd backend; .venv\Scripts\python.exe run.py --role server --port 8001 --no-reload        # server (accounts, history, report)
@@ -35,10 +36,10 @@ curl -s http://127.0.0.1:8000/api/v1/coordinator/status                         
 cd frontend/mobile; npm start; npm run adb:reverse                                        # Metro + USB ports 8081/8000/8001
 cd frontend/dashboard; npm run dev                                                        # http://localhost:5173 (?sim, /trip/<id>)
 ```
-**Right now (2026-11-07, ~11:50):** in their own windows: server :8001, coordinator :8000 (cruise), the model (`demo: model (05_23)`),
-the per-trip camera (`demo: kamera (klip po voznji)`, list 031246 collapse, 021254 phone, 005853 phone in the lap), plus the user's
-Bluetooth gateway tab, Metro and Docker. The A54 is logged in as `matija` (`secret123`), car link Bluetooth, server `localhost:8001`
-over USB (adb reverse re-applied). The old `--mock` coordinator and the old server were stopped with the user's OK.
+**Right now (2026-11-07, ~13:00):** started by `demo.ps1 -PoVoznji`: server :8001, coordinator :8000 (new scoring), the model on the
+GPU (`demo: model (05_23)`), the per-trip camera (031246 collapse, 021254 phone, 005853 phone in the lap) and `demo: telefon USB`;
+plus the user's Bluetooth gateway tab, Metro and Docker. The A54 is logged in as `matija` (`secret123`), car link Bluetooth,
+server `localhost:8001` over USB.
 
 ## Next up (in priority order; take one, move it to *In progress* with your name)
 
@@ -48,6 +49,9 @@ over USB (adb reverse re-applied). The old `--mock` coordinator and the old serv
    host (it needs the radio). Camera series (`--camera`) and the dataset folder become compose settings.
 2. **Release APK** (user's next step): `npm run android:release`, or Dušan's verified recipe in README.md (short folder,
    `CMAKE_OBJECT_PATH_MAX=250`); on the phone Bluetooth on + Nearby devices allowed, server address set.
+2b. **Video-sim starts the trip** (Djolekapppp's `frontend/video-sim`, user: "later, before full dockerization"): it streams a
+   dataset clip into `WS /camera/ws` but needs a running trip; decide who starts it (the app over Bluetooth, or the sim with the
+   account's token). It shares the one camera slot with `klip_po_voznji.py`: run one or the other.
 3. **Backend folder split** (user's request, decide together with Docker): Fork A's WIP is local branch
    `worktree-agent-a336269a95214247a` (`backend/coordinator/`, `backend/server/`, `backend/shared/`, `start.ps1`); left: tests, dashboard
    with two targets + QR `driveralert://connect?server=…&car=…` (the app already parses it), `safety_client.py --server`, docs. It
@@ -92,7 +96,9 @@ over USB (adb reverse re-applied). The old `--mock` coordinator and the old serv
   change to them conflicts as modify/delete. Restore with `git show 8d05c97:<path>`.
 - A server started before session 10 rejects `collapse` sections (422, the outbox retries forever): restart :8001 on the new code.
   `adb kill-server` (or an unauthorized phone) drops the `adb reverse` ports: re-run `npm run adb:reverse`.
-- Ports **8685–8884 are reserved** on this laptop (WinError 10013): Dušan's test defaults 8765/8766 fail here, use e.g. 8020.
+- Ports **8685–8884 are reserved** on this laptop (WinError 10013). Ours are outside it today; `demo.ps1` and `run.py` now say so
+  if one ever lands in a reserved range, and `tools/reserve-ports.ps1` (admin, once; **not run yet**) pins them for good (D50).
+- The score's bridge keeps a warning going up to 2.5 s after the driver really puts the phone down (the price of no flicker, D46).
 - The dev-client gear button floats over the right edge mid-screen (covers e.g. the DND "Allow" button). Dev builds only; drag it away.
 - The splash image is still Expo's default logo (`assets/images/splash-icon.png`), not the app's. Polish item (Next up #9).
 - Web dashboard audio needs one click per page load ("Enable sound"), a browser rule. Its main chunk is 642 KB (Vite warning, harmless).
@@ -243,3 +249,12 @@ over USB (adb reverse re-applied). The old `--mock` coordinator and the old serv
   numbers as Dušan's), 6 live REST runs on dataset clips (phone, texting, calm, collapse → emergency at 13.8 s), the A54 over
   Bluetooth (3 trips: collapse overlay, phone critical, summaries with pictures, history) and the dashboard overlay. Docs: README,
   root + agent CLAUDE.md, ARCHITECTURE, API, BLUETOOTH, backend docs, knowledge books (cv-pipeline rewritten), backend-local skill.
+- 2026-11-07, session 11 (Claude, for Matija): quality of life after the user's review. **Smooth score** (D46): behaviors are episodes
+  with an onset (phone 1 s, eyes off road 2 s) and a bridge over detection gaps (phone 2.5 s); on the phone clip the score falls once
+  and holds (0 reversals instead of 8, 1 occurrence instead of 4), the calm clip stays at 100. **Emergency only for a collapse**
+  (D47): the score floors at 10 otherwise, the contact is alerted only on a confirmed collapse. **GPU** (D48): `onnxruntime-directml`,
+  provider chosen per session with a CPU fallback, 25 ms vs 43 ms per frame on the GTX 1650, device shown in `/coordinator/status`.
+  **Warm-up** on a gray frame, no dataset frame (D49). **Ports** (D50): `demo.ps1` starts clean / `-Stop`, reserved-range check,
+  adb reverse keeper; `run.py` explains a taken or reserved port; test tools use free ports; `tools/reserve-ports.ps1`. Pulled
+  Djolekapppp's `frontend/video-sim`. Verified: 108 backend + 38 gateway tests, offline detector on CPU and GPU, live runs on 5 clips,
+  demo.ps1 restart twice, adb keeper restores a removed port in < 5 s.

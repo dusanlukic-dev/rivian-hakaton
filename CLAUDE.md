@@ -71,17 +71,20 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   0, svetlo crveno, glasan alarm i poruka kontaktu, **i kad kola stoje**; drži se 10 s posle poslednjeg viđenja.
   Kraći pad (saginjanje) ne skida poene.
 - **Score je trenutno stanje, ne bodovni saldo** (`coordinator/services/scoring.py`): koliko je vožnja bezbedna
-  SADA. Pada dok traje rizično ponašanje i vraća se na 100 čim prestane (~6–8 s).
+  SADA. Pada dok traje rizično ponašanje i vraća se na 100 kad prestane (~6–8 s).
+  - **epizode, ne frejmovi**: ponašanje se računa tek kad traje dovoljno (telefon 1 s, pogled van puta 2 s,
+    zatvorene oči 1 s, ruke 2 s), a kad se računa, kratke rupe u detekciji ga ne prekidaju (telefon 2.5 s,
+    pogled 1.5 s). Jedan poziv = jedan glatki pad i jedno pojavljivanje, a pogled u retrovizor se ne računa;
   - opasnost sada = najgore ponašanje (raste što duže traje) + 30 % ostalih; ili rizik modela (bez mirne
     osnove 0.1, ×0.8) ako je veći;
   - **brzina je pojačivač**: < 5 km/h = 0 (stoji: nema opasnosti ni upozorenja, šta god vozač radi), 0.4 pri
     hodu, 1.0 na 50 km/h, 1.6 na 130 km/h; noć (22–06h) ×1.25;
   - cilj = 100 × (1 − opasnost × brzina), score ga prati: pada brzo (τ 0.5 s), raste malo sporije (τ 2.5 s).
-- Kalibracija (dan): dug pogled u telefon je `critical` u gradu, a `emergency` od ~70 km/h; mikrospavanje u
-  brzini je `emergency`; ruke van volana same su `caution`/`warning`.
+- Kalibracija (dan): dug pogled u telefon je `critical` u gradu i u brzini; mikrospavanje u brzini je
+  `critical`; ruke van volana same su `caution`/`warning`. **Bez kolapsa score ne pada ispod 10.**
 - Nivoi: `safe` 90–100, `caution` 75–90, `warning` 55–75, `high_risk` 35–55, `critical` 10–35,
   `emergency` < 10. Svetlo prati nivo; vibracija i zvuk samo dok se nešto rizično dešava i kola se kreću.
-  Poruka kontaktu kad `emergency` traje 2 s u vožnji. Detalji: `docs/API.md`, sekcija 7.
+  `emergency` (score 0, poruka kontaktu) je **samo potvrđen kolaps**. Detalji: `docs/API.md`, sekcija 7.
 - Rezime vožnje: `average_score` = prosek dok se kola kreću, `level` = nivo za taj prosek (score na kraju je
   skoro uvek ~100, jer kola stoje).
 - Alarm modela: kad model javi crveno (`alert.level == "red"`), kola u pokretu odmah vibriraju i
@@ -154,6 +157,10 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   tima (`model/worker.py`, `notebooks/risk_pipeline.py`, `setup_models.*`) je uklonjen; ostaje u git istoriji
   (`git show 8d05c97:model/worker.py`). Nova labela `collapse` (kategorija `collapse` u `risk_config.json`, grupa
   `medical`). Model ne šalje `hands_off_wheel` ni `drowsiness`: te kategorije ostaju u configu sa dokazom 0.
+- (2026-11-07) **Glatki score i uzbuna samo za kolaps** (zahtev korisnika: "ljudi ne spuštaju telefon na svake
+  2 s", "emergency je kad vozač umire na ekranu"): ponašanja su epizode sa početnim trajanjem i premošćenjem
+  rupa (`Debounce` u `scoring.py`), a bez kolapsa score ostaje >= 10 (`score_floor`). Na klipu sa telefonom:
+  0 promena smera umesto 8, jedno pojavljivanje umesto 4; miran klip ostaje 100.
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 

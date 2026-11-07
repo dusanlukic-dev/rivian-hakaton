@@ -34,6 +34,9 @@ curl -s http://127.0.0.1:8000/api/v1/coordinator/status             # camera fps
 ```
 - `run.py --mock` and the fake model are gone (D44). The model needs its own venv + weights once (`rivian_model/README.md`,
   ~30 min here because PyPI is slow on this network). One camera at a time: a second stream is refused (HTTP 403).
+- `demo.ps1` starts clean every time (closes its own old `demo:` windows and stale backends on 8000/8001), keeps a running
+  Bluetooth gateway, re-applies `adb reverse` in its `telefon USB` window; `demo.ps1 -Stop` stops it all. `run.py` refuses a
+  taken or Windows-reserved port with the owner/reason (D50). The model runs on the GPU when it can (`model.device` in status).
 - Long-running things go in their own background shell. To keep the **backend alive after the agent session**, start it in
   its own window: `Start-Process <backend>\.venv\Scripts\python.exe -ArgumentList run.py -WorkingDirectory <backend> -WindowStyle Minimized`.
 - **Restarting the backend on Windows:** kill the whole tree. Killing only the reloader leaves its `multiprocessing-fork` worker

@@ -26,7 +26,7 @@ Jednom (modeli i slika za zagrevanje nisu u gitu):
 py -3.13 -m venv rivian_model\.venv
 rivian_model\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 rivian_model\.venv\Scripts\python.exe -m pip install -r rivian_model\requirements.txt
-rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py --warmup-from ..\dataset\08_14_62_092916_video_inCabin.mp4
+rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py      # modeli; slika za zagrevanje vise ne treba
 ```
 Ceo auto (skladište, server, koordinator, Bluetooth, model, kamera), svaki deo u svom prozoru: `.\demo.ps1 -PoVoznji`
 (README.md u korenu). Pojedinačno:
@@ -38,13 +38,18 @@ rivian_model\.venv\Scripts\python.exe rivian_model\test_rivian_detector.py 08_14
 backend\.venv\Scripts\python.exe rivian_model\run_compare.py --port 8000 --clip <klip>.mp4 --label nas --out <folder>  # kroz pravi koordinator
 ```
 
+- **GPU:** `--device auto` (podrazumevano) uzima GPU ako ga ONNX Runtime ima: na Windows-u `onnxruntime-directml` (bilo koja
+  DX12 kartica, NVIDIA/AMD/Intel), na Linux-u `onnxruntime-gpu` (CUDA); inače CPU, i na CPU pada sam ako GPU zakaže.
+  `--device cpu|gpu` ili `$env:MODEL_DEVICE`; `$env:MODEL_GPU_ID` bira DirectML karticu. Na GPU-u telefon-YOLO ide na svaki
+  frejm. Koji uređaj radi: prva linija prozora modela i `GET /api/v1/coordinator/status` (`model.device`).
+- Zagrevanje: sivi frejm pri pokretanju (~2-3 s), bez slike iz dataseta.
 - Dataset: `$env:DATASET_DIR`, inače folder `dataset` pored repoa (`..\dataset`), inače Dušanov put.
 - `--camera 05_23` / `08_14`: zona vozača po seriji kamere (`rois.json`). Protokol ne šalje koja je kamera, pa svi klipovi
   jednog pokretanja moraju biti iz iste serije (`klip_po_voznji.py` to proverava).
 - Koordinator prima jednu kameru: dok jedna šalje, druga je odbijena (HTTP 403), jer bi model video dva vozača.
 - Brojevi (Dušan, CPU i5-1235U, na struji): ~73 ms po frejmu (i u Docker-u), spreman ~4–5 s posle pokretanja, ~490 MB RAM u Docker-u.
-  Matijin laptop (Ryzen 5 5600H): ~38–43 ms po frejmu, kroz koordinator svi frejmovi od 10 fps, 0 izgubljenih (7. 11. 2026).
-- Na ovom laptopu su portovi 8685–8884 rezervisani (WinError 10013): `test_rivian_detector.py --port 8020`.
+  Matijin laptop (Ryzen 5 5600H + GTX 1650): CPU ~43 ms po frejmu, **GPU (DirectML) ~25 ms** sa telefonom na svakom frejmu.
+- `test_rivian_detector.py` uzima bilo koji slobodan port (Windows rezerviše opsege portova, npr. 8685–8884 ovde).
 - Detalji: `ATRIBUTI.md` (signali, tačnost na 56 klipova, šta ne obećavamo), `POREDJENJE_MODELA.md` (naš model i model CV
   tima kroz isti koordinator), `PLAN_KOORDINATOR.md` (kako je uklopljen).
 - Docker: `Dockerfile` (Dušan ga je proverio na svom laptopu); sledeći korak je slika za svaki deo sistema.

@@ -35,11 +35,17 @@ coordinator's (`RiskEngine` + `scoring.py`); `collapse` has its own rule there (
 ## Setup gotchas
 
 - Own venv on **Python 3.13** (`rivian_model/.venv`): CPU torch from the PyTorch index first, then `requirements.txt`.
-  Ultralytics needs torch even for ONNX models and pip-installs `onnx` at run time if it's missing (bad in a car without internet:
-  pinned in requirements; the Dockerfile also sets `YOLO_OFFLINE`/`YOLO_AUTOINSTALL=false`).
+  Ultralytics needs torch even for ONNX models. `pipeline.py` sets `YOLO_AUTOINSTALL=false` and `YOLO_OFFLINE=true` before
+  importing it: no pip installs or online checks at run time (a car has no internet).
+- **GPU (D48):** on Windows `onnxruntime-directml` (any DX12 GPU, CPU included) replaces `onnxruntime`; they share the module, so
+  only one may be installed. `pipeline._configure_onnxruntime` overrides Ultralytics' provider choice: CUDA → DirectML
+  (high-performance adapter, or `MODEL_GPU_ID`) → CoreML → CPU, per session, with a CPU fallback if a GPU session fails.
+  `MODEL_DEVICE` / `--device auto|gpu|cpu`. Ultralytics warns "requirement onnxruntime not found" for the DirectML build
+  (filtered: it is there). On a GPU the phone detector runs on every frame (CPU: every 2nd). MediaPipe stays on the CPU on
+  Windows (its GPU delegate exists on Linux/macOS only, tried there). The first DirectML start compiles shaders (~7 s once).
 - Weights are not in git: `setup_models.py` exports `yolo11n_640.onnx` + `yolo11n-pose_384.onnx` from the `.pt` files
-  (downloaded from the Ultralytics GitHub release) and fetches `face_landmarker.task`. `--warmup-from <clip>` writes
-  `warmup_frame.jpg` (a frame with a face, so MediaPipe warms up before the first trip; also not in git).
+  (downloaded from the Ultralytics GitHub release) and fetches `face_landmarker.task`. Warm-up (D49): a gray frame at startup,
+  no dataset frame any more (`warmup_frame.jpg` stays in `.gitignore` for old checkouts).
 - ONNX Runtime threads spin by default and three models fight for the cores (~10× slower): `pipeline._tune_onnxruntime` turns
   spinning off and caps threads (`ORT_THREADS`, default 4).
 - MediaPipe on Linux needs `libegl1 libgles2` even without a GPU (Dušan's Dockerfile has them).
@@ -56,7 +62,9 @@ coordinator's (`RiskEngine` + `scoring.py`); `collapse` has its own rule there (
   (`collapse` / `phone_sustained` rules).
 - On the A54 over Bluetooth: trip start/end, live tiles (incl. "Driver not responding"), seat/sound, the collapse emergency
   overlay ("The driver is not responding"), summary + chart with the slumped-driver picture, history. Dashboard: same overlay.
-- Ports **8685–8884 are reserved** on this laptop (Windows excluded range): Dušan's defaults 8765/8766 fail with WinError 10013,
-  so pass `--port 8020` to `test_rivian_detector.py` and `--port 8000` to `run_compare.py`.
+- GPU (GTX 1650, DirectML, session 11): **25 ms per frame** with the phone detector on every frame (CPU: 43 ms with it on every
+  2nd), GPU ~35 % busy, 121 MiB; same detections (092916 phone 12.3–24.2 s, 031246 collapse from 11.0 s).
+- Ports **8685–8884 are reserved** on this laptop (Windows excluded range): Dušan's old defaults 8765/8766 failed with WinError
+  10013. Now `test_rivian_detector.py` takes any free port (`--port 0`) and `run_compare.py` defaults to 8000.
 - Two cameras: the second `/camera/ws` connection gets **HTTP 403** at the handshake (the coordinator closes before accept);
   the test client reports it as close code 1008.

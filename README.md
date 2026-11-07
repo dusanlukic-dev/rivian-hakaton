@@ -54,8 +54,10 @@ The model runs in its own environment (Python 3.13 here; the models are not in g
 py -3.13 -m venv rivian_model\.venv
 rivian_model\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
 rivian_model\.venv\Scripts\python.exe -m pip install -r rivian_model\requirements.txt
-rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py --warmup-from ..\dataset\08_14_62_092916_video_inCabin.mp4
+rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py
 ```
+The model uses the GPU when there is one (DirectML on Windows: NVIDIA, AMD or Intel; CUDA on Linux) and the CPU otherwise
+(`--device cpu` / `$env:MODEL_DEVICE` to force it); `GET /api/v1/coordinator/status` shows which.
 Then every part in its own window (ports 8000 and 8001 must be free). The dataset clips live outside the repo
 (`..\dataset`, or set `$env:DATASET_DIR`):
 ```powershell
@@ -64,7 +66,9 @@ Then every part in its own window (ports 8000 and 8001 must be free). The datase
 .\demo.ps1 -Video ..\dataset\08_14_62_092916_video_inCabin.mp4   # phone call
 ```
 `demo.ps1` starts Postgres + RustFS (Docker), the server (:8001), the coordinator (:8000, mocked speed `cruise`, 50–62 km/h),
-the Bluetooth gateway, the model and the camera. One camera at a time: a second stream would mix two drivers' frames into one
+the Bluetooth gateway (or keeps the one already running), the model, the camera, and a small window that keeps the phone's
+USB ports (`adb reverse`) alive. Every run starts clean (it closes its own earlier windows); `.\demo.ps1 -Stop` stops it all.
+If Windows ever reserves one of our ports (WinError 10013), run `tools\reserve-ports.ps1` once as administrator. One camera at a time: a second stream would mix two drivers' frames into one
 model, so the coordinator refuses it. The model needs the camera's driver zone (`--camera 05_23|08_14`, taken from the clip
 name), so clips of one run come from one camera series. Model details: [`rivian_model/README.md`](rivian_model/README.md).
 

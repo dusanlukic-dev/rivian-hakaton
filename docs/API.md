@@ -19,7 +19,7 @@ odgovaraju na istoj adresi (`:8000`), pa aplikacija ima jednu adresu. U §5 piš
    može, sa svojim ID-jem i kontaktom za hitne slučajeve, kao ranije.
 3. Tokom vožnje uživo prikazuje dashboard: svetlo, score, trenutna rizična ponašanja, poruku.
    Simulira vibraciju sedišta i zvučni signal.
-4. Kad score padne ispod 10, prikazuje uzbunu za hitan slučaj.
+4. Kad se vozač sruši (kolaps), prikazuje uzbunu za hitan slučaj (score 0); ništa drugo nije uzbuna.
 5. Vozač završava vožnju i vidi statistiku sa savetima.
 6. Izveštaj vožnje (`GET /trips/{id}/report`, sve u jednom pozivu): rezime, ko je vozio, vožnja po
    sekcijama od 2 s za grafik (score, brzina, šta je viđeno, rizik modela, opasnost) i opasni momenti sa
@@ -190,7 +190,7 @@ export interface TripState {
   camera: CameraView | null;
   speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema opasnosti ni upozorenja
   speed_source: SpeedSource | null;  // null pre prvog ticka
-  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10 bar 2 s u vožnji)
+  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (potvrđen kolaps)
 }
 
 export interface BehaviorSummary {
@@ -698,8 +698,10 @@ upozorenje, nego prikazuje ono što piše u `response`.
 | `speed_kmh` | brzinomer. Ispod 5 km/h nema opasnosti ni upozorenja (npr. semafor), pa je korisno da se vidi. Brzina pojačava opasnost (×0.4 pri hodu, ×1 na 50, ×1.6 na 130 km/h). `speed_source` može da ide sitno ispod (`mock` / `phone`) |
 
 **Score** (backend, `coordinator/services/scoring.py`): opasnost ponašanja koja se sada vide (raste što duže
-traje) ili rizik modela, puta faktor brzine, daje cilj `100 × (1 − opasnost)`; score ga prati (pada za ~1 s,
-vraća se za ~6–8 s). Dok kola stoje (< 5 km/h) cilj je 100 i nema upozorenja, šta god vozač radi.
+traje) ili rizik modela, puta faktor brzine, daje cilj `100 × (1 − opasnost)`, ali **ne ispod 10** bez kolapsa;
+score ga prati (pada za ~1 s, vraća se za ~6–8 s). Dok kola stoje (< 5 km/h) cilj je 100 i nema upozorenja.
+Ponašanje se računa tek kad traje dovoljno (telefon 1 s, pogled van puta 2 s, zatvorene oči 1 s), a kratke rupe
+u detekciji ga ne prekidaju (telefon 2.5 s): `active_behaviors` je zato miran, bez treperenja.
 
 Nivoi (informativno, logika je na backendu):
 
@@ -710,7 +712,7 @@ Nivoi (informativno, logika je na backendu):
 | `warning` | 55–75 | žuto | vibracija + tihi zvuk |
 | `high_risk` | 35–55 | žuto | vibracija + glasan zvuk |
 | `critical` | 10–35 | crveno | vibracija + glasan zvuk |
-| `emergency` | < 10 | crveno | isto; posle 2 s u vožnji i događaj `emergency` (jednom po vožnji) |
+| `emergency` | 0 | crveno | **samo potvrđen kolaps** (2 s), i dok kola stoje: glasan alarm, poruka kontaktu, događaj `emergency` (jednom po vožnji) |
 
 Vibracija i zvuk prestaju čim ponašanje prestane, a svetlo se vraća zajedno sa score-om. Dok kola stoje:
 zeleno svetlo, bez vibracije i zvuka, poruka `"Standing still - no warnings."`.

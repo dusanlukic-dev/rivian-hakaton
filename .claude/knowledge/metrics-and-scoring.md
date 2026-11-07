@@ -31,12 +31,18 @@ A live reading, **not a points balance**: it falls while something risky happens
   it lasts (table above); or the model's risk if higher (`risk.final` minus its calm baseline 0.1, ×0.8: 0.96 red → 0.77).
 - × speed factor: **0 below 5 km/h** (standing: anything goes, no warnings), 0.4 at walking pace, 1.0 at 50, 1.6 at 130 km/h (linear);
   × night 1.25 (22–06 h, from the tick's local timestamp).
-- target = 100 × (1 − danger × factor); the score follows it: falls with τ 0.5 s, rises with τ 2.5 s (τ 0.5 s while standing).
-- Calibration (daytime, fake worker replayed at fixed speeds): phone 6 s = high risk at 30, critical at 50, emergency from ~70 km/h;
-  microsleep 3 s = critical at 30, emergency at speed; hands off = caution/warning. Calm driving = 100 exactly.
+- **Episodes, not frames (session 11, D46):** a behaviour counts once seen for its onset (phone 1 s, eyes off road 2 s, eyes closed
+  1 s, hands off 2 s, behind/turning 1 s) and, once it counts, survives gaps up to its bridge (phone 2.5 s, eyes off road 1.5 s).
+  `trip.active` / `active_behaviors` hold only counted episodes, so the score, alerts, sections and tiles don't flicker. Cost:
+  the warning goes on up to the bridge after the behaviour really ends; tiles appear after the onset.
+- target = max(100 × (1 − danger × factor), 10): **without a collapse the score never goes below 10** (D47). The score follows
+  the target: falls with τ 0.5 s, rises with τ 2.5 s (τ 0.5 s while standing).
+- Calibration (daytime): phone 6 s = high risk at 30, critical at 50 and above; a microsleep at speed is critical; hands off =
+  caution/warning. Calm driving = 100 exactly. Measured on clips: the phone call clip 021254 falls once and holds (0 reversals,
+  was 8), the calm clip 085956 stays at 100 (a 0.4 s glance used to dip it to 87).
 - Statistics (behaviour seconds, `average_score`) count **moving time only**. The summary's `level` is for `average_score`;
   `final_score` is the live score at the end (~100 once parked), so the apps headline the average.
-- The `emergency` event (contact) needs the emergency level for 2 s while moving, once per trip.
+- The `emergency` event (contact) fires only for a confirmed collapse (2 s), at any speed, once per trip.
 
 ## Levels → car response (`POLICIES` in alerts.py)
 
@@ -47,7 +53,7 @@ A live reading, **not a points balance**: it falls while something risky happens
 | `warning` | 55–75 | `yellow` | ✓ | `low` | Risky behavior detected - eyes on the road. |
 | `high_risk` | 35–55 | `yellow` | ✓ | `high` | High risk - focus on the road now. |
 | `critical` | 10–35 | `red` | ✓ | `high` | Dangerous driving - focus on the road now. |
-| `emergency` | < 10 | `red` | ✓ | `high` | Critical danger - eyes on the road and slow down. Plus a one-off `emergency` event after 2 s |
+| `emergency` | 0 (collapse only) | `red` | ✓ | `high` | Driver not responding - emergency contact alerted. Plus the one-off `emergency` event |
 | any + model alarm | – | follows the score | ✓ | `high` | at `safe`: Danger detected - eyes on the road now. |
 | standing (< 5 km/h) | – | `green` | – | `none` | Standing still - no warnings. |
 

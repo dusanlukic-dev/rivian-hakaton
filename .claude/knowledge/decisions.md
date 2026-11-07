@@ -272,3 +272,40 @@ drivers into one model. A collapse confirmed for 2 s sets the score to 0 with th
 at once, also standing still, held 10 s after last seen; a shorter slump costs nothing (getting out of the car, picking
 something up). The camera series (`05_23`/`08_14`) is a model start option (`--camera`): the protocol doesn't say which
 camera, and a real car has one fixed mount.
+
+**D46: Behaviors are episodes with an onset and a bridge, not per-frame flags (2026-11-07).** User: "it should be a smooth
+function, people are not putting the phone up and down every 2 seconds", "maybe it's too sensitive". The 4 Hz timeline of
+a phone clip showed three stacked causes: the model's evidence flickers (phone p 1.00 → 0.22 → 0.82 within half a second),
+the coordinator deleted a behavior on the first tick it was missing (duration and occurrence restarted), and the score
+recovered at once. Now `scoring.update_episodes`: a behavior counts after its onset (phone 1 s, eyes off road 2 s, eyes
+closed 1 s, hands off 2 s) and survives gaps up to its bridge (phone 2.5 s). Result on 021254: 0 direction reversals of the
+score instead of 8, one occurrence instead of 4; the calm clip stays at 100. Rejected: smoothing in the model (`features.py`
+is Dušan's and the flicker would come back with any other model), a longer RiskEngine EMA (delays every onset, still
+toggles). Cost: warnings run on up to the bridge after a behavior really ends; tiles appear after the onset.
+
+**D47: Only a confirmed collapse is an emergency (2026-11-07).** User: "emergency 0 when a friend is called is when the
+person is detected collapsed, unresponsive". The emergency level and the message to the emergency contact used to come
+from the score staying below 10 for 2 s, which a long phone call at highway speed reached. Now the score's target never
+goes below 10 without a collapse (`score_floor`), and `process_tick` alerts the contact only on `collapse_confirmed`.
+
+**D48: GPU through ONNX Runtime's DirectML build on Windows (2026-11-07).** User: "use the GPU if it can, else the CPU".
+The laptop has a GTX 1650 + a Radeon iGPU. CUDA builds need ~1.5 GB of CUDA/cuDNN wheels (hours at this network's PyPI
+speed); `onnxruntime-directml` (25 MB) runs on any DX12 GPU and includes the CPU provider. `pipeline._configure_onnxruntime`
+picks CUDA → DirectML (high-performance adapter) → CoreML → CPU per session, falling back to the CPU if a GPU session fails;
+Ultralytics' own provider choice is overridden. Ultralytics doesn't know the DirectML package name and would pip-install the
+CPU build over it, so `YOLO_AUTOINSTALL=false` (also right for a car without internet). MediaPipe's GPU delegate is tried on
+Linux/macOS only (the Windows package is CPU-only). Measured: 25 ms per frame on the GPU with the phone detector on every
+frame, vs 43 ms on the CPU with it on every 2nd frame. Rejected for now: `onnxruntime-windowsml` (Windows 11 24H2+ only).
+
+**D49: The model warms up on a synthetic frame (2026-11-07).** User: "I hate Dušan's warm-up thing". It needed a frame cut
+from a dataset clip (a real person's face, kept out of git) and an extra setup step. A gray frame through both YOLO models
+creates the ONNX sessions (the slow part, and it tells which device they landed on) and a gray image builds MediaPipe's
+graph; the first real face costs a few ms once. Same ready time (~5 s).
+
+**D50: Ports can't silently break the demo (2026-11-07).** User: "fix up the ports so they are always available". Three
+Windows traps: an old backend still holding 8000/8001 (orphaned uvicorn worker), port ranges Hyper-V/WSL/Docker reserve at
+boot (WinError 10013, 8685-8884 on this laptop), and `adb reverse` vanishing when adb restarts. Now `demo.ps1` always starts
+clean (closes its own earlier 'demo:' windows and stale backends from this repo, never anything else; `-Stop`), checks the
+reserved ranges up front, and keeps `adb reverse` 8081/8000/8001 alive in a small window; `run.py` names the problem
+(owner PID or reserved range) instead of a raw bind error; test tools use OS-assigned ports. `tools/reserve-ports.ps1`
+(admin, once) makes our ports administered exclusions so Windows can't reserve them.

@@ -143,3 +143,12 @@ What changed for the apps (both `src/api/types.ts` re-copied from §4 the same d
 - `WS /camera/ws` takes one camera: a second connection is refused (HTTP 403 at the handshake; the test client
   reports it as close code 1008). Not an app route, but it explains a "camera
   refused" line in the coordinator log when two camera tools run.
+
+## Smooth behaviors, emergency = collapse only (2026-11-07, D46/D47)
+
+- `active_behaviors` now holds debounced episodes: a behavior appears after its onset (phone 1 s, eyes off road 2 s) and stays
+  through short detection gaps (phone 2.5 s). The app's tiles and the last-minute strip no longer flicker; a tile may stay lit up
+  to the bridge after the driver stops.
+- The `emergency` level/event (score 0, contact alerted) comes only from a confirmed collapse; everything else bottoms out at
+  `critical` (score >= 10). The apps' generic emergency copy is now effectively the collapse path. §4 comment re-copied in both apps.
+- `GET /coordinator/status` → `model.device` ("gpu (DirectML)", "cpu") when the model says it in its hello (optional field).

@@ -115,7 +115,7 @@ export interface TripState {
   camera: CameraView | null;
   speed_kmh: number;                 // brzina korišćena za poslednji tick (0 pre prvog ticka). Ispod 5 km/h nema opasnosti ni upozorenja
   speed_source: SpeedSource | null;  // null pre prvog ticka
-  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (score < 10 bar 2 s u vožnji)
+  emergency_alert_sent: boolean; // true kada je u ovoj vožnji već bila uzbuna (potvrđen kolaps)
 }
 
 export interface BehaviorSummary {

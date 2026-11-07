@@ -62,3 +62,17 @@ Multiple adapters exist (VirtualBox `192.168.56.1`, Hyper-V `192.168.16.1`), so 
   stream on a TCP half-close.
 - If the phone joins some other Wi-Fi instead of hosting, the laptop must be on the same Wi-Fi. Venue Wi-Fi often has client isolation,
   so **prefer the hotspot**.
+
+## Ports that can't break the demo (2026-11-07, D50)
+
+- Windows (Hyper-V, WSL, Docker's WinNAT) reserves TCP port ranges at boot and they move between reboots: on this laptop
+  8685–8884 (`netsh interface ipv4 show excludedportrange protocol=tcp`). A port inside one fails with WinError 10013. Our ports
+  (8000, 8001, 5173, 5174, 8081) are outside today; `tools/reserve-ports.ps1` (admin, once, demo stopped) makes them administered
+  exclusions (marked `*`) so they stay ours after any reboot. Not run yet: it needs the user's elevation.
+- `backend/run.py` checks its port before uvicorn: "taken by PID n (name)" or "reserved by Windows" instead of a raw bind error.
+- `demo.ps1` always starts clean: closes its own earlier `demo:` windows and a backend from this repo still holding 8000/8001
+  (never anything else), refuses a reserved port up front, keeps the user's running Bluetooth gateway, and opens
+  `demo: telefon USB` which re-applies `adb reverse` 8081/8000/8001 within 3 s whenever it's gone (cable replugged,
+  `adb kill-server`, phone re-authorized). `demo.ps1 -Stop` stops all of it.
+- The video-sim (`frontend/video-sim`, port 5174) streams into the same `WS /camera/ws` as `camera_stream.py` /
+  `klip_po_voznji.py`: one camera at a time (a second is refused with HTTP 403), so close the per-trip camera window first.

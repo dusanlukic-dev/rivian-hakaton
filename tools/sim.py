@@ -4,11 +4,13 @@ Uses notebooks/safety_client.py (stdlib only). Run with the backend venv from th
 
   backend/.venv/Scripts/python.exe tools/sim.py --start                       # start a trip (driver "sim-driver")
   backend/.venv/Scripts/python.exe tools/sim.py looking_at_phone --ticks 6    # 6 ticks (1/s) of phone use at 80 km/h
-  backend/.venv/Scripts/python.exe tools/sim.py drowsy --speed 130 --ticks 4  # emergency (2 s below 10 while moving)
+  backend/.venv/Scripts/python.exe tools/sim.py drowsy --speed 130 --ticks 4  # critical (the floor without a collapse)
+  backend/.venv/Scripts/python.exe tools/sim.py collapse --ticks 4             # the emergency: score 0, contact alerted
   backend/.venv/Scripts/python.exe tools/sim.py --ticks 8                     # clean driving: the live score is back in ~6 s
   backend/.venv/Scripts/python.exe tools/sim.py --end                         # end the active trip
 
-Behaviours: looking_at_phone, eyes_off_road, looking_behind, turning_around, hands_off_wheel, drowsy.
+Behaviours: looking_at_phone, eyes_off_road, looking_behind, turning_around, hands_off_wheel, drowsy, collapse.
+A behaviour counts after its onset (1-2 s, scoring.Debounce), so hold it for a few ticks.
 Ticks use real time (the backend scores by timestamp), so --interval sets how fast behaviors grow and the score moves.
 """
 
