@@ -18,6 +18,7 @@ npm-debug.log*
 __pycache__/
 *.py[cod]
 .venv/
+.venv-train/
 venv/
 .ipynb_checkpoints/
 .pytest_cache/

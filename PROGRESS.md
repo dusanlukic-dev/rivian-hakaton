@@ -264,3 +264,4 @@ server `localhost:8001` over USB.
   out; average score with the trend (recent half vs earlier), a bar per trip coloured by its level (tap → that trip), clean trips /
   risky moments / driving time / emergencies, top 3 risks with more / fewer, and the tip for the biggest one. Verified: typecheck,
   lint, the math on sample trips. **Not yet seen on the A54** (no Metro/server running at the time).
+- 2026-11-07, agent: CUDA training env `rivian_model/.venv-train` (torch 2.15.0+cu132 + ultralytics, GTX 1650 verified). The live model stays on DirectML in `.venv`.
