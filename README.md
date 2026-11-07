@@ -56,7 +56,10 @@ Demo (svaki deo u svom prozoru; port 8000 mora biti slobodan):
 .\demo.ps1 -Video "<dataset>\05_23_62_031246_video_inCabin.mp4" -Dashboard   # kolaps -> uzbuna
 .\demo.ps1 -Video "<dataset>\08_14_62_092916_video_inCabin.mp4"              # telefon
 .\demo.ps1 -Model cv -Video ...                                               # model CV kolege, isti backend
+.\demo.ps1 -PoVoznji -Dashboard                                               # svaka voznja iz aplikacije = sledeci klip
 ```
+Samo jedna kamera u isto vreme (`-Video`, `-Webcam` ili `-PoVoznji`): koordinator prima više kamera odjednom i meša
+njihove frejmove, pa model vidi „dva vozača“. `demo.ps1` i `rivian_model/klip_po_voznji.py` to sada odbijaju.
 Brzina auta je fiksna (`cruise`, 50–62 km/h), da demo svaki put izgleda isto. Opcije su na vrhu `demo.ps1`.
 Poređenje modela na 4 klipa: `rivian_model/POREDJENJE_MODELA.md` i `rivian_model/run_compare.py`.
 
