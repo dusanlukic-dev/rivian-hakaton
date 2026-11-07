@@ -99,9 +99,15 @@ Write-Host "Demo: koordinator :$Port, server :$ServerPort, brzina $Speed, skladi
 $serverUrl = "http://127.0.0.1:$ServerPort/api/v1"
 switch ($Storage) {
     "docker" {
+        # docker compose prints its progress on stderr; PowerShell 5.1 with "Stop" would turn that into an error
+        # whenever the output is captured, so judge by the exit code instead.
         Push-Location (Join-Path $Root "backend")
-        docker compose up -d
+        $ErrorActionPreference = "Continue"
+        docker compose up -d 2>&1 | ForEach-Object { "    $_" } | Out-Host
+        $code = $LASTEXITCODE
+        $ErrorActionPreference = "Stop"
         Pop-Location
+        if ($code -ne 0) { throw "docker compose up -d nije uspeo (radi li Docker Desktop?). Bez Docker-a: -Storage local" }
         Write-Host "  [ok] Postgres :5433 + RustFS :9000 (docker compose)" -ForegroundColor Green
     }
     "local" { & (Join-Path $Root "backend\scripts\services.ps1") start }
