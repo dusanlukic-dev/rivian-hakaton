@@ -5,9 +5,13 @@
 # torch goes first, CPU-only, from the PyTorch index: Ultralytics needs it, and the default Linux wheel pulls ~2.5 GB of CUDA.
 # Same versions as the laptops the measurements were made on (Dušan's, Matija's: torch 2.15.0+cpu, Python 3.13).
 ultralytics==8.4.203
-onnxruntime==1.31.1
+# ONNX Runtime runs both YOLO models. On Windows the DirectML build uses any DX12 GPU (NVIDIA, AMD, Intel) and falls back
+# to the CPU by itself (pipeline._configure_onnxruntime, MODEL_DEVICE=auto|gpu|cpu). Elsewhere the CPU build; for an
+# NVIDIA GPU on Linux, onnxruntime-gpu instead (CUDA). Only one build may be installed: they share the module.
+onnxruntime-directml==1.24.4; sys_platform == "win32"
+onnxruntime==1.31.1; sys_platform != "win32"
 mediapipe==1.2.2
-onnx==1.23.2   # Ultralytics needs it to load the ONNX models; without it, it pip-installs it at run time (no internet in a car)
+onnx==1.23.2   # Ultralytics needs it to load the ONNX models; without it, it would pip-install it at run time
 onnxslim       # setup_models.py only (ONNX export)
 websockets>=13
 psutil

@@ -1,8 +1,8 @@
-# Modeli se ne cuvaju u gitu (kao notebooks/models): napravi ih sa python setup_models.py
+# Modeli se ne cuvaju u gitu: napravi ih sa python setup_models.py
 *.onnx
 *.task
 *.pt
-# Frejm iz dataseta hakatona (lica stvarnih ljudi): pravi se lokalno, python setup_models.py --warmup-from <klip>
+# Stari frejm za zagrevanje iz dataseta (lice stvarne osobe): vise se ne koristi, ali ne sme u git
 warmup_frame.jpg
 __pycache__/
 out*/

@@ -27,10 +27,25 @@ neposlate poruke ostaju u <out>/<clip>/unsent.jsonl.
 import os, sys, json, time, argparse, statistics
 T0_PROGRAM = time.perf_counter()   # početak programa, pre učitavanja teških biblioteka (za "spreman posle X s")
 from concurrent.futures import ThreadPoolExecutor
+# A car has no internet: Ultralytics must never pip-install or call home at run time. It would also "fix" the
+# DirectML build of ONNX Runtime by installing the CPU build over it (see _configure_onnxruntime).
+os.environ.setdefault("YOLO_AUTOINSTALL", "false")
+os.environ.setdefault("YOLO_OFFLINE", "true")
+import logging
 import cv2
 import numpy as np
 import mediapipe as mp
 from ultralytics import YOLO
+
+
+class _KnownOnnxRuntimeBuild(logging.Filter):
+    """Ultralytics knows onnxruntime(-gpu/-qnn/-vitisai/-windowsml), not onnxruntime-directml, and warns on every model
+    load that ONNX Runtime is missing. It isn't: the next line says which provider it runs on."""
+    def filter(self, record):
+        return "requirement ['onnxruntime'] not found" not in record.getMessage()
+
+
+logging.getLogger("ultralytics").addFilter(_KnownOnnxRuntimeBuild())
 
 from scoring import DriverScorer
 from features import Pose, phone_ok, DriverLogic
@@ -58,45 +73,98 @@ DATA = dataset_dir()
 _HW = None        # opis hardvera za izveštaj; čita se tek kad zatreba (PowerShell upit traje ~1-2 s)
 
 
-def _tune_onnxruntime(threads):
+GPU_PROVIDERS = {"CUDAExecutionProvider": "CUDA", "DmlExecutionProvider": "DirectML",
+                 "CoreMLExecutionProvider": "CoreML"}   # by preference
+SESSION_PROVIDERS = []   # where each ONNX session really runs (filled when Ultralytics creates them)
+
+
+def _configure_onnxruntime(threads, device="auto"):
     """
-    Bez ovoga ONNX Runtime je ~10x sporiji u pipeline-u (300 ms umesto 30 ms po modelu):
-    dve ONNX sesije (telefon + poza) + MediaPipe se otimaju o jezgra jer ORT niti po
-    defaultu "vrte" u praznom hodu (spin-wait). Isključujemo to i ograničavamo broj niti.
+    Every ONNX Runtime session (Ultralytics creates them on the first inference) goes through here.
+    - device "auto": the first GPU provider this ONNX Runtime build has (CUDA: onnxruntime-gpu; DirectML:
+      onnxruntime-directml on Windows, any DX12 GPU; CoreML: macOS), else the CPU. "gpu": the same, but it says
+      so when there is none. "cpu": CPU only. A GPU provider that fails to start a session falls back to the CPU.
+      MODEL_GPU_ID picks the DirectML adapter; by default it asks for the high-performance one (the discrete GPU).
+    - CPU threads: without capping them and turning spin-waiting off, ONNX Runtime is ~10x slower here (300 ms
+      instead of 30 ms per model), because two sessions (phone + pose) and MediaPipe fight for the cores.
     """
     import onnxruntime as ort
-    if getattr(ort.InferenceSession, "_tuned", False):
+    if getattr(ort.InferenceSession, "_configured", False):
         return
+    available = ort.get_available_providers()
+    gpu = None if device == "cpu" else next((p for p in GPU_PROVIDERS if p in available), None)
+    if device == "gpu" and gpu is None:
+        print(f"  no GPU in this ONNX Runtime build ({', '.join(available)}): the model runs on the CPU", flush=True)
     orig = ort.InferenceSession
+    attempts = [[gpu, "CPUExecutionProvider"]] if gpu else []
+    if gpu == "DmlExecutionProvider":
+        gpu_id = os.environ.get("MODEL_GPU_ID")
+        attempts = [[(gpu, {"device_id": gpu_id} if gpu_id else
+                      {"performance_preference": "high_performance", "device_filter": "gpu"}), "CPUExecutionProvider"],
+                    [gpu, "CPUExecutionProvider"]]   # older builds don't know the preference options
 
     def session(path, sess_options=None, *a, **k):
         so = sess_options or ort.SessionOptions()
         so.intra_op_num_threads, so.inter_op_num_threads = threads, 1
         so.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        return orig(path, so, *a, **k)
-    session._tuned = True
+        if gpu == "DmlExecutionProvider":   # DirectML needs these two
+            so.enable_mem_pattern = False
+            so.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
+        error = None
+        for providers in attempts:
+            try:
+                s = orig(path, so, *a, **{**k, "providers": providers})
+                if s.get_providers()[0] == gpu:
+                    SESSION_PROVIDERS.append(gpu)
+                    return s
+            except Exception as e:
+                error = f"{type(e).__name__}: {str(e)[:160]}"
+        if error:
+            print(f"  {GPU_PROVIDERS[gpu]} failed for {os.path.basename(str(path))} ({error}): CPU", flush=True)
+        SESSION_PROVIDERS.append("CPUExecutionProvider")
+        return orig(path, so, *a, **{**k, "providers": ["CPUExecutionProvider"]})
+    session._configured = True
     ort.InferenceSession = session
+
+
+def device_label():
+    """Where the ONNX sessions run, once they exist: "gpu (DirectML)", "cpu", or "gpu (DirectML) + cpu"."""
+    used = sorted(set(SESSION_PROVIDERS), key=lambda p: p == "CPUExecutionProvider")
+    names = [f"gpu ({GPU_PROVIDERS[p]})" if p in GPU_PROVIDERS else "cpu" for p in used]
+    return " + ".join(names) or "cpu"
 
 
 # ---------------- modeli ----------------
 class Models:
-    def __init__(self, backend="onnx", det_imgsz=640, pose_imgsz=384):
+    def __init__(self, backend="onnx", det_imgsz=640, pose_imgsz=384, device=None):
         # telefon mora na 640 (na 480 se gubi telefon u ruci nisko - 084339: 32 -> 0 pogodaka);
         # poza na 384 se slaže 90-100% sa 640, a duplo je brža
         self.det_imgsz, self.pose_imgsz, self.backend = det_imgsz, pose_imgsz, backend
+        self.device = device or os.environ.get("MODEL_DEVICE", "auto")   # auto | gpu | cpu
         if backend == "onnx":
-            _tune_onnxruntime(ORT_THREADS)
+            _configure_onnxruntime(ORT_THREADS, self.device)
             self.det = YOLO(self._onnx("yolo11n", det_imgsz), task="detect")
             self.pose = YOLO(self._onnx("yolo11n-pose", pose_imgsz), task="pose")
         else:
             self.det = YOLO(os.path.join(HERE, "yolo11n.pt"))
             self.pose = YOLO(os.path.join(HERE, "yolo11n-pose.pt"))
-        o = mp.tasks.vision.FaceLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=FACE_MODEL),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE, num_faces=1,
-            output_face_blendshapes=True, output_facial_transformation_matrixes=True,
-            min_face_detection_confidence=0.4, min_face_presence_confidence=0.4)
-        self.face = mp.tasks.vision.FaceLandmarker.create_from_options(o)
+        self.face, self.face_device = None, "cpu"
+        # MediaPipe's GPU delegate exists on Linux and macOS only (the Windows package is CPU-only)
+        delegates = ["GPU", "CPU"] if self.device != "cpu" and sys.platform != "win32" else ["CPU"]
+        for delegate in delegates:
+            try:
+                o = mp.tasks.vision.FaceLandmarkerOptions(
+                    base_options=mp.tasks.BaseOptions(model_asset_path=FACE_MODEL,
+                                                      delegate=getattr(mp.tasks.BaseOptions.Delegate, delegate)),
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE, num_faces=1,
+                    output_face_blendshapes=True, output_facial_transformation_matrixes=True,
+                    min_face_detection_confidence=0.4, min_face_presence_confidence=0.4)
+                self.face, self.face_device = mp.tasks.vision.FaceLandmarker.create_from_options(o), delegate.lower()
+                break
+            except Exception as e:
+                if delegate == "CPU":
+                    raise
+                print(f"  MediaPipe GPU delegate unavailable ({type(e).__name__}): face model on the CPU", flush=True)
         self.load_s = None       # od pokretanja programa do učitanih biblioteka i modela (meri main)
         self.warmup_s = None     # koliko je trajalo zagrevanje (None = još nije urađeno)
         self.ready_s = None      # od pokretanja programa do "spreman" (posle zagrevanja)
@@ -121,6 +189,22 @@ class Models:
         self.ready_s = round(time.perf_counter() - T0_PROGRAM, 2)
         print(f"  zagrevanje modela: {self.warmup_s} s (jednom, pre voznje) -> spreman {self.ready_s} s "
               f"posle pokretanja", flush=True)
+
+    def warmup_synthetic(self, width=1280, height=1024):
+        """
+        Zagrevanje bez ijedne slike iz dataseta (rivian_detector.py, pri pokretanju): siv frejm kroz oba YOLO modela
+        (pravi ONNX sesije, ~1-2 s prvi put; tad se zna i da li rade na GPU-u) i siva slika kroz MediaPipe (pravi
+        njegov graf). Prvo pravo lice posle toga košta par ms više, jednom.
+        """
+        if self.warmup_s is not None:
+            return
+        t0 = time.perf_counter()
+        frame = np.full((height, width, 3), 114, np.uint8)
+        run_pose(self, frame, 0, 0)
+        run_phone(self, frame, 0, 0)
+        self.face.detect(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.full((192, 192, 3), 114, np.uint8)))
+        self.warmup_s = round(time.perf_counter() - t0, 2)
+        self.ready_s = round(time.perf_counter() - T0_PROGRAM, 2)
 
     def close(self):
         """Zatvori MediaPipe eksplicitno; inače pri gašenju Python-a ispiše bezopasnu ali ružnu grešku."""

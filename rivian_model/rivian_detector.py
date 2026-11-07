@@ -45,16 +45,16 @@ class RivianDetector:
     name = "rivian-pose"
     categories = list(CATEGORY_MAP.values())
 
-    def __init__(self, camera="08_14", phone_every=2, warmup_image=None):
-        self.camera, self.phone_every = camera, phone_every
-        self.models = P.Models("onnx", 640, 384)
+    def __init__(self, camera="08_14", phone_every=None, device=None):
+        self.camera = camera
+        self.models = P.Models("onnx", 640, 384, device=device)
+        self.models.warmup_synthetic()             # pravi ONNX sesije odmah, pre prve vožnje: tad se zna i uređaj
+        self.device = P.device_label()
+        # na GPU-u telefon-YOLO stiže na svaki frejm (manje rupa u dokazu), na CPU-u na svaki 2.
+        self.phone_every = phone_every or (1 if self.device.startswith("gpu") else 2)
         self.roi_ref = json.load(open(P.ROI_FILE))[camera]
         self.pool = ThreadPoolExecutor(1, thread_name_prefix="phone")   # telefon-YOLO paralelno, kao u pipeline.py
         self.reset()
-        img = warmup_image or os.path.join(HERE, "warmup_frame.jpg")
-        if os.path.exists(img):                    # zagrevanje odmah pri pokretanju, pre prve vožnje (~2 s)
-            frame = cv2.imread(img)
-            self.models.warmup(frame, self._roi(frame))
 
     def _roi(self, frame):
         """Zona vozača skalirana na veličinu frejma koji je stigao (npr. 1280x1024 umesto 1920x1536)."""
@@ -120,7 +120,7 @@ async def serve(url, detector):
         try:
             async with connect(url, max_size=None, ping_interval=20) as ws:
                 await ws.send(json.dumps({"type": "hello", "worker": detector.name, "version": VERSION,
-                                          "categories": detector.categories}))
+                                          "categories": detector.categories, "device": detector.device}))
                 print(f"Povezan na {url} kao '{detector.name}'", flush=True)
                 delay, done, busy, since = 1.0, 0, 0.0, time.monotonic()
                 async for message in ws:
@@ -158,9 +158,14 @@ def main():
     ap = argparse.ArgumentParser(description="Nas model (rivian-pose) kao detektor za koordinator.")
     ap.add_argument("--coordinator", default=DEFAULT_COORDINATOR, help="koordinatorov /model/ws URL")
     ap.add_argument("--camera", default="08_14", choices=["08_14", "05_23"], help="serija kamere (zona vozaca)")
-    ap.add_argument("--phone-every", type=int, default=2)
+    ap.add_argument("--device", default=os.environ.get("MODEL_DEVICE", "auto"), choices=["auto", "gpu", "cpu"],
+                    help="auto: GPU ako ga ONNX Runtime ima (DirectML/CUDA), inace CPU")
+    ap.add_argument("--phone-every", type=int, default=None, help="telefon-YOLO na svaki N-ti frejm (GPU 1, CPU 2)")
     a = ap.parse_args()
-    detector = RivianDetector(a.camera, a.phone_every)
+    detector = RivianDetector(a.camera, a.phone_every, a.device)
+    m = detector.models
+    print(f"Model na: {detector.device} (lice: {m.face_device}), telefon na svaki {detector.phone_every}. frejm, "
+          f"spreman za {m.ready_s} s (zagrevanje {m.warmup_s} s)", flush=True)
     try:
         asyncio.run(serve(a.coordinator, detector))
     except KeyboardInterrupt:

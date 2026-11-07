@@ -8,9 +8,10 @@ Frejm po frejm (jedan u letu), 10 u sekundi videa (svaki 3. od 30). Na kraju se 
 skor našim scoring.py i uporedi sa onim što pipeline.py daje na istom klipu.
 
     python test_rivian_detector.py 08_14_62_092916
-    python test_rivian_detector.py 05_23_62_031246 --port 8766
+    python test_rivian_detector.py 05_23_62_031246 --device cpu     (poredjenje sa GPU-om)
     python test_rivian_detector.py 08_14_62_092916 --external     (detektor se javlja spolja, npr. iz Docker-a:
-        docker run --rm rivian-model rivian_detector.py --coordinator ws://host.docker.internal:8766/api/v1/model/ws)
+        docker run --rm rivian-model rivian_detector.py --coordinator ws://host.docker.internal:8020/api/v1/model/ws;
+        tada lazni koordinator na fiksnom portu: --external --port 8020)
 """
 import argparse
 import asyncio
@@ -60,7 +61,7 @@ def camera_frames(path, step=3, width=1280, quality=90):
     cap.release()
 
 
-async def run(clip, port, external=False, host="127.0.0.1"):
+async def run(clip, port, external=False, host="127.0.0.1", device="auto"):
     finished = asyncio.get_running_loop().create_future()
     results, hello = [], {}
 
@@ -81,7 +82,8 @@ async def run(clip, port, external=False, host="127.0.0.1"):
             finished.set_result(True)
 
     log_path = os.path.join(tempfile.gettempdir(), f"rivian_detector_{clip}.log")
-    async with serve(coordinator, host, port, max_size=None):
+    async with serve(coordinator, host, port, max_size=None) as server:
+        port = server.sockets[0].getsockname()[1]   # --port 0: bilo koji slobodan port, nijedan ne moze da se sudari
         if external:                       # detektor se pokreće spolja (npr. Docker kontejner)
             print(f"cekam detektor na ws://{host}:{port}/api/v1/model/ws ...", flush=True)
             await asyncio.wait_for(finished, 900)
@@ -89,7 +91,8 @@ async def run(clip, port, external=False, host="127.0.0.1"):
         with open(log_path, "w", encoding="utf-8") as log:
             proc = subprocess.Popen(
                 [sys.executable, os.path.join(HERE, "rivian_detector.py"),
-                 "--coordinator", f"ws://127.0.0.1:{port}/api/v1/model/ws", "--camera", clip[:5]],
+                 "--coordinator", f"ws://127.0.0.1:{port}/api/v1/model/ws", "--camera", clip[:5],
+                 "--device", device],
                 cwd=HERE, stdout=log, stderr=subprocess.STDOUT, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
             try:
                 await asyncio.wait_for(finished, 600)
@@ -102,12 +105,13 @@ async def run(clip, port, external=False, host="127.0.0.1"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("clip")
-    ap.add_argument("--port", type=int, default=8766)
+    ap.add_argument("--port", type=int, default=0, help="0 = bilo koji slobodan (za --external zadaj fiksan)")
+    ap.add_argument("--device", default="auto", choices=["auto", "gpu", "cpu"])
     ap.add_argument("--external", action="store_true", help="ne pokreci detektor; cekaj da se javi spolja (Docker)")
     ap.add_argument("--host", default="127.0.0.1", help="adresa na kojoj lazni koordinator slusa")
     a = ap.parse_args()
     start = time.perf_counter()
-    hello, results, log_path = asyncio.run(run(a.clip, a.port, a.external, a.host))
+    hello, results, log_path = asyncio.run(run(a.clip, a.port, a.external, a.host, a.device))
 
     inv = {v: k for k, v in CATEGORY_MAP.items()}
     sc = DriverScorer(a.clip)

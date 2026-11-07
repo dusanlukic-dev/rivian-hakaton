@@ -38,7 +38,7 @@ ENV YOLO_AUTOINSTALL=false YOLO_OFFLINE=true
 
 WORKDIR /app
 COPY pipeline.py features.py scoring.py sender.py rivian_detector.py rois.json ./
-COPY face_landmarker.task yolo11n_640.onnx yolo11n-pose_384.onnx warmup_frame.jpg ./
+COPY face_landmarker.task yolo11n_640.onnx yolo11n-pose_384.onnx ./
 
 ENTRYPOINT ["python"]
 CMD ["rivian_detector.py"]

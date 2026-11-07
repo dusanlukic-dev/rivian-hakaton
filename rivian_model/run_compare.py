@@ -3,16 +3,15 @@
 Koristi tools/camera_stream.py i REST koordinatora iz ovog repoa (rivian-demo, folder iznad rivian_model/).
 Rezultati prvog poredjenja (6. 11.): POREDJENJE_MODELA.md.
 
-Pokretanje (laptop na struji, port 8765 jer je 8000 korisnikov; svaka komanda u svom terminalu):
+Pokretanje (laptop na struji; koordinator na 8000, ili sve odjednom: ..\\demo.ps1 bez kamere, pa samo korak 3):
 
   1) Koordinator (folder backend), fiksna brzina, bez servera:
        $env:SPEED_SCENARIO="cruise"; $env:SERVER_URL="http://127.0.0.1:8799/api/v1"
-       .venv\\Scripts\\python.exe run.py --role coordinator --port 8765 --no-reload
+       .venv\\Scripts\\python.exe run.py --role coordinator --port 8000 --no-reload
 
-  2) JEDAN model (nikad dva istovremeno):
-       nas:  python rivian_detector.py --coordinator ws://127.0.0.1:8765/api/v1/model/ws --camera 08_14
+  2) Model (folder rivian_model):
+       .venv\\Scripts\\python.exe rivian_detector.py --camera 08_14
              (za klipove 05_23_* restartovati sa --camera 05_23)
-       CV:   (koren repoa) python model\\worker.py --coordinator ws://127.0.0.1:8765/api/v1/model/ws
 
   3) Klip (python iz backend venv-a, jer ima imageio-ffmpeg i websockets za camera_stream.py):
        ..\\backend\\.venv\\Scripts\\python.exe run_compare.py `
@@ -44,7 +43,7 @@ def main():
     ap.add_argument("--clip", required=True)
     ap.add_argument("--label", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--seconds", type=float, default=30.0)
     a = ap.parse_args()
     base = f"http://127.0.0.1:{a.port}/api/v1"

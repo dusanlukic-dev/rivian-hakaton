@@ -9,4 +9,3 @@
 !face_landmarker.task
 !yolo11n_640.onnx
 !yolo11n-pose_384.onnx
-!warmup_frame.jpg
