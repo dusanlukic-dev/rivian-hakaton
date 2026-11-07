@@ -18,8 +18,14 @@ export const BEHAVIORS: BehaviorMeta[] = (
     ['turning_around', 'rotate-3d-variant'],
     ['hands_off_wheel', 'steering-off'],
     ['drowsy', 'sleep'],
+    ['collapse', 'heart-pulse'],
   ] as const satisfies readonly (readonly [Behavior, IconName])[]
 ).map(([key, icon]) => ({ key, icon, label: strings.behaviors[key] }));
+
+/** The driver collapsed (rivian_model): the emergency screen talks to whoever holds the phone, not to the driver. */
+export function isCollapse(state: { active_behaviors: Partial<Record<Behavior, number>> }): boolean {
+  return 'collapse' in state.active_behaviors;
+}
 
 /** Unknown labels (backend added one) still render, with a generic icon. */
 export function behaviorMeta(key: string): BehaviorMeta {

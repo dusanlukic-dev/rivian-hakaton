@@ -7,7 +7,8 @@ export type Behavior =
   | "turning_around"   // okreće se telom
   | "hands_off_wheel"  // ruke van volana
   | "drowsy"           // pospan
-  | "eyes_off_road";   // pogled van puta
+  | "eyes_off_road"    // pogled van puta
+  | "collapse";        // vozač pao i ne pomera se (rivian_model): skor 0 i uzbuna odmah, i dok auto stoji
 
 export type SafetyLevel = "safe" | "caution" | "warning" | "high_risk" | "critical" | "emergency";
 export type DashboardLight = "green" | "green_yellow" | "yellow" | "red";

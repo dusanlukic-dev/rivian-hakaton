@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { isCollapse } from '@/config/behaviors';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { formatScore } from '@/lib/format';
@@ -79,6 +80,8 @@ function EmergencyOverlay() {
 
   if (!emergency) return null;
   const contact = contactName || strings.profile.contactFallback;
+  const collapse = isCollapse(emergency);
+  const smsBody = collapse ? strings.emergency.collapseSmsBody(driver) : strings.emergency.smsBody(driver);
 
   return (
     <Animated.View style={[StyleSheet.absoluteFill, styles.emergency, pulse, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 }]}>
@@ -88,7 +91,7 @@ function EmergencyOverlay() {
           {strings.emergency.title}
         </Txt>
         <Txt size="lg" weight="700" style={[styles.white, styles.center]}>
-          {strings.emergency.subtitle}
+          {collapse ? strings.emergency.collapseSubtitle : strings.emergency.subtitle}
         </Txt>
         <Txt size="md" style={[styles.white, styles.center, styles.message]}>
           {emergency.response.message}
@@ -107,7 +110,7 @@ function EmergencyOverlay() {
               variant="secondary"
               style={styles.flex}
               onPress={() =>
-                Linking.openURL(`sms:${contactPhone}?body=${encodeURIComponent(strings.emergency.smsBody(driver))}`).catch(
+                Linking.openURL(`sms:${contactPhone}?body=${encodeURIComponent(smsBody)}`).catch(
                   (e: unknown) => console.warn('[emergency] sms', e),
                 )
               }
