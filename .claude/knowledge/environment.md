@@ -33,6 +33,11 @@ Recorded 2026-11-06. Update it when something changes. Other teammates' machines
 User env vars set by setup: `ANDROID_HOME`, plus PATH entries `%ANDROID_HOME%\platform-tools` and `%ANDROID_HOME%\cmdline-tools\latest\bin`.
 **Shells or VS Code windows opened before setup don't see them**: restart VS Code, or set them in-session (mobile-dev skill).
 
+**Matija Vujić's backend laptop (2026-11-07):** the Android SDK was there (`platform-tools` with adb 36.0.2) but nothing was on
+PATH. Set `ANDROID_HOME` and added the PATH entries as **absolute** paths (`C:\Users\Matija\AppData\Local\Android\Sdk\platform-tools`,
+`...\cmdline-tools\latest\bin`). Don't use `%ANDROID_HOME%\...` there: a shell that lacks `ANDROID_HOME` (a terminal opened
+earlier that refreshes PATH from the registry) leaves `%ANDROID_HOME%` unexpanded and still can't find adb.
+
 ## Test phone
 
 | fact | value |
