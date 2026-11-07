@@ -7,7 +7,8 @@ port or firewall rule on the model's side, and either side can restart; the work
                                     header = {"type": "frame", "id": 41, "t": 12.375, "trip_id": "..."}
                             text:   {"type": "reset", "trip_id": "..."}   new trip: start the detectors fresh
                                     {"type": "idle"}                      no trip: stop sending
-    worker -> coordinator   text:   {"type": "hello", "worker": "rivian-pose", "version": "...", "categories": [...]}
+    worker -> coordinator   text:   {"type": "hello", "worker": "rivian-pose", "version": "...", "categories": [...],
+                                     "device": "gpu (DirectML)"}   device: optional, shown in /coordinator/status
                                     {"type": "detection", "id": 41, "t": 12.375, "trip_id": "...",
                                      "evidence": {"phone_use": 0.82, "eyes_off_road": 0.9, ...},
                                      "perception": {...}, "ms": 84.2}
@@ -117,6 +118,7 @@ class ModelLink:
             "connected": worker is not None,
             "worker": worker.name if worker else None,
             "version": worker.info.get("version") if worker else None,
+            "device": worker.info.get("device") if worker else None,  # e.g. "gpu (DirectML)" or "cpu", if it says
             "frames_sent": self.frames_sent,
             "detections": self.detections,
             "replaced_frames": self.replaced,
@@ -197,7 +199,8 @@ class ModelLink:
                 if kind == "hello":
                     worker.name = str(data.get("worker") or "model")
                     worker.info = data
-                    logger.info("Model worker connected: %s %s", worker.name, data.get("version") or "")
+                    logger.info("Model worker connected: %s %s on %s", worker.name, data.get("version") or "",
+                                data.get("device") or "an unknown device")
                 elif kind == "detection":
                     await self._detected(worker, data)
                 elif kind == "error":

@@ -14,10 +14,49 @@ camera (tools/camera_stream.py). ../demo.ps1 starts all of them, each in its own
 
 import argparse
 import socket
+import subprocess
+import sys
 
 import uvicorn
 
 APPS = {"all": "app.main:app", "coordinator": "app.coordinator.main:app", "server": "app.server.main:app"}
+
+
+def port_owner(port: int) -> str:
+    """' (PID 1234, python.exe)' for whoever listens on the port, Windows only; '' if unknown."""
+    if sys.platform != "win32":
+        return ""
+    try:
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True, timeout=10).stdout
+        pid = next(line.split()[-1] for line in out.splitlines()
+                   if "LISTENING" in line and line.split()[1].endswith(f":{port}"))
+        name = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                              capture_output=True, text=True, timeout=10).stdout.split(",")[0].strip('"')
+        return f" (PID {pid}, {name})"
+    except (StopIteration, OSError, subprocess.SubprocessError):
+        return ""
+
+
+def port_problem(port: int) -> str | None:
+    """Why the backend couldn't listen on the port, said before uvicorn tries. On Windows both failures are confusing:
+    a second process can share a port (an orphaned worker keeps serving old code), and Hyper-V/WSL/Docker reserve
+    whole port ranges (WinError 10013, "access forbidden")."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        if probe.connect_ex(("127.0.0.1", port)) == 0:
+            return (f"something already listens on port {port}{port_owner(port)}: an old backend? "
+                    "..\\demo.ps1 -Stop stops ours, or pick another --port")
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        if sys.platform == "win32":
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        try:
+            probe.bind(("0.0.0.0", port))
+        except OSError as e:
+            if getattr(e, "winerror", None) == 10013:
+                return (f"Windows reserved port {port} (Hyper-V/WSL/Docker: netsh interface ipv4 show excludedportrange "
+                        "protocol=tcp). Once, as administrator: ..\\tools\\reserve-ports.ps1. Or pick another --port")
+            return f"port {port} can't be used: {e}"
+    return None
 
 
 def lan_ip() -> str:
@@ -36,6 +75,8 @@ if __name__ == "__main__":
     parser.add_argument("--role", choices=sorted(APPS), default="all", help="both parts (default) or one of them")
     parser.add_argument("--no-reload", action="store_true", help="don't restart on code changes")
     args = parser.parse_args()
+    if problem := port_problem(args.port):
+        sys.exit(f"\n  Can't start: {problem}\n")
 
     ip, port = lan_ip(), args.port
     lines = [f"\n  Role: {args.role}  (docs/ARCHITECTURE.md)"]
