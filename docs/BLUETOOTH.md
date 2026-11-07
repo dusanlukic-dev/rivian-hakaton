@@ -92,9 +92,10 @@ Dozvoljene rute (samo [K] koje telefon koristi): `GET /health`, `POST /trips`, `
 ## Pokretanje
 
 ```powershell
-cd backend; .\start.ps1 -Mock -Ble        # server, koordinator (+ mock kamera i model) i gateway, svako u svom prozoru
-# ili sam gateway (koordinator već radi na :8000):
-backend\coordinator\.venv\Scripts\python.exe backend\coordinator\car_link\gateway.py
+# iz korena repoa, svako u svom prozoru (zavisnosti gateway-a su u backend\.venv); start.ps1 stiže sa podelom foldera
+cd backend; .venv\Scripts\python.exe run.py --role server --port 8001 --no-reload
+cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; .venv\Scripts\python.exe run.py --role coordinator --mock
+backend\.venv\Scripts\python.exe backend\coordinator\car_link\gateway.py --name "Rivian demo car"
 ```
 
 Gateway u logu piše kad počne oglašavanje, kad se telefon pretplati (i koliki mu je okvir), svaki zahtev i na

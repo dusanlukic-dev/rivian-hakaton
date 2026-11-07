@@ -48,6 +48,20 @@ curl -s http://127.0.0.1:8000/api/v1/coordinator/status             # camera fps
 - One active trip per car: a new trip (simulator or app) ends the old one.
 - Swagger for REST: `http://localhost:8000/docs`. WebSockets aren't listed there.
 
+### Fully split + Bluetooth (verified 2026-11-07)
+
+```powershell
+cd backend; .venv\Scripts\python.exe run.py --role server --port 8001 --no-reload          # server alone (accounts, history, report)
+cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; $env:SPEED_SCENARIO='cruise'; .venv\Scripts\python.exe run.py --role coordinator --mock
+backend\.venv\Scripts\python.exe backend\coordinator\car_link\gateway.py --name "Rivian demo car"   # phone link, docs/BLUETOOTH.md (-v: every message)
+```
+- Smoke test (2026-11-07): register on :8001 → 201, trip start/end on :8000 → 201/200, the trip lands on the account (the server's
+  history lists it) and its report has the coordinator's sections; the gateway advertises and follows the coordinator's WS.
+- The app's server address defaults to `localhost:8001` (USB: `npm run adb:reverse` forwards 8081, 8000, 8001; hotspot: the laptop
+  IP, which the gateway's hello offers in Car connection). The dashboard has one address (:8000): live works, its report page needs
+  the combined `run.py`.
+- `SPEED_SCENARIO=cruise` never stops, so alerts always fire; other scenarios stop at times, and a stopped car shows no warnings.
+
 ## Simulator instead of camera + model
 
 ```bash

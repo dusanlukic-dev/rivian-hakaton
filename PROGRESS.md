@@ -28,15 +28,17 @@ cd backend && .venv/Scripts/python.exe run.py --mock          # coordinator + se
 curl -s http://127.0.0.1:8000/api/v1/coordinator/status       # camera fps, model, video cache, delivery to the server
 cd frontend/mobile && npm start                               # Metro; app already installed on the A54 (dev build with react-native-svg)
 adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8081 tcp:8081
-cd backend && .venv/Scripts/python.exe run.py --role server --port 8001 --no-reload   # the server as its own process (app's server address :8001)
-<venv with backend/coordinator/car_link/requirements.txt>/python backend/coordinator/car_link/gateway.py --name "Rivian demo car"   # Bluetooth
+# fully split (verified 2026-11-07): server and coordinator as separate processes, sections go over HTTP
+cd backend && .venv/Scripts/python.exe run.py --role server --port 8001 --no-reload   # server :8001 (the app's server address)
+cd backend && SERVER_URL=http://127.0.0.1:8001/api/v1 SPEED_SCENARIO=cruise .venv/Scripts/python.exe run.py --role coordinator --mock
+backend/.venv/Scripts/python.exe backend/coordinator/car_link/gateway.py --name "Rivian demo car"   # Bluetooth (deps in backend/.venv)
 adb reverse tcp:8001 tcp:8001                                 # server over USB (npm run adb:reverse forwards 8081, 8000, 8001)
 cd frontend/dashboard && npm run dev                          # http://localhost:5173 (?sim for the simulator panel, /trip/<id> for a report)
 backend/.venv/Scripts/python.exe notebooks/safety_client.py --interval 0.5   # instead of camera + model; or tools/sim.py for exact states
 ```
-**Right now (session 9, ~04:40):** the combined `run.py --mock` on :8000 (user's window), a server-only `run.py --role server --port 8001`
-(same Postgres), the gateway (scratchpad venv with pywinrt), Metro on **8083** (the 8081 and 8082 Metros hung after the native build;
-restart 8081: the new `metro.config.js` ignores native build output). Laptop Bluetooth was off and is on now. The app uses Bluetooth.
+**Right now (2026-11-07, 09:20):** nothing runs except Docker (Postgres, RustFS); everything was closed at 09:04. Full test = the
+split commands above + Metro + adb reverse. In the split the dashboard (one address, :8000) shows live data, but its report page
+needs the combined `run.py`. Laptop Bluetooth is on.
 
 **Before (end of session 8):** `run.py --mock` in one minimized window ("backend + mocked car :8000"), Postgres + RustFS in Docker,
 the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after the native rebuild (restart it: close the window,
@@ -228,3 +230,6 @@ the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after
   adapter broadcast, always scan). Fork C: the app's server address (gear on login, Server screen, QR + deep link). Fork A: backend
   folder split, stopped by the usage limit (WIP branch, Next 1). Docs: BLUETOOTH.md, D38–D42, environment, android-device skill,
   metro.config.js. Verified on the A54 (Car link row); mobile typecheck + lint, 38 gateway tests.
+- 2026-11-07, session 9b (Claude, for Matija): verified the fully split run (server :8001 alone, coordinator `--role coordinator`
+  with `SERVER_URL` + mocks, gateway from `backend/.venv`): register 201, trip 201/200, the server's report has the sections.
+  Run commands fixed in PROGRESS, docs/BLUETOOTH.md and skill `backend-local`.
