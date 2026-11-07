@@ -8,12 +8,12 @@ The backend split (coordinator / server / model) is explained in full in **`docs
 
 ```
  laptop = car computer ─────────────────────────────────────────────────────────────────────────────┐
- │ tools/camera_stream.py (test pattern / clip / webcam) ──JPEG per WS message──► /api/v1/camera/ws   │
- │ model/worker.py (own venv; CV detectors imported unchanged) ◄──frames── /api/v1/model/ws ──evidence──►│
+ │ tools/camera_stream.py (clip / webcam; ONE camera) ──JPEG per WS message──► /api/v1/camera/ws      │
+ │ rivian_model/rivian_detector.py (own venv; YOLO11n + pose + MediaPipe) ◄──frames── /model/ws ──evidence──►│
  │ notebooks/safety_client.py, tools/sim.py (simulators) ──POST /api/v1/telemetry──────────────────────►│
  │                                                                                                    │
  │ backend/ (python run.py → 0.0.0.0:8000, one process, two parts)                                     │
- │   COORDINATOR app/coordinator: video cache (5 min, diskcache) · ModelLink · RiskEngine (CV copy)      │
+ │   COORDINATOR app/coordinator: video cache (5 min, diskcache) · ModelLink · RiskEngine               │
  │     → scoring.py/alerts.py (score, level, response) → WS state ~2/s, emergency                      │
  │     → SectionRecorder: every 2 s a section (+ image of the riskiest frame if dangerous)             │
  │         → WS `section` · ServerOutbox ──POST /internal/trips/{id}/sync (in-process HTTP)──┐         │
@@ -36,10 +36,11 @@ The backend split (coordinator / server / model) is explained in full in **`docs
 
 | part | owner | status (see PROGRESS.md) |
 |---|---|---|
-| `notebooks/` CV models | CV team (ttcpavle, Djolekapppp) | `risk_pipeline.py` is imported by the worker, **never edited by us** |
-| `model/` worker, `tools/camera_stream.py` | us (2026-11-06 evening) | fake mode verified end to end; real mode written, not run here (no models/dataset on this laptop) |
+| `rivian_model/` (the model) | Dušan (`dusanlukic-dev`), merged from his `nas-demo` branch 2026-11-07 (D44) | runs here in its own venv on dataset clips; the CV team's pipeline and worker were removed |
+| `notebooks/` | backend (`risk_config.json` thresholds, `safety_client.py` simulator) | |
+| `tools/camera_stream.py`, `demo.ps1` | us (+ Dušan's launcher, adapted to the split + Bluetooth) | |
 | `backend/`, `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, root `CLAUDE.md` | backend teammate Matija Vujić **and us** since the user asked us to work on the backend | coordinator/server split done, 81 tests |
-| repo / initial structure | `dusanlukic-dev` (GitHub owner) | |
+| repo / initial structure | `dusanlukic-dev` (Dušan, GitHub owner) | |
 | `frontend/mobile`, `frontend/dashboard`, `.claude/`, `PROGRESS.md`, `config/` | Matija Radović + agents | report chart added |
 
 ## Mobile app layout (`frontend/mobile`)

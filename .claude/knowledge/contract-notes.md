@@ -130,3 +130,16 @@ What changed for the apps (both `src/api/types.ts` re-copied from §4 the same d
 - The dashboard's report for a **logged-in** trip is 404 (private to the account): the chart just hides there; the phone shows it.
 - After a backend restart mid-trip the app now asks `GET /trips/{id}` on reconnect and drops the trip on 404; "End" on such a trip
   opens its stored summary instead of an error.
+
+## New label `collapse` + one camera (2026-11-07, Dušan's model merged, D44/D45)
+
+- `Behavior` gained `collapse` ("Driver not responding"). docs/API.md §4 changed, so both `src/api/types.ts` were re-copied (in
+  Dušan's commit), and both apps' `BEHAVIORS` lists, mobile `strings.behaviors` and the dashboard `carMeta` have it.
+- It arrives like any label (`active_behaviors.collapse`), but the backend treats it as a medical emergency: once confirmed (2 s)
+  `score` is 0, `response` is red + seat + loud + "Driver not responding - emergency contact alerted.", and `emergency` fires
+  **even at 0 km/h**. The apps only switch copy on `'collapse' in active_behaviors`: the emergency screen says "The driver is not
+  responding", the SMS body and the spoken line change (`isCollapse` in `config/behaviors.ts` / `carMeta.ts`). Levels and
+  alerts still come from `response`, as before.
+- `WS /camera/ws` takes one camera: a second connection is refused (HTTP 403 at the handshake; the test client
+  reports it as close code 1008). Not an app route, but it explains a "camera
+  refused" line in the coordinator log when two camera tools run.

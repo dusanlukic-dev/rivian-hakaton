@@ -14,7 +14,7 @@ Detalji (tok podataka, ugovori između delova, keš, pouzdanost): **[docs/ARCHIT
 │ kamera ── JPEG ──► KOORDINATOR (app/coordinator) ── WS /api/v1/ws ─────┼───►│ uživo: score,    │
 │ (tools/camera_stream.py)  │  ▲                         state, section  │    │ alarmi, sekcije  │
 │                frejm      ▼  │ dokaz po kategoriji                     │    │                  │
-│            model worker (model/worker.py, svoj proces)                 │    │                  │
+│            model (rivian_model/rivian_detector.py, svoj proces)        │    │                  │
 │                           │ sekcije od 2 s + slike (POST /internal/...)│    │                  │
 │                           ▼                                            │    │                  │
 │            SERVER (app/server) ── /auth, /trips, /report, /media ──────┼───►│ istorija,        │
@@ -22,12 +22,13 @@ Detalji (tok podataka, ugovori između delova, keš, pouzdanost): **[docs/ARCHIT
 └───────────────────────────────────────────────────────────────────────┘    └──────────────────┘
 ```
 
-- **Koordinator** prima video, šalje frejmove modelu i od njegovog dokaza računa rizik (izdvojen
-  `RiskEngine` CV tima), score i reakciju kola, šalje stanje telefonu, drži 5 min videa u kešu i na svake
+- **Koordinator** prima video (jedna kamera), šalje frejmove modelu i od njegovog dokaza računa rizik
+  (`RiskEngine`), score i reakciju kola, šalje stanje telefonu, drži 5 min videa u kešu i na svake
   2 s šalje rezime sekcije serveru (sa slikom najrizičnijeg frejma kad je sekcija opasna) i telefonu.
   Nikad ne dira bazu.
 - **Server** čuva naloge, vožnje, sekcije i slike i služi istoriju i izveštaj. Ne zna ništa o kameri.
-- **Model** (`model/worker.py`) radi u svom okruženju (kasnije Docker) i samo detektuje.
+- **Model** (`rivian_model/rivian_detector.py`, Dušan) radi u svom okruženju (`rivian_model/.venv`, kasnije
+  Docker) i samo detektuje: telefon, pogled van puta, zatvorene oči, kolaps.
 - U demo-u koordinator i server rade u **jednom procesu** na portu 8000 (`python run.py`), pa telefon ima
   jednu adresu. Jedan drugom se i tada obraćaju samo preko HTTP-a.
 - U jednom trenutku je aktivna **jedna vožnja** (jedan auto). Aplikacija je pokreće i završava.
@@ -91,9 +92,9 @@ pip install -r requirements.txt
 python run.py        # za demo preko hotspota, ispisuje adresu za aplikaciju (koordinator + server)
 fastapi dev app/main.py   # samo lokalno, http://127.0.0.1:8000/docs
 
-# kamera i model (iz korena repoa, isti venv; pravi model ima svoj: ../model/README.md)
-python ..\tools\camera_stream.py      # test slika 10 fps (--video snimak.mp4, --webcam "ime")
-python ..\model\worker.py --fake      # skriptovane detekcije, bez CV paketa
+# kamera (isti venv) i model (svoj venv: ../rivian_model/README.md); sve odjednom: ..\demo.ps1
+python ..\tools\camera_stream.py --video ..\..\dataset\<klip>.mp4      # ili --webcam "ime"
+..\rivian_model\.venv\Scripts\python.exe ..\rivian_model\rivian_detector.py --camera 05_23
 ```
 
 Testovi: `pytest`
@@ -119,11 +120,11 @@ Testovi: `pytest`
 
 ## Za tim sa modelima
 
-**Novi put (kamera → koordinator → model):** model ne čita kameru i ne računa rizik. `model/worker.py` uvozi
-vaše klase iz `notebooks/risk_pipeline.py` (`FacePerception`, `HandPerception`, `ObjectPerception`,
-`FeatureExtractor`) bez izmena, prima frejmove od koordinatora i vraća dokaz po kategoriji. `RiskEngine` je
-izdvojen u koordinator (`app/coordinator/services/risk_engine.py`, test ga poredi sa vašim). Pragove i dalje
-menjate u `notebooks/risk_config.json`. Uputstvo: [model/README.md](../model/README.md).
+**Put (kamera → koordinator → model):** model ne čita kameru i ne računa rizik. `rivian_model/rivian_detector.py`
+prima frejmove od koordinatora i vraća dokaz po kategoriji (`phone_use`, `eyes_off_road`, `eyes_closed`,
+`collapse`). Rizik računa `RiskEngine` u koordinatoru (`app/coordinator/services/risk_engine.py`), pragovi su u
+`notebooks/risk_config.json`. Uputstvo: [rivian_model/README.md](../rivian_model/README.md). Model CV tima
+(`model/worker.py` + `notebooks/risk_pipeline.py`) je uklonjen 2026-11-07 (u istoriji: commit `8d05c97`).
 
 **Stari put ([notebooks/safety_client.py](../notebooks/safety_client.py)) i dalje radi**, npr. za replay:
 

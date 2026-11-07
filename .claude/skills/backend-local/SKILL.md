@@ -1,6 +1,6 @@
 ---
 name: backend-local
-description: Run the backend (coordinator + server) with Postgres and RustFS in Docker, then feed it like the car would - the camera stream plus the model worker (fake or real), or the drive simulator - to give the frontend live data, sections and drive reports. Covers venv setup on Python 3.13, docker compose, run.py roles, tools/camera_stream.py, model/worker.py, notebooks/safety_client.py, tools/sim.py, the coordinator status endpoint, probing the WebSocket, restarting the server safely on Windows, and checking that the phone can reach it. Use when developing or testing the mobile app or dashboard against real backend data, or when the phone can't connect.
+description: Run the backend (coordinator + server) with Postgres and RustFS in Docker, then feed it like the car would - the camera stream (dataset clips) plus the model (rivian_model/), or the drive simulator - to give the frontend live data, sections and drive reports. Covers venv setup on Python 3.13, docker compose, run.py roles, demo.ps1, tools/camera_stream.py, rivian_model/rivian_detector.py and klip_po_voznji.py, notebooks/safety_client.py, tools/sim.py, the coordinator status endpoint, probing the WebSocket, restarting the server safely on Windows, and checking that the phone can reach it. Use when developing or testing the mobile app or dashboard against real backend data, or when the phone can't connect.
 ---
 
 # Backend + camera + model (or simulator) for frontend work
@@ -23,27 +23,29 @@ Storage: **Docker Desktop is installed on this laptop now**, so use `docker comp
 
 ```bash
 cd backend && docker compose up -d                                   # Postgres :5433 + RustFS :9000 (containers backend-postgres-1 / -rustfs-1)
-cd backend && .venv/Scripts/python.exe run.py --mock                # coordinator + server + mocked car (camera + fake model), auto-reload
-# or the pieces one by one (e.g. a clip or the real model instead of the mocks):
+powershell -File demo.ps1 -PoVoznji                                  # the whole car, one window per part (storage, server :8001, coordinator :8000, Bluetooth, model, per-trip clips)
+# or the pieces one by one:
 cd backend && .venv/Scripts/python.exe run.py                       # coordinator + server, 0.0.0.0:8000, auto-reload, prints the phone URL
-backend/.venv/Scripts/python.exe tools/camera_stream.py             # camera stand-in: test pattern 10 fps (--video clip.mp4, --webcam "name")
-backend/.venv/Scripts/python.exe model/worker.py --fake             # model worker without CV packages: scripted 60 s loop of detections
+rivian_model/.venv/Scripts/python.exe rivian_model/rivian_detector.py --camera 05_23   # the model (setup: rivian_model/README.md); zone = clip series
+backend/.venv/Scripts/python.exe tools/camera_stream.py --video ../dataset/05_23_62_031246_video_inCabin.mp4   # one clip, looped (--webcam "name")
+backend/.venv/Scripts/python.exe rivian_model/klip_po_voznji.py     # instead: every trip started on the phone gets the next clip from its start
+backend/.venv/Scripts/python.exe rivian_model/run_compare.py --port 8000 --clip <clip> --label x --out <dir>   # no phone: trip + 30 s clip + summary
 curl -s http://127.0.0.1:8000/api/v1/coordinator/status             # camera fps, model connected/latency, video cache, server delivery
 ```
-- `--mock` starts the camera and the fake model as children of run.py in **their own process group**: on Windows uvicorn's
-  auto-reload sends Ctrl+C to the whole console, which killed them on every code change before (fixed 2026-11-07). Closing the
-  window or Ctrl+C on run.py stops all three. A fresh phone then needs nothing else: the app opens on Log in / Create account.
+- `run.py --mock` and the fake model are gone (D44). The model needs its own venv + weights once (`rivian_model/README.md`,
+  ~30 min here because PyPI is slow on this network). One camera at a time: a second stream is refused (HTTP 403).
 - Long-running things go in their own background shell. To keep the **backend alive after the agent session**, start it in
   its own window: `Start-Process <backend>\.venv\Scripts\python.exe -ArgumentList run.py -WorkingDirectory <backend> -WindowStyle Minimized`.
 - **Restarting the backend on Windows:** kill the whole tree. Killing only the reloader leaves its `multiprocessing-fork` worker
   alive, still bound to :8000 (Windows lets two sockets share the port), so **old code keeps answering**. Check with
   `Get-NetTCPConnection -LocalPort 8000` and `Get-CimInstance Win32_Process -Filter "Name='python.exe'"`; the version is in
   `/openapi.json` (`info.version`, 0.4.0 = coordinator/server split).
-- Startup log: `Server stores trips in Postgres ...`, `Dangerous-moment images go to ...`, `Risk engine (CV team's model) uses ...`,
+- Startup log: `Server stores trips in Postgres ...`, `Dangerous-moment images go to ...`, `Risk engine uses ...`,
   `Video cache on disk: ...`, `Coordinator ready: sections of 2.0 s, server in-process`. Without Postgres it warns once and the live
   path keeps working; history/report return 503 (the app hides the chart).
-- With camera + fake worker running, **any trip started from the phone gets fake detections** (phone at 14–20 s of every minute,
-  look-away 28–31 s, microsleep 38–41 s, hands off 48–52 s). Stop them (or don't start them) when testing something else.
+- With `klip_po_voznji.py` running, **every trip started from the phone gets the next dataset clip** (collapse 031246, phone
+  021254, phone in the lap 005853; then nothing). With a looped `--video` clip a trip starts mid-clip. The model's
+  `--camera` must match the clips' series, or the driver zone is wrong.
 - Speed is mocked by the coordinator (`SPEED_SCENARIO`, random per trip; `cruise` never stops, good for a stage demo).
 - One active trip per car: a new trip (simulator or app) ends the old one.
 - Swagger for REST: `http://localhost:8000/docs`. WebSockets aren't listed there.
@@ -52,7 +54,7 @@ curl -s http://127.0.0.1:8000/api/v1/coordinator/status             # camera fps
 
 ```powershell
 cd backend; .venv\Scripts\python.exe run.py --role server --port 8001 --no-reload          # server alone (accounts, history, report)
-cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; $env:SPEED_SCENARIO='cruise'; .venv\Scripts\python.exe run.py --role coordinator --mock
+cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; $env:SPEED_SCENARIO='cruise'; .venv\Scripts\python.exe run.py --role coordinator
 backend\.venv\Scripts\python.exe backend\coordinator\car_link\gateway.py --name "Rivian demo car"   # phone link, docs/BLUETOOTH.md (-v: every message)
 ```
 - Smoke test (2026-11-07): register on :8001 → 201, trip start/end on :8000 → 201/200, the trip lands on the account (the server's

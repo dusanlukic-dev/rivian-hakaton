@@ -251,3 +251,24 @@ name, hello name) and found again by itself, also after Windows changes the addr
 Rejected: fully manual every time (friction on every drive; real cars reconnect by themselves), and system pairing
 (the car would show in Android's Bluetooth settings and the link would be encrypted, but it needs Windows pairing prompts
 and native changes: later). JS only, no rebuild.
+
+**D44: Dušan's model replaces the CV team's worker; merged by cherry-pick (2026-11-07).** User: "connect the model instead of
+the simulation, clean up the current models". Dušan's `nas-demo` branch (`rivian_model/`: YOLO11n phone + YOLO11n-pose +
+MediaPipe face + `features.DriverLogic`, a detector that speaks the coordinator's model protocol, plus collapse end to end) was
+based on an older main. Its 9 commits were **cherry-picked** in order onto main (author kept, only the `Co-Authored-By` trailer
+stripped, `.claude/rules/git.md`); the result is byte-identical to a real merge (the merge was conflict-free). Rejected: a plain
+merge (it would put 9 AI-attribution trailers on main), a squash (loses his per-commit history). Then removed: `model/`
+(CvDetector + FakeDetector), `notebooks/risk_pipeline.py`, `dev_overlay.py`, `setup_models.*`, `requirements.txt`,
+`pokretanje.txt`, the local `notebooks/models/`, and the CV-only sections of `risk_config.json` (the coordinator reads only
+smoothing/groups/categories/rules/context/alerts). Kept: the coordinator's `RiskEngine` (now the only copy), `model_report.py`,
+the `/telemetry` debug feed and the simulators. `run.py --mock` went with the fake worker; the whole car starts with
+`demo.ps1` (Dušan's launcher, rewritten for the split server :8001 + coordinator :8000 + Bluetooth gateway). Restore the old
+worker: `git show 8d05c97:model/worker.py`. Why his model: ~2× faster (all 10 fps), fewer false alarms on calm clips, and it
+sees a collapsed driver (`rivian_model/POREDJENJE_MODELA.md`).
+
+**D45: One cabin camera; collapse is a medical emergency, not a degree of danger (Dušan, 2026-11-07, kept).** The model keeps
+per-trip state (gaze calibration, phone memory, motion), so a second stream on `/camera/ws` is refused (HTTP 403 at the handshake) instead of interleaving two
+drivers into one model. A collapse confirmed for 2 s sets the score to 0 with the red/loud/seat response and alerts the contact
+at once, also standing still, held 10 s after last seen; a shorter slump costs nothing (getting out of the car, picking
+something up). The camera series (`05_23`/`08_14`) is a model start option (`--camera`): the protocol doesn't say which
+camera, and a real car has one fixed mount.

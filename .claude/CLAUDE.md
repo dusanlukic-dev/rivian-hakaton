@@ -7,8 +7,8 @@ This file **adds to** the root `CLAUDE.md` (the team's domain rules, written in 
 ## In one paragraph
 
 **Personal Safety Reviewer.** A cabin camera streams to the backend's **coordinator** (in the car), which sends frames to the
-**model worker** (`model/`, its own process) and gets per-category evidence back, computes risk (the CV team's `RiskEngine`,
-extracted), the 0–100 score and the car's response (light, seat vibration, sound, message), pushes it over a WebSocket to the
+**model** (`rivian_model/`, Dušan's, its own process and venv) and gets per-category evidence back (phone, eyes off road,
+eyes closed, collapse), computes risk (`RiskEngine`), the 0–100 score and the car's response (light, seat vibration, sound, message), pushes it over a WebSocket (Bluetooth LE to the phone) to the
 **phone app** (Expo, Android) and the **web dashboard** (car screen mock), and every 2 s sends a **section summary** (+ the image of
 the riskiest frame when dangerous) to the backend's **server**, which stores it (Postgres + RustFS) and serves history and the drive
 report. The laptop plays the car's computer, and the phone's hotspot is the in-car network. Diagrams: `docs/ARCHITECTURE.md`,
@@ -21,12 +21,13 @@ report. The laptop plays the car's computer, and the phone's hotspot is the in-c
 | `CLAUDE.md` (root) | domain rules, levels, cross-cutting change rules (Serbian) | backend teammate |
 | `docs/API.md` | **contract**: routes, TS types, WS events, how to display state | backend teammate |
 | `backend/` | FastAPI: `app/coordinator/` (live, camera, model link, score, sections) + `app/server/` (accounts, storage, report). `backend/CLAUDE.md` has the layers and gotchas | backend teammate + us (since 2026-11-06 evening, user's request) |
-| `model/` | model worker: camera frames → evidence, its own venv (later Docker). Uses the CV code unchanged | us |
+| `rivian_model/` | **the model** (since 2026-11-07, D44): camera frames → evidence (`rivian_detector.py`), own venv `.venv` (later Docker), weights via `setup_models.py`. `README.md`, `ATRIBUTI.md` (signals, accuracy) | Dušan |
 | `docs/ARCHITECTURE.md` | coordinator / server / model split, internal contracts, caching | us + backend teammate |
-| `notebooks/` | CV models (**never edit `risk_pipeline.py`**: the worker imports it, the coordinator has a copy of `RiskEngine`); `safety_client.py` = old bridge + **drive simulator** | CV team / backend |
+| `notebooks/` | `risk_config.json` (the coordinator's risk thresholds) + `safety_client.py` (**drive simulator**). The CV team's pipeline was removed (D44) | backend |
 | `frontend/mobile/` | Expo SDK 58 / RN 0.88 **dev build** for the driver's phone | us |
 | `frontend/dashboard/` | Vite 8 + React 19 + Tailwind v4 + shadcn car-screen mock | us |
-| `tools/` | `gen-sounds.mjs` (alert WAVs for both apps), `camera_stream.py` (camera stand-in → coordinator), `sim.py` (exact states) | us |
+| `tools/` | `gen-sounds.mjs` (alert WAVs for both apps), `camera_stream.py` (clip / webcam → coordinator), `sim.py` (exact states) | us |
+| `demo.ps1` | the whole car on this laptop, one window per part (storage, server, coordinator, Bluetooth, model, camera) | us + Dušan |
 | `.claude/knowledge/`, `.claude/rules/`, `.claude/skills/` | knowledge books, auto-loaded rules, workflows | everyone |
 
 ## Knowledge books (read the relevant one before working in an area)
@@ -37,7 +38,7 @@ report. The laptop plays the car's computer, and the phone's hotspot is the in-c
 - `android-alerting.md`: sound on the alarm stream, flash, vibration, waking the phone, foreground service, permissions, Samsung quirks
 - `networking.md`: hotspot topology, ports, adb reverse, **Windows firewall state** (python allowed, node blocked on Public)
 - `environment.md`: this PC's toolchain (Android SDK + `android` CLI, JDK 17 toolchain + JDK 25, Python 3.13 venv, phone facts)
-- `cv-pipeline.md`: the cabin camera dataset and `notebooks/risk_pipeline.py`: driver is on the RIGHT, ROIs, head-pose baseline, look-down vs eyes-closed, YOLO/hands limits
+- `cv-pipeline.md`: the cabin camera dataset and the model (`rivian_model/`): driver on the RIGHT, camera series and ROIs, what each signal catches and misses, speed, setup gotchas
 - `decisions.md`: decision log D1…Dn. Append when you decide something (D15: API.md supersedes our early draft)
 
 ## Skills

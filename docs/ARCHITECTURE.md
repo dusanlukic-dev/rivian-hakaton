@@ -12,16 +12,16 @@ obraćaju samo preko HTTP API-ja, pa se razdvajaju podešavanjem, bez izmene kod
 
 | Deo | Gde radi | Šta radi | Šta NE radi |
 |---|---|---|---|
-| **Model** (`model/worker.py`) | u kolima: svoj proces i svoje okruženje (kasnije svoj Docker kontejner) | prima frejm od koordinatora, detektuje (kod CV tima: MediaPipe, YOLO, `FeatureExtractor`) i vraća **dokaz** `p` po kategoriji | ne računa rizik, score ni reakciju kola; ne priča ni sa kim osim sa koordinatorom |
-| **Koordinator** (`backend/app/coordinator/`) | u kolima (laptop) | prima video, šalje frejmove modelu, računa rizik (izdvojen `RiskEngine` CV tima), score 0–100 i reakciju kola, šalje stanje telefonu (WS), drži **sav keš** (5 min videa, outbox sekcija za server), na svake 2 s pravi **rezime sekcije** i šalje ga serveru i telefonu | nikad ne dira Postgres ni S3; nikad ne čeka server (vožnja radi i bez njega) |
+| **Model** (`rivian_model/rivian_detector.py`) | u kolima: svoj proces i svoje okruženje (`rivian_model/.venv`, kasnije svoj Docker kontejner) | prima frejm od koordinatora, detektuje (YOLO11n telefon, YOLO11n-pose, MediaPipe lice, pravila u `features.py`) i vraća **dokaz** `p` po kategoriji | ne računa rizik, score ni reakciju kola; ne priča ni sa kim osim sa koordinatorom |
+| **Koordinator** (`backend/app/coordinator/`) | u kolima (laptop) | prima video (jedna kamera), šalje frejmove modelu, računa rizik (`RiskEngine`), score 0–100 i reakciju kola, šalje stanje telefonu (WS), drži **sav keš** (5 min videa, outbox sekcija za server), na svake 2 s pravi **rezime sekcije** i šalje ga serveru i telefonu | nikad ne dira Postgres ni S3; nikad ne čeka server (vožnja radi i bez njega) |
 | **Server** (`backend/app/server/`) | van kola (u demo-u isti proces na laptopu) | nalozi, prima rezimee od koordinatora, čuva ih (Postgres) zajedno sa slikama (S3), služi istoriju, izveštaj sa grafikom i slikama, analitiku | ne zna ništa o kameri, modelu ni WebSocket-u; ništa ne računa |
 
 ## Pravi put i debug putevi
 
 | Put | Ko računa rizik | Status |
 |---|---|---|
-| kamera → koordinator → model worker → koordinator | koordinator (izdvojen `RiskEngine`) | **jedini pravi put** (demo i produkcija) |
-| `risk_pipeline.py --mode prod` → `POST /telemetry` (zapis frejma) + `POST /video/frames` | pipeline sam (svoj `RiskEngine`); koordinator samo mapira rezultat u score | **samo debug** (poređenje sa CV kodom, rad CV tima bez model worker-a). Dok je model worker povezan, zapis frejma dobija `409`, pa dva puta nikad ne boduju istu vožnju. Koordinator u logu kaže kad vožnju hrani ovaj put, a `GET /coordinator/status` ga broji (`debug_feed`) |
+| kamera → koordinator → model → koordinator | koordinator (`RiskEngine`) | **jedini pravi put** (demo i produkcija) |
+| snimljeni zapisi frejma (`notebooks/safety_client.py --replay frames.jsonl`) → `POST /telemetry` | već izračunat rizik; koordinator samo mapira rezultat u score | **samo debug**. Dok je model povezan, zapis frejma dobija `409`, pa dva puta nikad ne boduju istu vožnju. Koordinator u logu kaže kad vožnju hrani ovaj put, a `GET /coordinator/status` ga broji (`debug_feed`) |
 | simulator (`notebooks/safety_client.py`, `tools/sim.py`) → `POST /telemetry` (labele) | nema modela, labele idu pravo u score | debug, i demo bez kamere |
 
 ## Tok podataka
@@ -62,20 +62,20 @@ vožnje) odgovara koordinator, a istoriju, izveštaj i naloge server. Koji deo s
 
 ## Ko šta računa
 
-1. **Model** (`model/worker.py`): perception + `FeatureExtractor` iz `notebooks/risk_pipeline.py`,
-   uvezeni bez izmena. Izlaz je dokaz `p_i` ∈ [0, 1] po kategoriji (`phone_use`, `eyes_off_road`,
-   `hands_off_wheel`, `eating_drinking`, `drowsiness`, `eyes_closed`).
-2. **Koordinator, rizik** (`coordinator/services/risk_engine.py`): `RiskEngine` CV tima, **izdvojen** iz
-   `risk_pipeline.py` (fajl CV tima se ne menja). Matematika je ista do bita:
-   `tests/test_risk_engine.py` pušta nasumičan dokaz kroz kopiju i original i traži iste zapise i rezime.
-   Pragove i dalje podešava CV tim u `notebooks/risk_config.json` (čitaju ga oba).
+1. **Model** (`rivian_model/rivian_detector.py`, Dušan): YOLO11n (telefon, 640 px, svaki 2. frejm u paralelnoj
+   niti), YOLO11n-pose (384 px) u zoni vozača i MediaPipe Face Landmarker na isečku glave, pa pravila
+   `features.DriverLogic` (kalibracija pogleda, potvrda telefona, mirovanje za kolaps). Izlaz je dokaz
+   `p_i` ∈ [0, 1] po kategoriji: `phone_use`, `eyes_off_road`, `eyes_closed`, `collapse`. Zona vozača je po
+   seriji kamere (`rois.json`, `--camera 05_23|08_14`), jer protokol ne nosi koja je kamera. Detalji:
+   `rivian_model/README.md` i `ATRIBUTI.md`.
+2. **Koordinator, rizik** (`coordinator/services/risk_engine.py`): `RiskEngine` (poreklom kopija iz pipeline-a
+   CV tima, koji je uklonjen 2026-11-07, pa je ovo sada jedina kopija). Pragovi: `notebooks/risk_config.json`.
+   Kategorija koju model ne šalje (`hands_off_wheel`, `drowsiness`, `eating_drinking`) ima dokaz 0.
 3. **Koordinator, score** (`scoring.py`, `alerts.py`): naš koeficijent 0–100 kao **trenutno stanje**
    (opasnost ponašanja ili rizik modela × brzina × noć; pada i vraća se za par sekundi), nivoi i reakcija kola.
-   Crveni alarm modela odmah pali vibraciju i glasan zvuk.
+   Crveni alarm modela odmah pali vibraciju i glasan zvuk. Potvrđen **kolaps** (2 s) daje score 0, crveno,
+   glasan alarm i poruku kontaktu odmah, i kad kola stoje (`collapse_confirmed` u `scoring.py`).
 4. **Server**: ništa ne računa, samo čuva i spaja uzastopne opasne sekcije u momente pri čitanju.
-
-Kad CV tim počisti svoj kod, `RiskEngine` iz `risk_pipeline.py` može da se izbaci: worker ga ne koristi,
-a koordinator ima svoju kopiju.
 
 ## Sekcije (rezime na 2 s)
 
@@ -135,7 +135,8 @@ Javni ugovor: [API.md](API.md). Novo: WS događaj `section` i izveštaj sa sekci
 
 ### 2. Kamera → koordinator
 `WS /api/v1/camera/ws`: **jedna binarna poruka = jedan JPEG** (do 2 MB). Bez aktivne vožnje frejmovi se
-odbacuju, a socket ostaje otvoren. Isto radi i `POST /api/v1/video/frames` (telo je JPEG), koji koristi
+odbacuju, a socket ostaje otvoren. **Samo jedna kamera**: dok jedna šalje, druga konekcija je odbijena (HTTP 403 na handshake-u; `1008` u testovima)
+(model pamti stanje vožnje, pa bi dva izvora pomešala dva vozača); `camera_stream.py` pokušava ponovo. Isto radi i `POST /api/v1/video/frames` (telo je JPEG), koji koristi
 `notebooks/safety_client.py --video`.
 
 ### 3. Koordinator ↔ model (`WS /api/v1/model/ws`)
@@ -143,7 +144,7 @@ Model se **sam javlja** koordinatoru (nema novog porta ni firewall pravila, bilo
 
 | Smer | Poruka |
 |---|---|
-| model → koordinator | `{"type": "hello", "worker": "cv-pipeline", "version": "1.0", "categories": [...]}` |
+| model → koordinator | `{"type": "hello", "worker": "rivian-pose", "version": "1.0", "categories": [...]}` |
 | koordinator → model | binarno: `uint32 LE dužina zaglavlja` + JSON zaglavlje `{"type": "frame", "id": 41, "t": 12.375, "trip_id": "..."}` + JPEG |
 | model → koordinator | `{"type": "detection", "id": 41, "t": 12.375, "trip_id": "...", "evidence": {"phone_use": 0.82, ...}, "perception": {...}, "ms": 84.2}` |
 | model → koordinator | `{"type": "error", "id": 41, "message": "..."}` (frejm se preskače) |
@@ -187,15 +188,13 @@ Model se **sam javlja** koordinatoru (nema novog porta ni firewall pravila, bilo
 ```powershell
 cd backend; docker compose up -d                              # Postgres :5433 + RustFS :9000 (ili .\scripts\services.ps1 start)
 cd backend; .venv\Scripts\python.exe run.py                   # koordinator + server, :8000
-backend\.venv\Scripts\python.exe tools\camera_stream.py       # kamera: test slika (--video snimak.mp4, --webcam "ime")
-backend\.venv\Scripts\python.exe model\worker.py --fake       # model bez CV paketa (skriptovane detekcije)
-model\.venv\Scripts\python.exe model\worker.py                # pravi model CV tima (model/README.md)
+backend\.venv\Scripts\python.exe tools\camera_stream.py --video ..\dataset\<klip>.mp4   # kamera (ili --webcam "ime")
+rivian_model\.venv\Scripts\python.exe rivian_model\rivian_detector.py --camera 05_23     # model (rivian_model/README.md)
 curl http://127.0.0.1:8000/api/v1/coordinator/status          # kamera fps, model, keš, isporuka serveru
 ```
 
-Debug bez kamere i modela: `python notebooks/safety_client.py` (simulator). Debug sa pipeline-om CV tima:
-`python notebooks/risk_pipeline.py --video snimak.mp4 --mode prod --start-trip demo`, ali bez model worker-a
-(dok je povezan, zapisi pipeline-a dobijaju `409`).
+Sve odjednom, svaki deo u svom prozoru: `.\demo.ps1 -PoVoznji` (u korenu repoa). Debug bez kamere i modela:
+`python notebooks/safety_client.py` (simulator).
 
 Odvojeno (kasnije i u Docker-u):
 ```powershell
@@ -203,7 +202,7 @@ Odvojeno (kasnije i u Docker-u):
 $env:SERVER_URL="http://127.0.0.1:8001/api/v1"; .venv\Scripts\python.exe run.py --role coordinator
 ```
 Tada telefon treba da istoriju i izveštaj traži od servera (reverse proxy ispred oba dela još nije
-napravljen). `model/Dockerfile` je spreman za kontejner modela (još nije testiran).
+napravljen). `rivian_model/Dockerfile` je kontejner modela (Dušan ga je proverio na svom laptopu).
 
 ## Gde šta
 
@@ -212,11 +211,12 @@ napravljen). `model/Dockerfile` je spreman za kontejner modela (još nije testir
 | promeniš dužinu sekcije ili pravila opasnosti | `SECTION_S`, `tick_danger` u `coordinator/services/sections.py` |
 | promeniš koji frejm postaje slika | `_Section.add` (peak), `_section_image` u `coordinator/services/coordinator.py` |
 | promeniš keš videa | `VIDEO_CACHE*` u `core/config.py`, `coordinator/services/video_cache.py` |
-| promeniš protokol sa modelom | `coordinator/services/model_link.py` i `model/worker.py` (oba!) |
+| promeniš protokol sa modelom | `coordinator/services/model_link.py` i `rivian_model/rivian_detector.py` (oba!) |
 | promeniš isporuku serveru | `coordinator/services/outbox.py`, `server_client.py`, `schemas/sync.py`, `server/routes/internal.py` |
 | promeniš kako se sekcije čuvaju | `server/repositories/recordings.py`, `server/services/storage.py`, [DATABASE.md](DATABASE.md) |
 | promeniš momente | `build_moments` u `server/services/history.py` |
-| podesiš rizik modela | `notebooks/risk_config.json` (CV tim); kod je u `coordinator/services/risk_engine.py` |
+| podesiš rizik modela | `notebooks/risk_config.json`; kod je u `coordinator/services/risk_engine.py` |
+| podesiš šta model vidi | `rivian_model/features.py` (pravila), `rois.json` (zona vozača) |
 
 ## Planirano
 
@@ -226,6 +226,6 @@ napravljen). `model/Dockerfile` je spreman za kontejner modela (još nije testir
 - **Telefon sa dve adrese** kad su delovi odvojeni: kola (koordinator: WS, start i kraj vožnje) i server
   (istorija, izveštaj, nalozi, slike). API.md §5 već deli rute na [K] i [S].
 - Video celog momenta umesto slike (`VideoCache.frames_between` + `encode_mp4`, klip u S3 uz sekciju).
-- Model u Docker kontejneru (`model/Dockerfile`), koordinator i server u svojim.
+- Model u Docker kontejneru (`rivian_model/Dockerfile`), koordinator i server u svojim.
 - Više kola: `car_id` u `TripMeta` i `close-interrupted` po kolima; deljeni keš (Redis) ako zatreba.
 - Reverse proxy da telefon i u odvojenom režimu ima jednu adresu; potpisani URL-ovi za slike.

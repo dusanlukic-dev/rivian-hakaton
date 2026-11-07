@@ -5,8 +5,8 @@ Python 3.13, FastAPI, Pydantic v2, SQLAlchemy 2 (async, asyncpg), boto3, diskcac
 
 Backend ima **dva dela** sa jasnom granicom. Celu sliku (tok podataka, ugovori, keš, pouzdanost) vidi u
 **`../docs/ARCHITECTURE.md`**:
-- `app/coordinator/`: **koordinator**, u kolima. WebSocket za telefon i dashboard, kamera, veza sa modelom,
-  izdvojen `RiskEngine` CV tima, score 0–100 i reakcija kola, 5 min video keša, sekcije od 2 s koje šalje
+- `app/coordinator/`: **koordinator**, u kolima. WebSocket za telefon i dashboard, kamera (jedna), veza sa
+  modelom (`rivian_model/`), `RiskEngine`, score 0–100 i reakcija kola, 5 min video keša, sekcije od 2 s koje šalje
   serveru i telefonu. **Nikad ne dira Postgres ni S3.**
 - `app/server/`: **server**. Nalozi, prijem sekcija od koordinatora (`/internal/*`), Postgres + S3,
   istorija, izveštaj sa grafikom i slikama, analitika. Ne zna ništa o kameri, modelu ni WS-u.
@@ -26,8 +26,8 @@ python run.py                               # koordinator + server na 0.0.0.0:80
 python run.py --role server --port 8001     # odvojeno: server...
 $env:SERVER_URL="http://127.0.0.1:8001/api/v1"; python run.py --role coordinator   # ...i koordinator
 pytest                                      # testovi (SQLite + S3 i video keš u memoriji, ne trebaju servisi)
-python ..\tools\camera_stream.py            # kamera: test slika (--video snimak.mp4, --webcam "ime")
-python ..\model\worker.py --fake            # model worker bez CV paketa (pravi: ../model/README.md)
+python ..\tools\camera_stream.py --video <klip>.mp4   # kamera (--webcam "ime"; bez argumenta test slika)
+..\rivian_model\.venv\Scripts\python.exe ..\rivian_model\rivian_detector.py --camera 05_23   # model
 python ..\notebooks\safety_client.py --interval 0.3   # simulirana vožnja bez kamere i modela
 curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isporuka serveru
 ```
@@ -42,8 +42,8 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 - `services/coordinator.py`: **`Coordinator`**, ceo živi tok na jednom mestu: tick → brzina → score →
   `state` (~2/s) → sekcija → slika iz keša → WS `section` + outbox. Frejm → keš + model. Detekcija →
   `RiskEngine` → tick.
-- `services/risk_engine.py`: `RiskEngine` CV tima, **izdvojen** iz `notebooks/risk_pipeline.py` bez izmena
-  matematike (`tests/test_risk_engine.py` poredi sa originalom). Pragovi: `notebooks/risk_config.json`.
+- `services/risk_engine.py`: `RiskEngine` (poreklom iz pipeline-a CV tima, sada jedina kopija). Pragovi:
+  `notebooks/risk_config.json`.
 - `services/model_link.py`: veza sa model worker-om (protokol, jedan frejm u letu, najnoviji pobeđuje).
 - `services/sections.py`: `SectionRecorder`, tickovi → sekcije od 2 s, opasnost, najrizičniji frejm.
 - `services/video_cache.py`: `VideoCache`, 5 min frejmova (diskcache na disku ili memorija).
@@ -63,7 +63,7 @@ curl http://127.0.0.1:8000/api/v1/coordinator/status  # kamera, model, keš, isp
 **Zajedničko:** `app/services/model_report.py` (CV tim): izveštaj modela kamere za celu vožnju (rizik, vreme po
 boji alarma, epizode ponašanja i alarma) iz toka frejmova. Koordinator ga hrani svakim tickom i šalje snimak uz
 svaku sekciju (`RunningSummary.model_report` → `trips.model_report` → `TripReport.model`). Samo standardna
-biblioteka, pa ga uvozi i dev mode pipeline-a; offline: `python -m app.services.model_report frames.jsonl`.
+biblioteka; offline: `python -m app.services.model_report frames.jsonl`.
 **Ne pomeraj ga** (dev mode ga uvozi po toj putanji).
 
 **Spajanje:** `app/main.py` pravi aplikaciju za ulogu `all` / `coordinator` / `server` (rute + lifespan).
@@ -79,7 +79,7 @@ biblioteka, pa ga uvozi i dev mode pipeline-a; offline: `python -m app.services.
 | preslikaš kategoriju modela na labelu | `CATEGORY_TO_BEHAVIOR` u `coordinator/services/camera.py` |
 | promeniš dužinu sekcije ili pravila opasnosti | `SECTION_S` u `.env`, `tick_danger` u `coordinator/services/sections.py` |
 | promeniš video keš | `VIDEO_CACHE*` u `core/config.py`, `coordinator/services/video_cache.py` |
-| promeniš protokol sa modelom | `coordinator/services/model_link.py` **i** `../model/worker.py` |
+| promeniš protokol sa modelom | `coordinator/services/model_link.py` **i** `../rivian_model/rivian_detector.py` |
 | promeniš šta koordinator šalje serveru | `schemas/sync.py`, `coordinator/services/outbox.py`, `server/routes/internal.py`, `server/services/storage.py` |
 | dodaš kolonu u sekciju | `SectionBase` u `schemas/report.py`, `_close` u `sections.py`, `SectionRow` u `server/repositories/recordings.py`, `docs/API.md` §4, `docs/DATABASE.md`, pa prazna baza |
 | promeniš momente | `build_moments` u `server/services/history.py` |

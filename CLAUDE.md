@@ -16,11 +16,11 @@ slike** (privatnost).
 |---|---|
 | `backend/` | FastAPI u dva dela: **koordinator** (`app/coordinator/`, u kolima: uživo, kamera, model, score, sekcije) i **server** (`app/server/`: nalozi, čuvanje, izveštaj). Detalji u `backend/CLAUDE.md` |
 | `backend/docker-compose.yml` | Postgres + RustFS (S3) za server. Bez Docker-a: `backend/scripts/services.ps1` (portabl) |
-| `model/` | **model worker**: svoj proces i okruženje (kasnije Docker), prima frejmove od koordinatora i vraća detekcije. Koristi kod CV tima bez izmena |
+| `rivian_model/` | **model** (Dušan): svoj proces i okruženje (`.venv`, kasnije Docker), prima frejmove od koordinatora i vraća dokaz po kategoriji (`phone_use`, `eyes_off_road`, `eyes_closed`, `collapse`). YOLO11n + YOLO11n-pose + MediaPipe lice. Uputstvo: `rivian_model/README.md` |
 | `tools/camera_stream.py` | kamera za demo: snimak, test slika ili web kamera → koordinator |
-| `notebooks/` | CV modeli (YOLO, OpenCV, MediaPipe), rade drugi članovi tima |
-| `notebooks/risk_pipeline.py` | CV pipeline: `--mode dev` (video + metrike) ili `--mode prod` (**samo debug**: sam računa rizik i šalje zapise backendu preko `/telemetry`). Uputstvo: `notebooks/pokretanje.txt` |
-| `notebooks/safety_client.py` | stari most modeli → backend, plus simulator cele vožnje (i dalje radi) |
+| `demo.ps1` | ceo auto na laptopu (skladište, server, koordinator, Bluetooth, model, kamera), svaki deo u svom prozoru |
+| `notebooks/risk_config.json` | pragovi koordinatorovog `RiskEngine`-a (kategorije, pravila, alarm) |
+| `notebooks/safety_client.py` | simulator cele vožnje (labele na `/telemetry`, bez kamere i modela) |
 | `frontend/mobile/` | Expo (SDK 58) Android aplikacija za vozača, dev build. Pravila: `.claude/rules/mobile.md` |
 | `frontend/dashboard/` | web mock ekrana u kolima (Vite + React). Pravila: `.claude/rules/dashboard.md` |
 | `docs/ARCHITECTURE.md` | **koordinator, server i model**: tok podataka, ugovori između delova, keš, pouzdanost |
@@ -35,8 +35,8 @@ Celo objašnjenje: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ```
 laptop: kamera (tools/camera_stream.py) ──WS 127.0.0.1:8000/api/v1/camera/ws (JPEG, ~10 fps)──► KOORDINATOR
-        model worker (model/worker.py)  ◄─WS 127.0.0.1:8000/api/v1/model/ws: frejm → dokaz po kategoriji─►
-        debug: simulator, --mode prod   ──POST /api/v1/telemetry (labele ili zapis modela)──────────────►
+        model (rivian_model/)           ◄─WS 127.0.0.1:8000/api/v1/model/ws: frejm → dokaz po kategoriji─►
+        debug: simulator                ──POST /api/v1/telemetry (labele ili snimljen zapis modela)──────►
         KOORDINATOR ──POST /api/v1/internal/trips/{id}/sync (sekcije od 2 s + slike)──► SERVER
         SERVER ──► Postgres 127.0.0.1:5433 (nalozi, vožnje, sekcije) + RustFS S3 127.0.0.1:9000 (slike)
 telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergency, section na 2 s── KOORDINATOR
@@ -48,24 +48,28 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   laptopa, koji `python backend/run.py` ispiše pri pokretanju. IP se menja pri svakom ponovnom povezivanju.
 - **U kolima:** kamera, model i koordinator. **Van kola:** server (istorija i zapisi vožnji). Sav keš je u
   koordinatoru, a Postgres i RustFS su samo serverovi. Vožnja nikad ne čeka server.
-- **Pravi put:** kamera → koordinator → model worker → koordinator (rizik, score, reakcija). `risk_pipeline.py
-  --mode prod` i simulator (`POST /telemetry`) su **samo debug**; zapis frejma na `/telemetry` dobija `409` dok je
-  model worker povezan.
+- **Pravi put:** kamera → koordinator → model → koordinator (rizik, score, reakcija). Simulator i snimljeni
+  zapisi modela (`POST /telemetry`) su **samo debug**; zapis frejma na `/telemetry` dobija `409` dok je model
+  povezan. Koordinator prima **jednu kameru** (druga je odbijena: HTTP 403), jer model pamti stanje vožnje.
 - **Jedan auto = jedna aktivna vožnja.** Detekcije i telemetrija idu u aktivnu vožnju, a nova vožnja
   završava prethodnu.
-- **Koordinator** prima video, šalje frejmove modelu, od dokaza modela računa rizik (`RiskEngine` CV tima,
-  izdvojen u `backend/app/coordinator/services/risk_engine.py`), pa naš score i reakciju kola. Telefonu
+- **Koordinator** prima video, šalje frejmove modelu, od dokaza modela računa rizik (`RiskEngine`,
+  `backend/app/coordinator/services/risk_engine.py`), pa naš score i reakciju kola. Telefonu
   šalje stanje i na svake 2 s **sekciju** (šta je viđeno, score, opasnost). Drži 5 min videa u kešu i za
   opasnu sekciju uzima sliku najrizičnijeg frejma. Sekcije sa slikama šalje serveru. Nikad ne dira bazu.
 - **Server** čuva naloge, vožnje, sekcije i slike i služi istoriju i izveštaj (grafik vožnje sa opasnim
   momentima). Ne zna ništa o kameri.
-- **Model** samo detektuje (perception + `FeatureExtractor` CV tima). Kod CV tima se ne menja.
+- **Model** samo detektuje (`rivian_model/rivian_detector.py`: YOLO11n telefon, YOLO11n-pose, MediaPipe lice,
+  pravila u `features.py`). Ne računa rizik ni score. Zona vozača zavisi od kamere (`--camera 05_23|08_14`).
 - Ako server, Postgres ili S3 ne rade, score i reakcije kola rade normalno, a sekcije čekaju u koordinatoru.
 
 ## Pravila domena (sažetak)
 
 - Labele: `looking_at_phone`, `looking_behind`, `turning_around`, `hands_off_wheel`, `drowsy`,
-  `eyes_off_road`.
+  `eyes_off_road`, `collapse`.
+- **Kolaps** (vozač pao napred i miruje) nije stepen opasnosti nego hitan slučaj: kad traje 2 s, score je odmah
+  0, svetlo crveno, glasan alarm i poruka kontaktu, **i kad kola stoje**; drži se 10 s posle poslednjeg viđenja.
+  Kraći pad (saginjanje) ne skida poene.
 - **Score je trenutno stanje, ne bodovni saldo** (`coordinator/services/scoring.py`): koliko je vožnja bezbedna
   SADA. Pada dok traje rizično ponašanje i vraća se na 100 čim prestane (~6–8 s).
   - opasnost sada = najgore ponašanje (raste što duže traje) + 30 % ostalih; ili rizik modela (bez mirne
@@ -129,8 +133,8 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   svake **2 s** rezime sekcije serveru i telefonu; za opasnu sekciju uz rezime ide slika najrizičnijeg
   frejma iz video keša (5 min, diskcache). Server samo čuva i služi. Model je zaseban proces koji samo
   detektuje. Sekcije zamenjuju uzorke po sekundi i momente sa klipovima; video momenta je planiran.
-- (2026-11-06) `RiskEngine` CV tima je **izdvojen** u koordinator bez izmene matematike (test ga poredi sa
-  originalom). `notebooks/risk_pipeline.py` se ne dira; CV tim ga čisti kasnije.
+- (2026-11-06) `RiskEngine` CV tima je **izdvojen** u koordinator bez izmene matematike. Od 2026-11-07 je to
+  jedina kopija (pipeline CV tima je uklonjen, vidi ispod).
 - (2026-11-06) **Izveštaj modela za celu vožnju računa backend**, ne pipeline: `app/services/model_report.py`
   (vreme po boji alarma, pravila, epizode ponašanja i alarma), u `GET /trips/{id}/report` kao `model`. Posle podele
   ga hrani koordinator svakim tickom (frejmovi sa `/telemetry` ili detekcije model worker-a) i šalje serveru uz svaku
@@ -145,12 +149,17 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   Pragovi reakcije (≥ 5 s / ≥ 2 s) su izbačeni: nivo već uključuje koliko dugo ponašanje traje.
 - (2026-11-07) **Aplikacija traži nalog**: registracija/prijava pri prvom otvaranju, token na svakom pozivu, odjava u
   Profilu. Vožnje iz aplikacije uvek pripadaju nalogu. Backend i dalje prima vožnje bez tokena (simulator, dashboard).
+- (2026-11-07) **Model je Dušanov `rivian_model/`** (grana `nas-demo`, spojena u `main`): brži (~60–75 ms po
+  frejmu, stiže svih 10 fps), manje lažnih uzbuna i vidi kolaps (`rivian_model/POREDJENJE_MODELA.md`). Model CV
+  tima (`model/worker.py`, `notebooks/risk_pipeline.py`, `setup_models.*`) je uklonjen; ostaje u git istoriji
+  (`git show 8d05c97:model/worker.py`). Nova labela `collapse` (kategorija `collapse` u `risk_config.json`, grupa
+  `medical`). Model ne šalje `hands_off_wheel` ni `drowsiness`: te kategorije ostaju u configu sa dokazom 0.
 - (2026-11-06) `hands_off_wheel` = **nijedna ruka na volanu**. Dokaz modela je 0 / 0.45 / 0.85 za
   2 / 1 / 0 ruku na volanu, a prag je 0.5, pa jedna ruka nikad ne aktivira labelu. Težina 1.0 ostaje.
 
 ## Otvorena pitanja (ažuriraj kad se dogovori)
 
-1. **`looking_behind` / `turning_around`:** da li CV tim pravi te izlaze? Do tada dolaze samo iz simulatora.
+1. **`looking_behind` / `turning_around` / `hands_off_wheel`:** model ih ne daje; dolaze samo iz simulatora.
 2. **Poruka kontaktu:** backend sada samo loguje. Predlog je da aplikacija pošalje SMS na
    događaj `emergency`.
 3. **Produkcija:** podela na koordinator (u kolima) i server (izveštaji) je urađena u kodu
@@ -158,9 +167,8 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
    uživo, server za istoriju) ili reverse proxy; outbox koordinatora na disk (sada je u memoriji, pa gašenje kola
    bez interneta gubi neisporučene sekcije); pristup slikama (potpisani URL-ovi umesto javnog bucketa), koliko
    dugo se čuvaju, više kola (`car_id`).
-4. ~~**Model → backend uživo**~~ rešeno: `model/worker.py` (detektori CV tima) radi preko koordinatora i to je
-   put za demo; `risk_pipeline.py --mode prod` ostaje za debug. Ostaje: na pravom autu proveriti da li CPU
-   stiže ~10 obrađenih frejmova/s (na ovom laptopu ~110 ms po frejmu). `setup_models.bat`/`.sh` su popravljeni.
+4. ~~**Model → backend uživo**~~ rešeno: `rivian_model/rivian_detector.py` radi preko koordinatora. Ostaje: kamera
+   ne javlja koja je (`05_23`/`08_14`), pa se zona vozača bira pri pokretanju modela.
 
 ## Pravila za izmene koje prelaze iz jednog dela u drugi
 
@@ -178,6 +186,7 @@ telefon (hotspot): React Native app ◄──WS /api/v1/ws: state ~2/s, emergenc
   koji napravi tabele. Backend u logu kaže koje kolone fale. Opis tabela drži ažurnim u `docs/DATABASE.md`.
 - Koordinator i server se ne uvoze međusobno: koordinator serveru pristupa samo preko HTTP-a
   (`/internal/*`, `GET /auth/me`). Promena tog ugovora → `backend/app/schemas/sync.py` i docs/ARCHITECTURE.md.
-- Promena protokola sa modelom → `backend/app/coordinator/services/model_link.py` **i** `model/worker.py`.
-- Promena `RiskEngine` → prvo kod CV tima, pa kopija u `coordinator/services/risk_engine.py`
-  (`tests/test_risk_engine.py` pada ako se razlikuju).
+- Promena protokola sa modelom → `backend/app/coordinator/services/model_link.py` **i**
+  `rivian_model/rivian_detector.py` (`serve`).
+- Nova kategorija modela → `CATEGORY_MAP` u `rivian_model/rivian_detector.py`, unos u `notebooks/risk_config.json`
+  i mapiranje u `coordinator/services/camera.py` (pravilo iznad).

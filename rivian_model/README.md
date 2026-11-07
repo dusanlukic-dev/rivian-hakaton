@@ -1,12 +1,12 @@
 # rivian_model: naš model (pažnja vozača) za koordinator
 
-Ovo je **drugi model**, pored modela CV tima (`notebooks/risk_pipeline.py` + `model/worker.py`). U ovoj kopiji
-(`rivian-demo`, grana `nas-demo`) je **podrazumevani model za demo**. CV model i dalje radi istim backendom (`demo.ps1 -Model cv`).
+**Model sistema** od 7. 11. 2026 (spojen sa grane `nas-demo` u `main`). Model CV tima (`model/worker.py` +
+`notebooks/risk_pipeline.py`) je uklonjen; ostaje u git istoriji (`git show 8d05c97:model/worker.py`).
 
 ## Šta radi
 
-Prima frejmove od koordinatora (isti protokol kao `model/worker.py`: `hello` → `frame` → `detection`, uz `reset` i `idle`)
-i za svaki frejm vraća dokaz 0–1 po kategoriji:
+Javlja se koordinatoru (`WS /api/v1/model/ws`: `hello` → `frame` → `detection`, uz `reset` i `idle`; protokol u
+`docs/ARCHITECTURE.md`) i za svaki frejm vraća dokaz 0–1 po kategoriji:
 
 | Naš signal | Kategorija za koordinator | Iz čega |
 |---|---|---|
@@ -15,22 +15,36 @@ i za svaki frejm vraća dokaz 0–1 po kategoriji:
 | zatvorene oči | `eyes_closed` | MediaPipe blendshapes, u odnosu na lični nivo |
 | **pad vozača** | `collapse` | yolo11n-pose: glava ispod ramena + telo miruje ≥ 1 s |
 
-**Kolaps radi do kraja** u ovoj kopiji: kategorija `collapse` u `notebooks/risk_config.json` (crveni alarm modela),
-`Behavior.COLLAPSE` u backendu, a potvrđen kolaps (2 s) daje skor 0, crveno, glasan alarm i poruku kontaktu odmah,
-i kad auto stoji (`backend/app/coordinator/services/scoring.py`, `tests/test_collapse.py`). Aplikacija i dashboard
-prikazuju „Driver not responding“.
+Rizik, alarm, skor 0–100 i reakciju kola računa koordinator (`RiskEngine` + `scoring.py`). Potvrđen kolaps (2 s) daje
+skor 0, crveno, glasan alarm i poruku kontaktu odmah, i kad auto stoji (`backend/tests/test_collapse.py`). Aplikacija i
+dashboard tada pišu „The driver is not responding“.
 
-## Pokretanje
+## Pokretanje (Windows, iz korena repoa)
 
+Jednom (modeli i slika za zagrevanje nisu u gitu):
 ```powershell
-cd rivian_model
-python setup_models.py --warmup-from "<dataset>\08_14_62_092916_video_inCabin.mp4"   # jednom: modeli + slika za zagrevanje (nisu u gitu)
-python rivian_detector.py --camera 08_14    # javlja se koordinatoru na ws://127.0.0.1:8000/api/v1/model/ws
-python test_rivian_detector.py 08_14_62_092916   # test bez backenda (lažni koordinator, isti protokol)
-docker build -t rivian-model .              # kontejner; podrazumevano pokreće rivian_detector.py
+py -3.13 -m venv rivian_model\.venv
+rivian_model\.venv\Scripts\python.exe -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+rivian_model\.venv\Scripts\python.exe -m pip install -r rivian_model\requirements.txt
+rivian_model\.venv\Scripts\python.exe rivian_model\setup_models.py --warmup-from ..\dataset\08_14_62_092916_video_inCabin.mp4
+```
+Ceo auto (skladište, server, koordinator, Bluetooth, model, kamera), svaki deo u svom prozoru: `.\demo.ps1 -PoVoznji`
+(README.md u korenu). Pojedinačno:
+```powershell
+rivian_model\.venv\Scripts\python.exe rivian_model\rivian_detector.py --camera 05_23    # javlja se na ws://127.0.0.1:8000/api/v1/model/ws
+backend\.venv\Scripts\python.exe tools\camera_stream.py --video ..\dataset\05_23_62_031246_video_inCabin.mp4
+backend\.venv\Scripts\python.exe rivian_model\klip_po_voznji.py     # umesto kamere: svaka vožnja iz aplikacije = sledeći klip
+rivian_model\.venv\Scripts\python.exe rivian_model\test_rivian_detector.py 08_14_62_092916   # bez backenda (lažni koordinator)
+backend\.venv\Scripts\python.exe rivian_model\run_compare.py --port 8000 --clip <klip>.mp4 --label nas --out <folder>  # kroz pravi koordinator
 ```
 
-- `--camera 05_23` za drugu seriju kamera. Protokol ne šalje koja je kamera, pa se zona vozača bira ovde.
-- Brojevi (CPU i5-1235U, na struji): ~73 ms po frejmu (i u Docker-u), spreman ~4–5 s posle pokretanja, ~490 MB RAM u Docker-u.
-- Test: 092916 → skor 40 (telefon 12.6–24.2 s), 031246 → kolaps od 11.0 s.
-- Detalji: `ATRIBUTI.md` (signali, tačnost na 56 klipova, šta ne obećavamo) i `PLAN_KOORDINATOR.md` (nalazi o backendu, sekcije 8–8.2).
+- Dataset: `$env:DATASET_DIR`, inače folder `dataset` pored repoa (`..\dataset`), inače Dušanov put.
+- `--camera 05_23` / `08_14`: zona vozača po seriji kamere (`rois.json`). Protokol ne šalje koja je kamera, pa svi klipovi
+  jednog pokretanja moraju biti iz iste serije (`klip_po_voznji.py` to proverava).
+- Koordinator prima jednu kameru: dok jedna šalje, druga je odbijena (HTTP 403), jer bi model video dva vozača.
+- Brojevi (Dušan, CPU i5-1235U, na struji): ~73 ms po frejmu (i u Docker-u), spreman ~4–5 s posle pokretanja, ~490 MB RAM u Docker-u.
+  Matijin laptop (Ryzen 5 5600H): ~38–43 ms po frejmu, kroz koordinator svi frejmovi od 10 fps, 0 izgubljenih (7. 11. 2026).
+- Na ovom laptopu su portovi 8685–8884 rezervisani (WinError 10013): `test_rivian_detector.py --port 8020`.
+- Detalji: `ATRIBUTI.md` (signali, tačnost na 56 klipova, šta ne obećavamo), `POREDJENJE_MODELA.md` (naš model i model CV
+  tima kroz isti koordinator), `PLAN_KOORDINATOR.md` (kako je uklopljen).
+- Docker: `Dockerfile` (Dušan ga je proverio na svom laptopu); sledeći korak je slika za svaki deo sistema.

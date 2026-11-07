@@ -13,9 +13,12 @@ with a summary in the root `CLAUDE.md`. This is the frontend cheat sheet. If the
 | `hands_off_wheel` | Hands off the wheel | 0.15 + 0.05/s → 0.45 | = **no** hand on the wheel (model evidence 0 / 0.45 / 0.85 for 2 / 1 / 0 hands, threshold 0.5) |
 | `drowsy` | Drowsiness | 0.60 + 0.15/s → 1.00 | heaviest: a microsleep means no reaction at all. From the model's `drowsiness` **and** `eyes_closed` |
 | `eyes_off_road` | Eyes off the road | 0.20 + 0.08/s → 0.50 | usually comes together with `looking_at_phone` (the model reports both) |
+| `collapse` | Driver not responding | none until confirmed, then **score 0** | the driver slumped over and still (model `collapse`). After 2 s: score 0, red, loud, seat, contact alerted, **even standing still**; held 10 s after last seen. Phone + dashboard show "The driver is not responding" on the emergency screen |
 
 Background: on 2026-11-06 the CV team listed phone use, turning fully around, hands-on-wheel count, drowsiness and eyes-off-road
 (unreliable). The backend split turning into two labels and, once the model's real output arrived, added `eyes_off_road` back.
+Since 2026-11-07 the model is Dušan's (`rivian_model/`): it sends `phone_use`, `eyes_off_road`, `eyes_closed` (→ `drowsy`) and
+`collapse`. `hands_off_wheel`, `looking_behind` and `turning_around` now come only from the simulators.
 The model now sends its own frame record; the backend maps its categories (`phone_use` → `looking_at_phone`...; the full
 table is in `backend/README.md`, `eating_drinking` is deliberately not scored) and forwards
 its risk, alert and per-category probabilities as `TripState.camera` (display only; may be `null`, may hold unknown category names). The models side maps detections to labels
@@ -74,8 +77,8 @@ Colours suggested by API.md: green `#22C55E`, green_yellow `#A3E635`, yellow `#F
 `python notebooks/safety_client.py [--interval 0.3]` with the backend running. It starts a trip and goes safe → hands off (caution →
 warning) → back to safe → phone (warning → critical) → looking behind + turning at 80 km/h (critical) → phone at 60 (high risk) →
 drowsy at 130 km/h (emergency) → phone while stopped at a light (nothing) → 10 s clean → ends the trip and prints a summary with tips.
-Each phase recovers to safe before the next. **With the mocked car instead:** `python backend/run.py --mock` (test-pattern camera +
-fake model: phone 14–20 s, look away 28–31 s, microsleep 38–41 s, hands off 48–52 s of every minute of a trip).
+Each phase recovers to safe before the next. **With the real car instead:** `.\demo.ps1 -PoVoznji` (each trip started on the phone
+gets the next dataset clip: collapse `05_23_62_031246`, phone `05_23_62_021254`, phone in the lap `05_23_62_005853`).
 
 ## Sections and danger (coordinator, every 2 s; docs/ARCHITECTURE.md)
 

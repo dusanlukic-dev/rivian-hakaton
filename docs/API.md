@@ -600,18 +600,17 @@ Slati ~1/s tokom vožnje, i to **samo ako `GET /speed` vrati `phone_enabled: tru
 a `lat`/`lon` se upisuju u izveštaj. Ovo je za kola bez sopstvene računarske snage, gde telefon zna brzinu.
 
 ### `POST /telemetry`: NIJE za aplikaciju, samo debug [K]
-Ovo zovu simulator (`notebooks/safety_client.py`, `tools/sim.py`) ili, za debug, pipeline CV tima koji sam
-računa rizik (`risk_pipeline.py --mode prod`). Pravi put su kamera i model preko koordinatora
+Ovo zovu simulator (`notebooks/safety_client.py`, `tools/sim.py`) ili, za debug, snimljen tok zapisa modela
+(`safety_client.py --replay frames.jsonl`). Pravi put su kamera i model preko koordinatora
 (`WS /camera/ws` i `WS /model/ws`, vidi ispod), gde rizik računa koordinator. Aplikacija ga ne koristi.
-Dok je model worker povezan, zapis frejma (`frame`) dobija `409`, a labele simulatora i dalje prolaze.
+Dok je model povezan, zapis frejma (`frame`) dobija `409`, a labele simulatora i dalje prolaze.
 Model šalje svoj zapis frejma neizmenjen (bez `perception`), a backend preslikava njegove aktivne
 kategorije na `Behavior` (`phone_use` → `looking_at_phone`, `eyes_closed` i `drowsiness` → `drowsy`...,
 tabela u `backend/README.md`) i prosleđuje `camera` aplikaciji. U `camera.categories` mogu da stignu i
 kategorije koje se ne boduju (npr. `eating_drinking`), pa ih prikaži sirovim imenom.
 `speed_kmh` je opciono i model ga ne šalje: brzinu daje backend (`GET /speed`). Simulator ga šalje
 da bi vožnja kroz nivoe bila ista svaki put.
-Za debug ga šalje `python notebooks/risk_pipeline.py --video 0 --mode prod` (~2/s plus svaka promena
-alarma, i JPEG video na `/video/frames`). Iz istog toka backend pravi i `TripReport.model`.
+Iz istog toka backend pravi i `TripReport.model`.
 
 ### `POST /video/frames`: NIJE za aplikaciju [K]
 Jedan JPEG frejm kamere kao telo (`Content-Type: image/jpeg`), npr. `SafetyClient.send_video_frame`.
@@ -619,8 +618,9 @@ Frejm ide u video keš koordinatora (5 min) i modelu, ako je povezan. Odgovor `2
 aktivne vožnje, `415` ako nije `image/jpeg`, `413` preko 2 MB, `422` ako telo nije JPEG.
 
 ### `WS /camera/ws` i `WS /model/ws`: NISU za aplikaciju [K]
-Kamera šalje jedan JPEG po binarnoj poruci (`tools/camera_stream.py`), a model worker (`model/worker.py`)
-prima frejmove i vraća detekcije. Protokol je u [ARCHITECTURE.md](ARCHITECTURE.md).
+Kamera šalje jedan JPEG po binarnoj poruci (`tools/camera_stream.py`), a model
+(`rivian_model/rivian_detector.py`) prima frejmove i vraća detekcije. Protokol je u [ARCHITECTURE.md](ARCHITECTURE.md).
+Koordinator prima **jednu kameru**: dok jedna šalje, druga konekcija na `WS /camera/ws` je odbijena (HTTP 403).
 
 Primer: ovo aplikacija dobija u `camera` kad tick stigne od modela:
 ```json
@@ -773,16 +773,16 @@ Momenti bez slike (`image_url: null`, npr. nije bilo videa) se prikazuju bez ku�
 
 Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početak vožnje.
 
-## 9. Testiranje bez modela i bez auta
+## 9. Testiranje bez auta
 
 1. U `backend/`: `docker compose up -d` (Postgres + RustFS; ili `.\scripts\services.ps1 start`), pa
    `python run.py` (zapiši IP).
 2. Poveži aplikaciju na taj IP.
-3. **Ceo tok kamera → model → koordinator** bez kamere i bez CV paketa (iz korena repoa, backend venv):
-   `python tools/camera_stream.py` (test slika, 10 fps) i `python model/worker.py --fake` (skriptovane
-   detekcije u krugu od 60 s: telefon, pogled van puta, mikrospavanje, ruke van volana). Pokreni vožnju iz
-   aplikacije. Stižu `state` i `section`, a na kraju izveštaj ima sekcije, momente i slike.
-   Pravi model: `model/README.md`. Snimak umesto test slike: `camera_stream.py --video snimak.mp4`.
+3. **Ceo tok kamera → model → koordinator** sa snimkom iz dataseta (model: `rivian_model/README.md`):
+   `.\demo.ps1 -PoVoznji` u korenu repoa (svaka vožnja iz aplikacije dobija sledeći klip), ili ručno
+   `python tools/camera_stream.py --video <klip>.mp4` i `rivian_model\.venv\Scripts\python.exe
+   rivian_model\rivian_detector.py --camera 05_23`. Pokreni vožnju iz aplikacije. Stižu `state` i
+   `section`, a na kraju izveštaj ima sekcije, momente i slike.
 4. **Simulator bez videa:** `python notebooks/safety_client.py` (sa `--interval 0.3` ide brže).
    Simulator sam pokrene vožnju, prođe kroz sve nivoe od zelenog do uzbune i završi vožnju.
    Šalje samo labele, pa je `camera` tada `null`, a sekcije nemaju slike.
@@ -790,9 +790,8 @@ Na `404` za sačuvani `trip_id` aplikacija treba da se vrati na ekran za početa
    (`--speedup 2` ide duplo brže, `--speed-kmh 90` zakuca brzinu). Tada `camera` stiže popunjen.
 6. `--backend-speed`: simulator ne šalje brzinu, nego je određuje mock vožnja backenda.
 7. `GET /coordinator/status` pokazuje kameru, model, video keš i isporuku serveru.
-8. Debug: pipeline CV tima na snimku iz kabine, bez telefona: `python notebooks/risk_pipeline.py --video
-   snimak.mp4 --mode prod --start-trip demo` (pokrene i završi vožnju sam, ide brzinom snimka i šalje video).
-   Rizik tada računa pipeline, ne koordinator. Radi samo bez model worker-a (inače `409`).
+8. Bez telefona: `rivian_model/run_compare.py --port 8000 --clip <klip>.mp4 --label x --out <folder>` pokrene
+   vožnju, pusti klip kroz kameru 30 s, završi vožnju i ispiše rezime i intervale ponašanja.
 
 Simulator pokreće svoju vožnju, pa završava vožnju koju je aplikacija eventualno pokrenula
 (pravilo jedne aktivne vožnje). Ne puštaj simulator i model istovremeno: oba boduju istu vožnju.

@@ -102,9 +102,11 @@ narukvica).
 ## Pokretanje
 
 ```powershell
-# iz korena repoa, svako u svom prozoru (zavisnosti gateway-a su u backend\.venv); start.ps1 stiže sa podelom foldera
+# ceo auto (skladište, server, koordinator, ovaj gateway, model, kamera), svaki deo u svom prozoru:
+.\demo.ps1 -PoVoznji
+# ili ručno, iz korena repoa (zavisnosti gateway-a su u backend\.venv):
 cd backend; .venv\Scripts\python.exe run.py --role server --port 8001 --no-reload
-cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; .venv\Scripts\python.exe run.py --role coordinator --mock
+cd backend; $env:SERVER_URL='http://127.0.0.1:8001/api/v1'; .venv\Scripts\python.exe run.py --role coordinator
 backend\.venv\Scripts\python.exe backend\coordinator\car_link\gateway.py --name "Rivian demo car"
 ```
 
