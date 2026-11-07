@@ -70,7 +70,8 @@ server `localhost:8001` over USB.
 10. **Polish:** landscape layout for a dash mount, app icon/splash, haptic patterns per level, the dashboard QR for the split addresses.
 11. **When the server really runs outside the car:** outbox on disk, and the phone's two addresses or a reverse proxy
     (`docs/ARCHITECTURE.md` → Planirano).
-12. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, weekly stats / streaks, driver leaderboard (analytics endpoint).
+12. Stretch: SYSTEM_ALERT_WINDOW bring-to-front during phone use, streaks, driver leaderboard (analytics endpoint). Trends over
+    recent trips are done (D51): check the card on the A54 with a few real trips.
 
 ## In progress
 
@@ -258,3 +259,8 @@ server `localhost:8001` over USB.
   adb reverse keeper; `run.py` explains a taken or reserved port; test tools use free ports; `tools/reserve-ports.ps1`. Pulled
   Djolekapppp's `frontend/video-sim`. Verified: 108 backend + 38 gateway tests, offline detector on CPU and GPU, live runs on 5 clips,
   demo.ps1 restart twice, adb keeper restores a removed port in < 5 s.
+- 2026-11-07, session 12 (Claude, for the user): **Drive-screen trends card** (D51): `frontend/mobile/src/components/trends.tsx` +
+  `src/lib/trends.ts`, from `GET /trips`, shown whenever no trip runs. Ranges Last 5 / Last 10 / 30 days, test trips < 20 s left
+  out; average score with the trend (recent half vs earlier), a bar per trip coloured by its level (tap → that trip), clean trips /
+  risky moments / driving time / emergencies, top 3 risks with more / fewer, and the tip for the biggest one. Verified: typecheck,
+  lint, the math on sample trips. **Not yet seen on the A54** (no Metro/server running at the time).

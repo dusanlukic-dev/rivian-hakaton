@@ -309,3 +309,14 @@ clean (closes its own earlier 'demo:' windows and stale backends from this repo,
 reserved ranges up front, and keeps `adb reverse` 8081/8000/8001 alive in a small window; `run.py` names the problem
 (owner PID or reserved range) instead of a raw bind error; test tools use OS-assigned ports. `tools/reserve-ports.ps1`
 (admin, once) makes our ports administered exclusions so Windows can't reserve them.
+
+**D51: Driver trends on the Drive screen, computed in the app (2026-11-07).** User: a card on the Drive/home screen that sums up
+the last few trips (filtered by the system as needed) and shows the trends in this driver's risk. Alternatives: a new
+trends endpoint on the server, or computing it in the app from `GET /trips`. Chose the app: `GET /trips` already returns every
+`TripSummary` of the account (average score, level, duration, behaviors with occurrences and tips), the history is tiny (tens
+of trips), and the contract stays untouched. Rules (`frontend/mobile/src/lib/trends.ts`): only finished trips of at least 20 s
+count (test starts are left out, the card says how many); ranges Last 5 / Last 10 / 30 days; the average is weighted by trip
+length; the trend is the recent half minus the earlier half (middle trip of an odd count in neither), steady within 2 points,
+shown from 4 trips; a behavior's direction compares occurrences per driving minute (x1.25 = more/fewer). Bars are coloured by
+each trip's backend `level`; the app never makes a level for the aggregate. If the history grows large, or the dashboard needs
+the same numbers, move this to a server endpoint.

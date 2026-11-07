@@ -152,3 +152,10 @@ What changed for the apps (both `src/api/types.ts` re-copied from §4 the same d
 - The `emergency` level/event (score 0, contact alerted) comes only from a confirmed collapse; everything else bottoms out at
   `critical` (score >= 10). The apps' generic emergency copy is now effectively the collapse path. §4 comment re-copied in both apps.
 - `GET /coordinator/status` → `model.device` ("gpu (DirectML)", "cpu") when the model says it in its hello (optional field).
+
+## Trends card (2026-11-07, D51)
+
+- The Drive screen's trends card uses only `GET /trips` (my trips, oldest first, includes the active one). It relies on
+  `status`/`ended_at` to skip the active trip, `duration_s` (incl. standing time) as the weight, `average_score` + `level` per
+  trip, and `behaviors[].occurrences` / `tip`. No new fields. A server-side trends route would only be worth it for a long
+  history or to share the numbers with the dashboard.

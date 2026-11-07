@@ -9,6 +9,7 @@ import { ApiError, api } from '@/api/client';
 import type { TripState, TripSummary } from '@/api/types';
 import { BehaviorGrid, Indicators, Lamp, LevelBar, ScoreBadge, StatusPill } from '@/components/dashboard';
 import { RecentSections } from '@/components/report';
+import { TrendsCard } from '@/components/trends';
 import { Banner, Button, Card, Screen, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
@@ -115,6 +116,9 @@ export default function DriveScreen() {
       ) : (
         <Offline address={address} />
       )}
+
+      {/* History lives on the server, not in the car: show the trends whenever no trip runs. */}
+      {trip ? null : <TrendsCard />}
     </Screen>
   );
 }
