@@ -5,15 +5,16 @@ import { StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { openAppSettings } from '@/alerts/notifications';
-import { normalizeAddress } from '@/api/address';
+import { parseConnectLink } from '@/api/address';
 import { Button, Card, Icon, Screen, STACK_EDGES, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { settingsStore } from '@/state/settings';
 import { colors, radius } from '@/theme/colors';
 
 /**
- * Reads the QR code on the car screen (web dashboard, "Connect phone" card): payload "<lan-ip>:8000", any URL form
- * also works. Saves it as the car computer's address and goes back to the connection screen, which reconnects.
+ * Reads the QR code on the car screen (web dashboard, "Connect phone" card):
+ * `driveralert://connect?server=<host:port>&car=<host:port>` sets the server's and the car computer's addresses.
+ * A bare address (the older QR code, any URL form) is the car computer's. Then goes back to the screen that opened it.
  */
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions();
@@ -49,10 +50,10 @@ export default function ScanScreen() {
           done
             ? undefined
             : ({ data }) => {
-                const address = normalizeAddress(data);
-                if (!address) return;
+                const link = parseConnectLink(data);
+                if (!link) return;
                 setDone(true);
-                settingsStore.set({ address });
+                settingsStore.set(link);
                 router.back();
               }
         }

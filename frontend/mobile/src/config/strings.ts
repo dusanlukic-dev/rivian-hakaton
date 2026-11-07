@@ -1,5 +1,6 @@
 import type { Behavior, SafetyLevel, SoundLevel } from '@/api/types';
 import type { LinkState } from '@/state/live';
+import type { ServerStatus } from '@/state/server';
 
 import { brand } from './brand';
 
@@ -97,7 +98,7 @@ export const strings = {
     title: 'Your drive',
     hint: 'Score over the trip. Shaded = risky driving. Tap a dot or a picture to see that moment.',
     loading: 'Loading the drive…',
-    unavailable: "The drive chart isn't available: the car computer's storage is offline.",
+    unavailable: "The drive chart isn't available right now: the server or its storage can't be reached.",
     empty: 'No driving recorded yet.',
     dangerous: 'Dangerous',
     critical: 'Critical',
@@ -165,6 +166,7 @@ export const strings = {
     taken: (username: string) => `The username ${username} is taken. Pick another one.`,
     unreachable: (address: string) => `Can't reach the server at ${address}.`,
     changeAddress: 'Change address',
+    serverSettings: 'Server settings',
   },
   settings: {
     title: 'Settings',
@@ -198,6 +200,8 @@ export const strings = {
     systemSettings: 'Open system app settings',
     about: 'About',
     version: 'Version',
+    server: 'Server',
+    serverRow: 'Accounts, trip history and drive reports',
   },
   /** The connection screen (Settings → Car computer, or "Change address" on the login screen). A debug tool. */
   carComputer: {
@@ -226,5 +230,29 @@ export const strings = {
     grant: 'Allow camera',
     blocked: 'Camera access is turned off for this app. Turn it on in the system app settings.',
     openSettings: 'Open system app settings',
+  },
+  /** The Server screen (the gear on the login screen, Settings → Server, or "Change address" when login can't reach it). */
+  server: {
+    title: 'Server',
+    intro:
+      'Accounts, trip history and drive reports live on the server. The phone reaches it over the network: the laptop over the hotspot, the USB cable, or a public link.',
+    current: 'Current address',
+    address: 'Address',
+    addressPlaceholder: 'IP address and port, or a link',
+    addressHint: 'The laptop prints it when the server starts. A public https link works too.',
+    save: 'Save',
+    test: 'Test',
+    testOk: (ms: number) => `Reachable in ${ms} ms.`,
+    invalid: 'Enter an IP address and port, like 192.168.1.20:8001, or a link that starts with https://.',
+    saved: (address: string) => `Saved. The app now uses the server at ${address}.`,
+    quickSetup: 'Quick setup',
+    scanTitle: 'Scan the QR code on the car screen',
+    scanBody: 'Opens the camera. The Connect phone card on the car screen sets the server and the car addresses in one go.',
+    usbTitle: 'Use the USB cable',
+    usbBody: 'Sets the address to localhost:8001. The laptop has to forward the port with adb reverse tcp:8001 tcp:8001.',
+    usbDone: 'Address set to localhost:8001.',
+    status: { unknown: 'Checking…', online: 'Reachable', offline: 'Not reachable' } satisfies Record<ServerStatus, string>,
+    unreachable: (address: string) => `Can't reach the server at ${address}. Check the address and the network.`,
+    timedOut: (address: string) => `Timed out reaching the server at ${address}. Is it running?`,
   },
 };

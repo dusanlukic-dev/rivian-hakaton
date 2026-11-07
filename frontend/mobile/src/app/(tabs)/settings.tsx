@@ -10,7 +10,9 @@ import {
   openDndSettings,
   openFullScreenSettings,
 } from '@/alerts/notifications';
+import { api } from '@/api/client';
 import { StatusPill } from '@/components/dashboard';
+import { ServerStatusPill } from '@/components/server';
 import {
   Button,
   Card,
@@ -29,7 +31,7 @@ import {
 import { strings } from '@/config/strings';
 import { runTestAlert, stopTestAlert, useLive } from '@/state/live';
 import { refreshPermissions, usePermissions, watchPermissions } from '@/state/permissions';
-import { settingsStore, useSettings, type Settings } from '@/state/settings';
+import { settingsStore, useSettings, type AlertToggle } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
 export default function SettingsScreen() {
@@ -72,6 +74,8 @@ export default function SettingsScreen() {
         />
       </Card>
 
+      <ServerSection />
+
       <AlertToggles />
 
       <SectionLabel>{strings.settings.tryAlerts}</SectionLabel>
@@ -105,7 +109,39 @@ export default function SettingsScreen() {
   );
 }
 
-const TOGGLES: { key: keyof Omit<Settings, 'address'>; icon: IconName; label: string }[] = [
+/** The server (accounts, history, drive reports): its address and whether it answers. Opens the Server screen. */
+function ServerSection() {
+  const serverAddress = useSettings((s) => s.serverAddress);
+
+  // Fresh reachability for the pill whenever Settings opens. Silent: the pill keeps its last value until the answer.
+  useFocusEffect(
+    useCallback(() => {
+      api.serverHealth(serverAddress).catch(() => {});
+    }, [serverAddress]),
+  );
+
+  return (
+    <>
+      <SectionLabel>{strings.settings.server}</SectionLabel>
+      <Card flush>
+        <ListRow
+          icon="server-network"
+          title={serverAddress}
+          subtitle={strings.settings.serverRow}
+          right={
+            <View style={styles.rowEnd}>
+              <ServerStatusPill address={serverAddress} />
+              <Chevron />
+            </View>
+          }
+          onPress={() => router.push('/server')}
+        />
+      </Card>
+    </>
+  );
+}
+
+const TOGGLES: { key: AlertToggle; icon: IconName; label: string }[] = [
   { key: 'sound', icon: 'volume-high', label: strings.settings.sound },
   { key: 'vibration', icon: 'vibrate', label: strings.settings.vibration },
   { key: 'flash', icon: 'alarm-light', label: strings.settings.flash },

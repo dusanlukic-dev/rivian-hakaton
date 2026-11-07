@@ -20,7 +20,7 @@ export default function ProfileScreen() {
   useFocusEffect(
     useCallback(() => {
       api
-        .me(settingsStore.get().address)
+        .me(settingsStore.get().serverAddress)
         .then(setUser)
         .catch(() => {});
     }, []),
@@ -78,7 +78,7 @@ function ProfileForm({ user }: { user: User }) {
     setError(null);
     const phone = form.contactPhone.trim();
     try {
-      const next = await api.updateMe(settingsStore.get().address, {
+      const next = await api.updateMe(settingsStore.get().serverAddress, {
         display_name: form.name.trim() || user.username,
         emergency_contact: phone ? { name: form.contactName.trim() || strings.profile.contactFallback, phone } : null,
       });
@@ -96,7 +96,7 @@ function ProfileForm({ user }: { user: User }) {
     setLeaving(true);
     const token = authStore.get().token;
     // Best effort: the server forgets the token; offline, the phone forgets it anyway.
-    if (token) await api.logout(settingsStore.get().address).catch(() => {});
+    if (token) await api.logout(settingsStore.get().serverAddress).catch(() => {});
     liveStore.set({ summary: null }); // the next driver on this phone shouldn't see my last trip
     signedOut(); // the root layout's guard shows the login screen
   }

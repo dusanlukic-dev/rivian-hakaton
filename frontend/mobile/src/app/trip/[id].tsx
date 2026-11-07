@@ -18,7 +18,7 @@ type ReportState = { status: 'loading' } | { status: 'ok'; report: TripReport } 
 
 export default function TripSummaryScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
-  const address = useSettings((s) => s.address);
+  const address = useSettings((s) => s.serverAddress);
   const cached = useLive((s) => (s.summary?.trip_id === id ? s.summary : null));
   const [fetched, setFetched] = useState<TripSummary | null>(null);
   const [error, setError] = useState<string | null>(null);

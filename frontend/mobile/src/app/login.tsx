@@ -1,7 +1,8 @@
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useRef, useState } from 'react';
-import { Keyboard, StyleSheet, View, type TextInputInstance } from 'react-native';
+import { Keyboard, Pressable, StyleSheet, View, type TextInputInstance } from 'react-native';
 import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ApiError, api } from '@/api/client';
 import { Banner, Button, Card, FULL_EDGES, Icon, Screen, TextField, TextLink, Txt } from '@/components/ui';
@@ -22,11 +23,12 @@ const layout = LinearTransition.duration(200);
 
 /**
  * Shown whenever there is no token (root layout guard); logging in or registering switches to the app.
- * Nothing about the car computer here: the address is a setup detail. It only shows up as "Change address" when
- * the server can't be reached.
+ * Nothing about the car computer here. The server's address is a setup detail: a small gear in the corner opens it,
+ * and "Change address" shows up when the server can't be reached.
  */
 export default function LoginScreen() {
-  const address = useSettings((s) => s.address);
+  const address = useSettings((s) => s.serverAddress);
+  const insets = useSafeAreaInsets();
   const [mode, setMode] = useState<Mode>('login');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -83,108 +85,119 @@ export default function LoginScreen() {
   }
 
   return (
-    <Screen edges={FULL_EDGES} contentStyle={styles.content}>
-      <Animated.View layout={layout} style={styles.brand}>
-        <View style={styles.logo}>
-          <Icon name="steering" size={40} color={colors.foreground} />
-        </View>
-        <Txt size="xs" tone="subtle" weight="800" style={styles.kicker}>
-          {strings.appName.toUpperCase()}
-        </Txt>
-        <Txt size="xl" style={styles.center}>
-          {registering ? strings.auth.registerTitle : strings.auth.loginTitle}
-        </Txt>
-        <Txt size="sm" tone="muted" style={styles.center}>
-          {registering ? strings.auth.registerSubtitle : strings.auth.loginSubtitle}
-        </Txt>
-      </Animated.View>
-
-      {error ? (
-        <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} layout={layout}>
-          <Banner
-            icon={error.unreachable ? 'lan-disconnect' : 'alert-circle-outline'}
-            text={error.text}
-            color={colors.destructive}
-            action={error.unreachable ? { label: strings.auth.changeAddress, onPress: () => router.push('/connection') } : undefined}
-          />
+    <View style={styles.fill}>
+      <Screen edges={FULL_EDGES} contentStyle={styles.content}>
+        <Animated.View layout={layout} style={styles.brand}>
+          <View style={styles.logo}>
+            <Icon name="steering" size={40} color={colors.foreground} />
+          </View>
+          <Txt size="xs" tone="subtle" weight="800" style={styles.kicker}>
+            {strings.appName.toUpperCase()}
+          </Txt>
+          <Txt size="xl" style={styles.center}>
+            {registering ? strings.auth.registerTitle : strings.auth.loginTitle}
+          </Txt>
+          <Txt size="sm" tone="muted" style={styles.center}>
+            {registering ? strings.auth.registerSubtitle : strings.auth.loginSubtitle}
+          </Txt>
         </Animated.View>
-      ) : null}
 
-      <Animated.View layout={layout}>
-        <Card>
-          <TextField
-            label={strings.auth.username}
-            placeholder={strings.auth.usernamePlaceholder}
-            hint={registering ? strings.auth.usernameHint : undefined}
-            error={fieldErrors.username}
-            value={username}
-            onChangeText={(text) => {
-              setUsername(text);
-              if (fieldErrors.username) setFieldErrors((f) => ({ ...f, username: undefined }));
-            }}
-            autoCapitalize="none"
-            autoCorrect={false}
-            autoComplete="username"
-            textContentType="username"
-            returnKeyType="next"
-            submitBehavior="submit"
-            onSubmitEditing={() => (registering ? nameRef : passwordRef).current?.focus()}
-          />
-          {registering ? (
-            <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(120)}>
-              <TextField
-                ref={nameRef}
-                label={strings.auth.name}
-                optional
-                placeholder={strings.auth.namePlaceholder}
-                hint={strings.auth.nameHint}
-                value={name}
-                onChangeText={setName}
-                autoCapitalize="words"
-                autoComplete="name"
-                textContentType="name"
-                returnKeyType="next"
-                submitBehavior="submit"
-                onSubmitEditing={() => passwordRef.current?.focus()}
-              />
-            </Animated.View>
-          ) : null}
-          <Animated.View layout={layout}>
+        {error ? (
+          <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(150)} layout={layout}>
+            <Banner
+              icon={error.unreachable ? 'lan-disconnect' : 'alert-circle-outline'}
+              text={error.text}
+              color={colors.destructive}
+              action={error.unreachable ? { label: strings.auth.changeAddress, onPress: () => router.push('/server') } : undefined}
+            />
+          </Animated.View>
+        ) : null}
+
+        <Animated.View layout={layout}>
+          <Card>
             <TextField
-              ref={passwordRef}
-              label={strings.auth.password}
-              secure
-              hint={registering ? strings.auth.passwordHint : undefined}
-              error={fieldErrors.password}
-              value={password}
+              label={strings.auth.username}
+              placeholder={strings.auth.usernamePlaceholder}
+              hint={registering ? strings.auth.usernameHint : undefined}
+              error={fieldErrors.username}
+              value={username}
               onChangeText={(text) => {
-                setPassword(text);
-                if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined }));
+                setUsername(text);
+                if (fieldErrors.username) setFieldErrors((f) => ({ ...f, username: undefined }));
               }}
               autoCapitalize="none"
               autoCorrect={false}
-              autoComplete={registering ? 'new-password' : 'current-password'}
-              textContentType={registering ? 'newPassword' : 'password'}
-              returnKeyType="go"
-              onSubmitEditing={() => void submit()}
+              autoComplete="username"
+              textContentType="username"
+              returnKeyType="next"
+              submitBehavior="submit"
+              onSubmitEditing={() => (registering ? nameRef : passwordRef).current?.focus()}
             />
-          </Animated.View>
-        </Card>
-      </Animated.View>
+            {registering ? (
+              <Animated.View entering={FadeIn.duration(200)} exiting={FadeOut.duration(120)}>
+                <TextField
+                  ref={nameRef}
+                  label={strings.auth.name}
+                  optional
+                  placeholder={strings.auth.namePlaceholder}
+                  hint={strings.auth.nameHint}
+                  value={name}
+                  onChangeText={setName}
+                  autoCapitalize="words"
+                  autoComplete="name"
+                  textContentType="name"
+                  returnKeyType="next"
+                  submitBehavior="submit"
+                  onSubmitEditing={() => passwordRef.current?.focus()}
+                />
+              </Animated.View>
+            ) : null}
+            <Animated.View layout={layout}>
+              <TextField
+                ref={passwordRef}
+                label={strings.auth.password}
+                secure
+                hint={registering ? strings.auth.passwordHint : undefined}
+                error={fieldErrors.password}
+                value={password}
+                onChangeText={(text) => {
+                  setPassword(text);
+                  if (fieldErrors.password) setFieldErrors((f) => ({ ...f, password: undefined }));
+                }}
+                autoCapitalize="none"
+                autoCorrect={false}
+                autoComplete={registering ? 'new-password' : 'current-password'}
+                textContentType={registering ? 'newPassword' : 'password'}
+                returnKeyType="go"
+                onSubmitEditing={() => void submit()}
+              />
+            </Animated.View>
+          </Card>
+        </Animated.View>
 
-      <Animated.View layout={layout} style={styles.actions}>
-        <Button
-          label={registering ? strings.auth.register : strings.auth.login}
-          icon={registering ? 'account-plus' : 'login'}
-          loading={busy}
-          onPress={() => void submit()}
-        />
-        <View style={styles.switchRow}>
-          <Txt tone="muted">{registering ? strings.auth.haveAccount : strings.auth.newHere}</Txt>
-          <TextLink label={registering ? strings.auth.toLogin : strings.auth.toRegister} onPress={switchMode} />
-        </View>
-      </Animated.View>
-    </Screen>
+        <Animated.View layout={layout} style={styles.actions}>
+          <Button
+            label={registering ? strings.auth.register : strings.auth.login}
+            icon={registering ? 'account-plus' : 'login'}
+            loading={busy}
+            onPress={() => void submit()}
+          />
+          <View style={styles.switchRow}>
+            <Txt tone="muted">{registering ? strings.auth.haveAccount : strings.auth.newHere}</Txt>
+            <TextLink label={registering ? strings.auth.toLogin : strings.auth.toRegister} onPress={switchMode} />
+          </View>
+        </Animated.View>
+      </Screen>
+      {/* The one setup control before login (the user asked for it): the server's address. Fixed to the corner, it doesn't scroll. */}
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={strings.auth.serverSettings}
+        hitSlop={8}
+        onPress={() => router.push('/server')}
+        style={({ pressed }) => [styles.gear, { top: insets.top + 8, right: insets.right + 12 }, pressed && styles.pressed]}>
+        <Icon name="cog-outline" size={24} color={colors.muted} />
+      </Pressable>
+    </View>
   );
 }
 
@@ -198,7 +211,17 @@ function describe(e: unknown, username: string, address: string): FormError {
 }
 
 const styles = StyleSheet.create({
+  fill: { flex: 1 },
   content: { flexGrow: 1, justifyContent: 'center', paddingVertical: 24 },
+  gear: {
+    position: 'absolute',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  pressed: { opacity: 0.6 },
   brand: { alignItems: 'center', gap: 6, paddingBottom: 8 },
   logo: {
     width: 76,

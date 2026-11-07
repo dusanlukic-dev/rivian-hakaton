@@ -66,6 +66,10 @@ export default function RootLayout() {
               {/* Reachable signed in (Settings) and signed out (login → "Change address"). */}
               <Stack.Screen name="connection" options={{ title: strings.carComputer.title }} />
               <Stack.Screen name="scan" options={{ title: strings.scan.title, presentation: 'modal' }} />
+              {/* The server's address: login's gear and "Change address", or Settings → Server. */}
+              <Stack.Screen name="server" options={{ title: strings.server.title }} />
+              {/* driveralert://connect?server=…&car=… (the car screen's QR code, scanned with the camera app). */}
+              <Stack.Screen name="connect" options={{ headerShown: false, animation: 'none' }} />
             </Stack>
           ) : null}
           {ready && signedIn ? <AlertOverlays /> : null}

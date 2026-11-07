@@ -13,7 +13,7 @@ import { colors, radius } from '@/theme/colors';
 
 /** My trips (GET /trips with the login token), newest first. The badge is the average score while driving. */
 export default function HistoryScreen() {
-  const address = useSettings((s) => s.address);
+  const address = useSettings((s) => s.serverAddress);
   const [trips, setTrips] = useState<TripSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
