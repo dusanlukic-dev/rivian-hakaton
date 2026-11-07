@@ -1,0 +1,6 @@
+# Modeli se ne cuvaju u gitu (kao notebooks/models): napravi ih sa python setup_models.py
+*.onnx
+*.task
+*.pt
+__pycache__/
+out*/
