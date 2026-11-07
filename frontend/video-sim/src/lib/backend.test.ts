@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { strings } from '@/strings'
-import { backendLabel, ensureTrip, getStatus, startTrip, toWsUrl } from './backend'
+import { backendLabel, getActiveTrip, getStatus, startTrip, toWsUrl } from './backend'
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
@@ -11,18 +11,19 @@ describe('toWsUrl', () => {
     expect(toWsUrl('http://localhost:8000')).toBe('ws://localhost:8000/api/v1/camera/ws')
     expect(toWsUrl('https://abc.ngrok.app/')).toBe('wss://abc.ngrok.app/api/v1/camera/ws')
   })
+  it('builds the live socket url', () => {
+    expect(toWsUrl('http://localhost:5174', '/ws')).toBe('ws://localhost:5174/api/v1/ws')
+  })
 })
 
-describe('ensureTrip', () => {
-  it('uses the active trip and starts none', async () => {
-    const api = { getStatus: vi.fn().mockResolvedValue({ trip_id: 't1' }), startTrip: vi.fn() }
-    await expect(ensureTrip(api)).resolves.toEqual({ tripId: 't1', started: false })
-    expect(api.startTrip).not.toHaveBeenCalled()
+describe('getActiveTrip', () => {
+  it('is the trip_id of the coordinator status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(200, { trip_id: 't1', camera: {} })))
+    await expect(getActiveTrip()).resolves.toBe('t1')
   })
-  it('starts a trip only when none is active', async () => {
-    const api = { getStatus: vi.fn().mockResolvedValue({ trip_id: null }), startTrip: vi.fn().mockResolvedValue({ trip_id: 't2' }) }
-    await expect(ensureTrip(api)).resolves.toEqual({ tripId: 't2', started: true })
-    expect(api.startTrip).toHaveBeenCalledTimes(1)
+  it('is null without a trip', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(json(200, { trip_id: null })))
+    await expect(getActiveTrip()).resolves.toBeNull()
   })
 })
 

@@ -17,21 +17,25 @@ npm run lint
 
 | Path | What |
 |---|---|
-| `config.ts` | FPS 10, MAX_WIDTH 1280, JPEG 0.8 (fallback 0.5), clips ≤ 120 s, 2 MB frame limit, 1 MB socket buffer limit, progress every 250 ms, driver `video-sim` |
+| `config.ts` | FPS 10, MAX_WIDTH 1280, JPEG 0.8 (fallback 0.5), clips ≤ 120 s, 2 MB frame limit, 1 MB socket buffer limit, progress every 250 ms, driver `video-sim`, camera socket retries (6 × 400 ms), live socket reconnect 2 s |
 | `strings.ts` | every user-facing string (English) |
 | `lib/frames.ts` | `frameTimes`, `fitSize`, `durationError` (pure) and `extractFrames` (DOM: plays the clip at 4×, grabs frames with `requestVideoFrameCallback`) |
 | `lib/schedule.ts` | `startSchedule`: frame i at t0 + i / fps; a late wake-up jumps to the newest due frame |
-| `lib/senderCore.ts` | `runSender`: socket + schedule + skip while `bufferedAmount` is high; `progress` / `done` / `error`; worker message types |
+| `lib/senderCore.ts` | `runSender`: socket + schedule + skip while `bufferedAmount` is high; retries a socket refused before it opens; `progress` / `done` / `error`; worker message types |
 | `lib/sender.worker.ts`, `lib/sender.ts` | the worker shell (real WebSocket, `performance.now`) and the page side (`startSending`) |
-| `lib/backend.ts` | `apiBase`, `cameraSocketUrl`, `getStatus`, `startTrip`, `ensureTrip` |
-| `lib/controller.ts` | the page flow (empty → preparing → ready → starting → sending); numbered runs drop stale callbacks |
-| `useVideoSim.ts`, `App.tsx` | the controller wired to React (`useSyncExternalStore`) and the page |
+| `lib/backend.ts` | `apiBase`, `cameraSocketUrl`, `liveSocketUrl`, `getStatus`, `getActiveTrip`, `startTrip` |
+| `lib/tripEvents.ts` | `watchTrips` on `WS /api/v1/ws`: `started` (trip_started), `ended` (trip_ended), `ticked` (a `state` with `speed_source`, i.e. already scored); reconnects |
+| `lib/controller.ts` | the page flow (empty → preparing → ready → starting → sending); numbered runs drop stale callbacks; **one clip = one trip** (`usedTrips`): Send uses the trip in progress only while unused, else `POST /trips`; a trip started elsewhere (the phone) gets the clip from the start; its trip_ended stops sending |
+| `useVideoSim.ts`, `App.tsx` | the controller and the trip watcher wired to React (`useSyncExternalStore`) and the page |
 | `test/fakeClock.ts` | test clock (`advance`, `jumpTo`) |
 
 ## Rules
 
 - The backend doesn't change for this app. It uses only what a real camera and the phone use: `WS /api/v1/camera/ws`,
-  `GET /api/v1/coordinator/status`, `POST /api/v1/trips` (only when no trip is active: it ends the one in progress).
+  `WS /api/v1/ws` (read-only: trip starts/ends), `GET /api/v1/coordinator/status`, `POST /api/v1/trips` (it ends the
+  trip in progress).
+- **The score starts at 100 with every clip** (user's rule, 2026-11-07): a clip never goes into a trip that already had
+  frames. The coordinator resets score, risk engine and model per trip, so a new trip is the reset.
 - Never send faster than real time: the backend's timing (model clock, behaviour durations, sections) is frame arrival.
 - Sending lives in the worker on purpose: a hidden tab throttles main-thread timers to 1/s.
 - Strings only in `strings.ts`. Theme tokens only (copied from `../dashboard/src/index.css`), no hardcoded white or black.
@@ -49,3 +53,6 @@ npm run lint
 - `controller.dispose()` must leave the controller usable: React StrictMode runs effect cleanups once on mount in dev.
 - Vite only bundles the worker in this exact form: `new Worker(new URL('./sender.worker.ts', import.meta.url), { type: 'module' })`.
 - Send stays on screen (disabled) while sending, so a double click can't land on Stop.
+- The coordinator broadcasts `trip_started` before it answers `POST /trips`, so the page's own new trip arrives as an
+  event first: `ownStarts` (POSTs in flight) and `usedTrips` keep it from being taken for a phone trip.
+- Coordinator order on a new trip: `trip_ended` (old) then `trip_started` (new).

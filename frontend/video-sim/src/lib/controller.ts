@@ -28,7 +28,10 @@ export interface SimState {
 
 export interface ControllerDeps {
   extract(file: File, onProgress: (done: number, total: number) => void, signal: AbortSignal): Promise<ExtractedClip>
-  ensureTrip(): Promise<{ tripId: string; started: boolean }>
+  /** The trip the coordinator runs now, or null */
+  getActiveTrip(): Promise<string | null>
+  /** Starts a new trip (the coordinator ends the one in progress) and returns its id */
+  startTrip(): Promise<string>
   startSending(job: Omit<SendJob, 'url'>, onEvent: (event: SenderEvent) => void): () => void
   objectUrl: { create(file: File): string; revoke(url: string): void }
   /** The preview <video>, once it is on the page */
@@ -41,10 +44,16 @@ export interface Controller {
   getState(): SimState
   subscribe(listener: () => void): () => void
   chooseFile(file: File): void
-  /** Only from `ready` */
+  /** Only from `ready`. Into the trip in progress if it hasn't had a clip yet, otherwise into a new trip */
   send(): void
   /** Only from `starting` or `sending` */
   stop(): void
+  /** WS trip_started: a trip someone else started (the phone) gets the loaded clip from the start */
+  tripStarted(tripId: string): void
+  /** WS trip_ended: sending into that trip stops */
+  tripEnded(tripId: string): void
+  /** WS state after the first tick: the trip already had frames, so Send won't use it */
+  tripTicked(tripId: string): void
   /** Stops everything and frees the URL, but stays usable: StrictMode runs effect cleanups once on mount in dev */
   dispose(): void
 }
@@ -56,6 +65,10 @@ const message = (error: unknown) => (error instanceof Error ? error.message : St
 /**
  * The page's flow: file → preparing → ready → starting → sending → ready. Every extraction and every send is a run
  * with its own number; a callback or sender event from an older run (a replaced file, a stopped send) is dropped.
+ *
+ * One clip = one trip: a trip that already got a clip from this page never gets another one, because the score has to
+ * start at 100 with every clip (the coordinator starts every trip fresh: score, risk engine, model). So Send starts a
+ * new trip unless the trip in progress is still unused, and a trip the phone starts gets the loaded clip at once.
  */
 export function createController(deps: ControllerDeps): Controller {
   let state = INITIAL
@@ -65,6 +78,12 @@ export function createController(deps: ControllerDeps): Controller {
   let sendRun = 0
   let stopSender: (() => void) | null = null
   let lastCounts = { sent: 0, skipped: 0 }
+  /** Trips that already got a clip from this page, or were scored before (tripTicked) */
+  const usedTrips = new Set<string>()
+  /** The trip the running send goes into */
+  let sendingTrip: string | null = null
+  /** POST /trips calls of this page in flight: their trip_started arrives before the response, and isn't the phone's */
+  let ownStarts = 0
 
   const set = (patch: Partial<SimState>) => {
     state = { ...state, ...patch }
@@ -75,6 +94,7 @@ export function createController(deps: ControllerDeps): Controller {
     sendRun++
     stopSender?.()
     stopSender = null
+    sendingTrip = null
   }
 
   const cancelExtract = () => {
@@ -91,6 +111,7 @@ export function createController(deps: ControllerDeps): Controller {
   const finishSend = (patch: Partial<SimState>) => {
     sendRun++
     stopSender = null
+    sendingTrip = null
     deps.preview()?.pause()
     set({ phase: 'ready', ...patch })
   }
@@ -139,27 +160,64 @@ export function createController(deps: ControllerDeps): Controller {
       })
   }
 
+  /** Streams the clip from its first frame into `tripId`, which counts as used from now on */
+  const beginSend = (clip: Clip, tripId: string, note: string) => {
+    const run = sendRun
+    usedTrips.add(tripId)
+    sendingTrip = tripId
+    lastCounts = { sent: 0, skipped: 0 }
+    set({ phase: 'starting', sentS: 0, note, error: null })
+    stopSender = deps.startSending({ frames: clip.frames, fps: deps.fps }, (event) => {
+      if (run === sendRun) onSenderEvent(event)
+    })
+  }
+
+  /** The unused trip in progress, or a new one */
+  const pickTrip = async (run: number): Promise<{ tripId: string; note: string } | null> => {
+    const active = await deps.getActiveTrip()
+    if (run !== sendRun) return null
+    if (active && !usedTrips.has(active)) return { tripId: active, note: strings.activeTrip }
+    ownStarts++
+    try {
+      const tripId = await deps.startTrip()
+      usedTrips.add(tripId) // even if Stop came meanwhile: its trip_started must not start the clip by itself
+      return run === sendRun ? { tripId, note: strings.startedTrip } : null
+    } finally {
+      ownStarts--
+    }
+  }
+
   const send = () => {
     const clip = state.clip
     if (state.phase !== 'ready' || !clip) return
     cancelSend()
     const run = sendRun
-    lastCounts = { sent: 0, skipped: 0 }
     set({ phase: 'starting', sentS: 0, note: null, error: null })
 
-    deps
-      .ensureTrip()
-      .then(({ started }) => {
-        if (run !== sendRun) return
-        set({ note: started ? strings.startedTrip : strings.activeTrip })
-        stopSender = deps.startSending({ frames: clip.frames, fps: deps.fps }, (event) => {
-          if (run === sendRun) onSenderEvent(event)
-        })
+    pickTrip(run)
+      .then((picked) => {
+        if (picked && run === sendRun) beginSend(clip, picked.tripId, picked.note)
       })
       .catch((error: unknown) => {
         if (run !== sendRun) return
         set({ phase: 'ready', error: message(error) })
       })
+  }
+
+  const tripStarted = (tripId: string) => {
+    const clip = state.clip
+    if (!clip || ownStarts > 0 || usedTrips.has(tripId)) return
+    if (state.phase !== 'ready' && state.phase !== 'starting' && state.phase !== 'sending') return
+    cancelSend() // a clip still running belongs to the previous trip: the new one gets it from the start
+    deps.preview()?.pause()
+    beginSend(clip, tripId, strings.phoneTrip)
+  }
+
+  const tripEnded = (tripId: string) => {
+    if (sendingTrip !== tripId) return
+    cancelSend()
+    deps.preview()?.pause()
+    set({ phase: 'ready', note: strings.tripEnded })
   }
 
   const stop = () => {
@@ -189,6 +247,9 @@ export function createController(deps: ControllerDeps): Controller {
     chooseFile,
     send,
     stop,
+    tripStarted,
+    tripEnded,
+    tripTicked: (tripId) => void usedTrips.add(tripId),
     dispose,
   }
 }

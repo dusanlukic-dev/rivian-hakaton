@@ -140,3 +140,20 @@ Stanja: `empty → preparing → ready → starting → sending → ready`, uz r
 
 Izmene backenda, upload fajla na server, više klipova ili red, pamćenje klipova, prikaz score-a ili poruka sa `/ws`,
 podešavanje fps-a i kvaliteta iz UI-ja, automatski kraj vožnje, puštanje ukrug.
+
+## Izmena 2026-11-07 (posle): jedan klip = jedna vožnja
+
+Zahtev korisnika: kad krene nova vožnja, odnosno novi klip, score mora da krene od 100. Koordinator već pravi svaku
+vožnju od nule (score, `RiskEngine`, `reset` modelu), ali je sajt slao drugi klip u istu vožnju, pa je score nastavljao
+od poslednjeg stanja (npr. 16.4 posle klipa sa telefonom). Ovim se menjaju odluke "Vožnja" i "Prikaz" iz tabele iznad:
+
+| Pitanje | Nova odluka |
+|---|---|
+| Vožnja | klip ide samo u vožnju koja još nije dobila frejmove. Send: neiskorišćena vožnja u toku, inače `POST /trips` (`video-sim`) |
+| Vožnja sa telefona | sajt sluša `WS /api/v1/ws` samo za `trip_started` / `trip_ended` / `state` sa `speed_source`. Nova vožnja sa telefona odmah dobija učitani klip od početka, pa ostaje na nalogu (History, izveštaj) |
+| Kraj vožnje | `trip_ended` vožnje u koju se šalje zaustavlja slanje |
+| Iskorišćena vožnja | ona u koju je sajt slao, ili za koju je video `state` sa `speed_source` (null pre prvog ticka, API.md §4): tako se prepozna i vožnja koju je hranila druga kamera ili stranica pre osvežavanja |
+| Kamera zauzeta | koordinator prima jednu kameru; soket odbijen pre otvaranja se ponavlja (6 × 400 ms), jer stara kamera ume još da se računa odmah posle zaustavljanja |
+
+Provereno na Xiaomiju (2026-11-07): Send u već bodovanu vožnju je napravio novu (100 → 27.9 `critical` na klipu sa
+telefonom), a Start trip na telefonu je sam pokrenuo klip u vožnji naloga (100 → 18.2 `critical`, "Looking at phone").

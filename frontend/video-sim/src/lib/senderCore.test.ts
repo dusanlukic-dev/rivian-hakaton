@@ -5,12 +5,14 @@ import { runSender, type Connect, type SenderEvent } from './senderCore'
 
 class FakeLink {
   url = ''
+  connects = 0
   sent: ArrayBuffer[] = []
   buffered = 0
   closed = false
   handlers: { onOpen(): void; onClose(): void } | null = null
   connect: Connect = (url, handlers) => {
     this.url = url
+    this.connects += 1
     this.handlers = handlers
     return { send: (d) => void this.sent.push(d), bufferedAmount: () => this.buffered, close: () => void (this.closed = true) }
   }
@@ -23,7 +25,7 @@ function setup(count: number) {
   const frames = Array.from({ length: count }, (_, i) => new Uint8Array([0xff, 0xd8, 0xff, i]).buffer)
   const stop = runSender(
     { url: 'ws://car/api/v1/camera/ws', frames, fps: 10 },
-    { connect: link.connect, clock, maxBufferedBytes: 1_000_000, progressEveryMs: 250 },
+    { connect: link.connect, clock, maxBufferedBytes: 1_000_000, progressEveryMs: 250, connectAttempts: 3, connectRetryMs: 400 },
     (e) => void events.push(e),
   )
   return { clock, link, events, frames, stop, open: () => link.handlers!.onOpen() }
@@ -72,10 +74,34 @@ describe('runSender', () => {
     expect(link.sent).toHaveLength(2)
     expect(events.at(-1)).toEqual({ type: 'error', message: strings.errors.lost(0.2) })
   })
-  it('reports a socket that never opened', () => {
-    const { link, events } = setup(3)
+  it('retries a socket refused before it opened (the previous camera still counts) and then sends from frame 0', () => {
+    const { clock, link, events, frames, open } = setup(3)
     link.handlers!.onClose()
+    expect(events).toEqual([])
+    clock.advance(400)
+    expect(link.connects).toBe(2)
+    open()
+    expect(link.sent).toEqual([frames[0]])
+  })
+  it('reports a socket that never opened after every attempt', () => {
+    const { clock, link, events } = setup(3)
+    link.handlers!.onClose()
+    clock.advance(400)
+    link.handlers!.onClose()
+    clock.advance(400)
+    link.handlers!.onClose()
+    expect(link.connects).toBe(3)
     expect(events).toEqual([{ type: 'error', message: strings.errors.cantConnect }])
+    clock.advance(2000)
+    expect(link.connects).toBe(3)
+  })
+  it('stop() during a retry wait connects no more', () => {
+    const { clock, link, events, stop } = setup(3)
+    link.handlers!.onClose()
+    stop()
+    clock.advance(2000)
+    expect(link.connects).toBe(1)
+    expect(events).toEqual([])
   })
   it('stop() closes the socket and reports nothing more', () => {
     const { clock, link, events, stop, open } = setup(10)

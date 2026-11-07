@@ -13,5 +13,13 @@ export const MAX_FRAME_BYTES = 2_000_000
 export const MAX_BUFFERED_BYTES = 1_000_000
 /** The worker reports progress at most this often */
 export const PROGRESS_EVERY_MS = 250
-/** Trips this site starts (only when none is active) belong to this driver, not to an account */
+/** Trips this site starts (Send when no fresh trip is active) belong to this driver, not to an account */
 export const DRIVER_ID = 'video-sim'
+/**
+ * The coordinator takes one camera and refuses a second socket. Right after a send stops (Stop, or the phone started a
+ * new trip mid-clip) the old socket may still count on its side, so a socket refused before it opened is retried
+ */
+export const CONNECT_ATTEMPTS = 6
+export const CONNECT_RETRY_MS = 400
+/** Reconnect delay of the trip-events socket (WS /api/v1/ws) after it closes */
+export const LIVE_RETRY_MS = 2000

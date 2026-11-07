@@ -14,14 +14,19 @@ export function backendLabel(): string {
   return import.meta.env.VITE_API_URL || 'http://localhost:8000'
 }
 
-/** http(s)://host[:port][/] → ws(s)://host[:port]/api/v1/camera/ws */
-export function toWsUrl(httpBase: string): string {
-  return `${httpBase.replace(/\/+$/, '').replace(/^http/, 'ws')}${API_PREFIX}/camera/ws`
+/** http(s)://host[:port][/] → ws(s)://host[:port]/api/v1<path> (default: the camera socket) */
+export function toWsUrl(httpBase: string, path = '/camera/ws'): string {
+  return `${httpBase.replace(/\/+$/, '').replace(/^http/, 'ws')}${API_PREFIX}${path}`
 }
 
 /** The camera socket for this page: through the dev proxy, or straight to VITE_API_URL in a build */
 export function cameraSocketUrl(): string {
   return toWsUrl(apiBase() || location.origin)
+}
+
+/** The live socket the phone and the dashboard listen to: this page only reads trip_started / trip_ended from it */
+export function liveSocketUrl(): string {
+  return toWsUrl(apiBase() || location.origin, '/ws')
 }
 
 /** The part of GET /coordinator/status this site reads */
@@ -45,7 +50,12 @@ export async function getStatus(): Promise<CoordinatorStatus> {
   return (await response.json()) as CoordinatorStatus
 }
 
-/** POST /trips without a login. It ends any trip in progress, so call it only when none is active (ensureTrip) */
+/** The trip the coordinator runs now, or null */
+export async function getActiveTrip(): Promise<string | null> {
+  return (await getStatus()).trip_id
+}
+
+/** POST /trips without a login: a new trip for driver video-sim. It ends the trip in progress, if any */
 export async function startTrip(): Promise<{ trip_id: string }> {
   const response = await request('/trips', {
     method: 'POST',
@@ -66,17 +76,4 @@ async function errorDetail(response: Response): Promise<string> {
     // not JSON
   }
   return `HTTP ${response.status}`
-}
-
-export interface TripApi {
-  getStatus(): Promise<CoordinatorStatus>
-  startTrip(): Promise<{ trip_id: string }>
-}
-
-/** The backend drops camera frames without an active trip: use the one in progress, or start one if there is none */
-export async function ensureTrip(api: TripApi = { getStatus, startTrip }): Promise<{ tripId: string; started: boolean }> {
-  const status = await api.getStatus()
-  if (status.trip_id) return { tripId: status.trip_id, started: false }
-  const trip = await api.startTrip()
-  return { tripId: trip.trip_id, started: true }
 }

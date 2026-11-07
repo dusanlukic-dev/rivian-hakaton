@@ -124,6 +124,8 @@ const App = () => {
           )}
 
           {phase === 'sending' && <Bar value={sentS / clip.durationS} label={strings.progress(sentS, clip.durationS)} />}
+
+          {phase !== 'preparing' && <p className="text-xs text-muted-foreground">{strings.hint}</p>}
         </section>
       )}
 

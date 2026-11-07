@@ -11,8 +11,11 @@ export const strings = {
   chooseAnother: 'Choose another',
   checkingTrip: 'Checking trip…',
   progress: (sentS: number, totalS: number) => `${sentS.toFixed(1)} / ${totalS.toFixed(1)} s`,
-  startedTrip: 'Started trip video-sim',
-  activeTrip: 'Sending into the active trip',
+  hint: 'Every clip gets its own trip, so the score starts at 100. Start a trip on the phone and the clip plays from the start by itself.',
+  startedTrip: 'Started a new trip as video-sim: the score starts at 100',
+  activeTrip: 'Sending into the trip in progress',
+  phoneTrip: 'New trip from the phone: sending the clip from the start',
+  tripEnded: 'The trip ended: sending stopped',
   sentSummary: (sent: number, skipped: number) => `Sent ${sent} frames, ${skipped} skipped`,
   errors: {
     notVideo: 'That file is not a video.',
@@ -22,7 +25,7 @@ export const strings = {
     unreachable: (base: string) => `Backend not reachable at ${base}. Start it with python run.py.`,
     tripFailed: (detail: string) => `Couldn't start a trip: ${detail}`,
     lost: (seconds: number) => `Lost the connection to the backend after ${seconds.toFixed(1)} s.`,
-    cantConnect: "Couldn't connect to the backend camera socket.",
+    cantConnect: "Couldn't connect to the backend camera socket. Another camera may be streaming.",
     senderCrashed: 'The sender stopped unexpectedly.',
   },
 }
