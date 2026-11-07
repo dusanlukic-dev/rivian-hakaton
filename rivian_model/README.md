@@ -24,7 +24,7 @@ prikazuju „Driver not responding“.
 
 ```powershell
 cd rivian_model
-python setup_models.py                      # jednom: modeli (nisu u gitu)
+python setup_models.py --warmup-from "<dataset>\08_14_62_092916_video_inCabin.mp4"   # jednom: modeli + slika za zagrevanje (nisu u gitu)
 python rivian_detector.py --camera 08_14    # javlja se koordinatoru na ws://127.0.0.1:8000/api/v1/model/ws
 python test_rivian_detector.py 08_14_62_092916   # test bez backenda (lažni koordinator, isti protokol)
 docker build -t rivian-model .              # kontejner; podrazumevano pokreće rivian_detector.py
