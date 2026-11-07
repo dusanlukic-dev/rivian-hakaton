@@ -42,8 +42,8 @@ def make_bridge(handler=None) -> tuple[Bridge, FakePeripheral]:
 
 async def drain(bridge: Bridge) -> list[dict]:
     """Sends everything queued and returns the messages a phone would get."""
-    while not bridge.outbox.empty():
-        await bridge.send(bridge.outbox.get_nowait())
+    while bridge.outbox:
+        await bridge.send(bridge.outbox.popleft()[1])
     phone, out = Reassembler(), []
     for frame in bridge.peripheral.frames:  # type: ignore[union-attr]
         payload = phone.push(frame)
@@ -157,5 +157,15 @@ def test_nothing_is_queued_without_a_phone():
     bridge, peripheral = make_bridge()
     peripheral.subscribed = False
     bridge.on_live(json.dumps({"type": "state", "data": {"status": "active"}}).encode())
-    assert bridge.outbox.empty()
+    assert not bridge.outbox
     assert bridge.last_state is not None  # still remembered for the next phone
+
+
+def test_a_newer_state_replaces_a_queued_one_but_events_stay():
+    bridge, _ = make_bridge()
+    for score in (90, 80, 70):
+        bridge.on_live(json.dumps({"type": "state", "data": {"status": "active", "score": score}}).encode())
+    bridge.on_live(json.dumps({"type": "emergency", "data": {"status": "active", "score": 5}}).encode())
+    bridge.on_live(json.dumps({"type": "state", "data": {"status": "active", "score": 4}}).encode())
+    got = asyncio.run(drain(bridge))
+    assert [(m["type"], m["data"]["score"]) for m in got] == [("emergency", 5), ("state", 4)]

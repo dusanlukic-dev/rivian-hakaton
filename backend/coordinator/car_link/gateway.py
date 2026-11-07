@@ -24,6 +24,7 @@ import socket
 import sys
 import time
 import uuid
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -141,7 +142,9 @@ class Peripheral:
         self._provider = result.service_provider
 
         rx_params = GattLocalCharacteristicParameters()
-        rx_params.characteristic_properties = GattCharacteristicProperties.NOTIFY
+        # Indications, not notifications: the phone acknowledges every frame. Plain notifications got lost while the
+        # phone was writing a request (the reply to "end trip" never arrived), and one lost frame kills a message.
+        rx_params.characteristic_properties = GattCharacteristicProperties.INDICATE
         rx_params.read_protection_level = GattProtectionLevel.PLAIN
         rx_params.user_description = "car to phone"
         self._rx = (await self._provider.service.create_characteristic_async(RX, rx_params)).characteristic
@@ -267,7 +270,9 @@ class Bridge:
         self.verbose = verbose
         self.coordinator_up = False
         self.last_state: bytes | None = None  # last `state` of a running trip, replayed to a phone that says hello
-        self.outbox: asyncio.Queue[bytes] = asyncio.Queue()
+        # (kind, payload) waiting for Bluetooth. A newer `state` or `ping` replaces a queued one (see enqueue).
+        self.outbox: deque[tuple[str, bytes]] = deque()
+        self.wakeup = asyncio.Event()
         self.reassemblers: dict[str, Reassembler] = {}
         self.subscribers: dict[str, int] = {}
         self.msg_id = 0
@@ -331,22 +336,31 @@ class Bridge:
             self.last_state = json.dumps({"type": "state", "data": data}).encode() if active else None
         elif kind == "trip_ended":
             self.last_state = None
-        self.enqueue(raw)
+        self.enqueue(raw, kind if isinstance(kind, str) else "")
 
-    def enqueue(self, payload: bytes) -> None:
+    def enqueue(self, payload: bytes, kind: str = "") -> None:
         if self.peripheral is None or not self.peripheral.has_subscribers():
             return  # nobody listens: live data is only worth something now
-        if self.outbox.qsize() >= OUTBOX_LIMIT:
+        if kind in ("state", "ping"):
+            # Superseded: with indications (every frame acknowledged) Bluetooth can fall behind the coordinator's
+            # 2 states/s; only the newest state matters, so the queue never builds up and alerts stay current.
+            # Responses, sections and events (trip_started, emergency, trip_ended, hello) always go, in order.
+            self.outbox = deque(item for item in self.outbox if item[0] != kind)
+        if len(self.outbox) >= OUTBOX_LIMIT:
             self.dropped += 1
             if self.dropped % 50 == 1:
                 log.warning("phone too slow, dropped %d messages", self.dropped)
             return
-        self.outbox.put_nowait(payload)
+        self.outbox.append((kind, payload))
+        self.wakeup.set()
 
     async def send_loop(self) -> None:
         """One message at a time, so frames of two messages never interleave (the phone would drop both)."""
         while True:
-            await self.send(await self.outbox.get())
+            while not self.outbox:
+                self.wakeup.clear()
+                await self.wakeup.wait()
+            await self.send(self.outbox.popleft()[1])
 
     async def send(self, payload: bytes) -> None:
         """Frames one message and notifies it, frame by frame (each notify is awaited)."""
@@ -379,8 +393,8 @@ class Bridge:
         ping = json.dumps({"type": "ping"}).encode()
         while True:
             await asyncio.sleep(PING_S)
-            if self.outbox.empty():
-                self.enqueue(ping)
+            if not self.outbox:
+                self.enqueue(ping, "ping")
 
     async def report(self) -> None:
         """A line every 10 s while a phone listens: how the Bluetooth side keeps up."""
@@ -392,7 +406,7 @@ class Bridge:
             now = (self.sent, self.failed)
             if now != last:
                 log.info("to phones: %d sent, %d failed, %d dropped, %d waiting", self.sent, self.failed,
-                         self.dropped, self.outbox.qsize())
+                         self.dropped, len(self.outbox))
                 last = now
 
     def send_hello(self) -> None:
@@ -405,7 +419,7 @@ class Bridge:
                 "server_url": self.server_url,
             },
         }
-        self.enqueue(json.dumps(hello).encode())
+        self.enqueue(json.dumps(hello).encode(), "hello")
 
     # -- phones -> coordinator --
 
@@ -434,7 +448,7 @@ class Bridge:
             log.info("phone %s: hello from %s %s", short(device), message.get("app"), message.get("version"))
             self.send_hello()
             if self.last_state is not None:
-                self.enqueue(self.last_state)
+                self.enqueue(self.last_state, "state")
         elif kind == "request":
             task = asyncio.create_task(self.handle_request(message))
             self._tasks.add(task)
@@ -466,7 +480,7 @@ class Bridge:
             except httpx.HTTPError:
                 status, answer = 0, {"detail": "The car computer doesn't answer."}
         log.info("%s %s -> %s (%d ms)", method, path, status, (time.monotonic() - started) * 1000)
-        self.enqueue(json.dumps({"type": "response", "id": rid, "status": status, "body": answer}).encode())
+        self.enqueue(json.dumps({"type": "response", "id": rid, "status": status, "body": answer}).encode(), "response")
 
 
 def main() -> None:
