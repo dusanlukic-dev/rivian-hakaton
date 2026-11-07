@@ -56,7 +56,7 @@
     "android:release": "expo run:android --variant release",
     "prebuild": "expo prebuild --platform android",
     "prebuild:clean": "expo prebuild --platform android --clean",
-    "adb:reverse": "adb reverse tcp:8081 tcp:8081 && adb reverse tcp:8000 tcp:8000",
+    "adb:reverse": "adb reverse tcp:8081 tcp:8081 && adb reverse tcp:8000 tcp:8000 && adb reverse tcp:8001 tcp:8001",
     "lint": "expo lint",
     "typecheck": "tsc --noEmit",
     "doctor": "npx --yes expo-doctor@latest"
