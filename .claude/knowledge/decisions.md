@@ -242,3 +242,12 @@ writing a request were lost (the "end trip" reply and `trip_ended` never arrived
 They are slower (~30 ms connection interval), so the gateway **coalesces**: a newer `state`/`ping` replaces a queued
 one, responses/sections/events always go in order (measured: 180 messages, 0 lost, queue empty). The phone always scans
 first, because Windows advertises from rotating random addresses (connecting to the last one timed out twice). 2026-11-07.
+
+**D43: The driver picks the car; the phone reconnects only to that one (2026-11-07).** User: "it connects by itself and
+nothing shows up, I want to connect manually". The link no longer takes the first car it finds (D42): it lists the cars
+nearby (Car connection → Cars nearby) and connects when the driver taps one. That car is remembered (address, advertised
+name, hello name) and found again by itself, also after Windows changes the address, matched by the advertised name
+(the laptop's Bluetooth name, seen as `DESKTOP-5VRFVCB`). Disconnect turns reconnecting off until the next Connect.
+Rejected: fully manual every time (friction on every drive; real cars reconnect by themselves), and system pairing
+(the car would show in Android's Bluetooth settings and the link would be encrypted, but it needs Windows pairing prompts
+and native changes: later). JS only, no rebuild.

@@ -1,6 +1,6 @@
 import { AppState } from 'react-native';
 
-import { connectCarLink, type CarLinkInfo } from '@/api/carlink';
+import { connectCarLink, currentCarLink, type CarChoice, type CarLinkInfo, type NearbyCar } from '@/api/carlink';
 import { ApiError, api } from '@/api/client';
 import { connectLive, type LiveConnection, type LiveStatus } from '@/api/live';
 import type { LiveMessage, SafetyLevel, TripSection, TripState, TripSummary } from '@/api/types';
@@ -35,6 +35,8 @@ export interface LiveState {
   sections: TripSection[];
   /** The Bluetooth link's phase and the car's hello; null on the Wi-Fi link. */
   carLink: CarLinkInfo | null;
+  /** Cars the Bluetooth scans hear, strongest first (Car connection → Cars nearby). */
+  nearbyCars: NearbyCar[];
 }
 
 /** 30 sections × 2 s = the last minute on the Drive screen. */
@@ -51,6 +53,7 @@ export const liveStore = createStore<LiveState>({
   preview: null,
   sections: [],
   carLink: null,
+  nearbyCars: [],
 });
 
 export function useLive<S>(select: (state: LiveState) => S): S {
@@ -122,30 +125,54 @@ function onStatus(status: LiveStatus) {
 function connect() {
   connection?.stop();
   connectedTo = linkKey();
-  const { carLink, address, carDeviceId } = settingsStore.get();
-  liveStore.set({ link: 'checking', carLink: null });
+  const { carLink, address } = settingsStore.get();
+  liveStore.set({ link: 'checking', carLink: null, nearbyCars: [] });
   if (carLink === 'wifi') {
     connection = connectLive(address, { onMessage, onStatus });
     return;
   }
-  connection = connectCarLink(carDeviceId, {
+  connection = connectCarLink(carChoice, {
     onMessage,
     onStatus,
     onInfo: (carLink) => liveStore.set({ carLink }),
-    onCar: (carDeviceId, carName) => {
-      const saved = settingsStore.get();
-      if (saved.carDeviceId !== carDeviceId || saved.carName !== carName) settingsStore.set({ carDeviceId, carName });
+    onNearby: (nearbyCars) => liveStore.set({ nearbyCars }),
+    onCar: ({ id, scanName, name }) => {
+      const s = settingsStore.get();
+      if (s.carDeviceId !== id || s.carScanName !== scanName || s.carName !== name || !s.carAuto) {
+        settingsStore.set({ carDeviceId: id, carScanName: scanName, carName: name, carAuto: true });
+      }
     },
   });
+}
+
+/** The picked car, read fresh by the Bluetooth link on every decision. */
+function carChoice(): CarChoice {
+  const s = settingsStore.get();
+  return { id: s.carDeviceId, scanName: s.carScanName, name: s.carName, auto: s.carAuto };
 }
 
 /** Re-checks the car link right away (after granting Bluetooth, turning it on, or "Search again"). */
 export const retryCarLink = () => connection?.kick();
 
-/** Forgets the remembered car; the next search takes the first car it finds. */
+/** The driver tapped a car in Cars nearby: connect to it now. Once connected it's the remembered car. */
+export const connectToCar = (car: NearbyCar) => currentCarLink()?.choose(car);
+
+/** Connect to the remembered car again (after Disconnect); from then on it reconnects by itself. */
+export function reconnectCar() {
+  settingsStore.set({ carAuto: true });
+  retryCarLink();
+}
+
+/** Disconnects, and stays disconnected until the driver connects again. */
+export function disconnectCar() {
+  settingsStore.set({ carAuto: false });
+  currentCarLink()?.release();
+}
+
+/** Forgets the remembered car; the phone then only lists the cars nearby until the driver picks one. */
 export function forgetCar() {
-  settingsStore.set({ carDeviceId: null, carName: null });
-  if (started && settingsStore.get().carLink === 'bluetooth') connect();
+  settingsStore.set({ carDeviceId: null, carName: null, carScanName: null, carAuto: false });
+  currentCarLink()?.release();
 }
 
 /** Resolves once the first connection attempt on the current address has an answer, or after `timeoutMs`. */

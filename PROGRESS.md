@@ -233,3 +233,7 @@ the dashboard on 5173. **Metro:** the old window on 8081 stopped answering after
 - 2026-11-07, session 9b (Claude, for Matija): verified the fully split run (server :8001 alone, coordinator `--role coordinator`
   with `SERVER_URL` + mocks, gateway from `backend/.venv`): register 201, trip 201/200, the server's report has the sections.
   Run commands fixed in PROGRESS, docs/BLUETOOTH.md and skill `backend-local`.
+- 2026-11-07, session 9c (Claude, for Matija): **manual car pick** (D43): Car connection → Cars nearby lists what the scan
+  hears (the laptop shows as `DESKTOP-5VRFVCB`) with Connect; Disconnect / "Connect to <car>"; the phone reconnects by itself
+  only to the car the driver connected to. Verified on the A54: list, tap → connected in ~7 s, Disconnect stays off, Connect
+  to the remembered car in ~5 s (found by its advertised name after an address change). Typecheck + lint pass.

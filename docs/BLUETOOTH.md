@@ -89,6 +89,16 @@ Dozvoljene rute (samo [K] koje telefon koristi): `GET /health`, `POST /trips`, `
 - `server_url` je adresa servera kako je vidi telefon (gateway zamenjuje `127.0.0.1` IP adresom laptopa);
   aplikacija je nudi u ekranu Server kao predlog, nikad je ne menja sama.
 
+## Izbor kola (telefon)
+
+Telefon se ne povezuje sam na nepoznata kola. Car connection → **Cars nearby** prikazuje kola koja skeniranje čuje, sa
+imenom iz oglasa: na Windows-u je to Bluetooth ime laptopa (`DESKTOP-5VRFVCB`), jer Windows ne da programu da oglasi
+svoje ime. Vozač tapne **Connect**. Posle prve veze aplikacija pamti adresu, ime iz oglasa i ime iz `hello` (`--name`
+gateway-a) i sama se ponovo povezuje kad su kola u dometu, i posle promene adrese (prepozna ih po imenu iz oglasa).
+**Disconnect** prekida vezu i gasi automatsko povezivanje do sledećeg Connect, a **Forget this car** briše zapamćena kola.
+U Bluetooth podešavanjima telefona se ništa ne pojavljuje: nema uparivanja, veza je GATT iz same aplikacije (kao kod
+narukvica).
+
 ## Pokretanje
 
 ```powershell

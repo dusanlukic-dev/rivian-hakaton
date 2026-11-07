@@ -13,7 +13,7 @@ import { Banner, Button, Card, Screen, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { useNow } from '@/hooks/useNow';
 import { errorText, formatDuration } from '@/lib/format';
-import { dropTrip, retryCarLink, setActiveTrip, setEndedTrip, useLive } from '@/state/live';
+import { dropTrip, reconnectCar, retryCarLink, setActiveTrip, setEndedTrip, useLive } from '@/state/live';
 import { useAuth } from '@/state/auth';
 import { useSettings } from '@/state/settings';
 import { colors, lampColors, withAlpha } from '@/theme/colors';
@@ -219,7 +219,9 @@ function Connecting() {
 
 /** The Bluetooth link isn't up: say why, and offer the one action that fixes it. */
 function CarLinkCard() {
-  const phase = useLive((s) => s.carLink?.phase ?? 'searching');
+  const phase = useLive((s) => s.carLink?.phase ?? 'choose');
+  const carName = useSettings((s) => s.carName);
+  const paused = useSettings((s) => s.carDeviceId !== null && !s.carAuto);
   const [blocked, setBlocked] = useState(false);
   const copy = strings.carLink.card[phase];
 
@@ -246,6 +248,12 @@ function CarLinkCard() {
         )
       ) : phase === 'off' ? (
         <Button label={strings.carLink.openBluetooth} icon="bluetooth-settings" onPress={() => void openBluetoothSettings()} />
+      ) : phase === 'choose' ? (
+        paused ? (
+          <Button label={strings.carLink.connectTo(carName ?? strings.carLink.yourCar)} icon="bluetooth-connect" onPress={reconnectCar} />
+        ) : (
+          <Button label={strings.carLink.chooseCar} icon="bluetooth-connect" onPress={() => router.push('/connection')} />
+        )
       ) : (
         <View style={styles.buttons}>
           <Button label={strings.carLink.searchAgain} icon="bluetooth-connect" variant="secondary" style={styles.flex} onPress={retryCarLink} />

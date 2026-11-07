@@ -1,16 +1,16 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
 
 import { openAppSettings, openBluetoothSettings } from '@/alerts/notifications';
 import { normalizeAddress, normalizeServerAddress } from '@/api/address';
-import { requestCarLinkPermission } from '@/api/carlink';
+import { requestCarLinkPermission, type NearbyCar } from '@/api/carlink';
 import { api } from '@/api/client';
 import { StatusPill } from '@/components/dashboard';
 import { Button, Card, Chevron, Divider, Icon, ListRow, Screen, SectionLabel, STACK_EDGES, TextField, Txt } from '@/components/ui';
 import { strings } from '@/config/strings';
 import { errorText } from '@/lib/format';
-import { forgetCar, retryCarLink, useLive } from '@/state/live';
+import { connectToCar, disconnectCar, forgetCar, reconnectCar, retryCarLink, useLive } from '@/state/live';
 import { DEFAULT_ADDRESS, settingsStore, useSettings, type CarLinkMode } from '@/state/settings';
 import { colors } from '@/theme/colors';
 
@@ -59,18 +59,25 @@ export default function ConnectionScreen() {
   );
 }
 
-/** The car found over Bluetooth, what the link is doing, and the one action that helps. */
+/** The remembered car, what the link is doing, the one action that helps, and the cars nearby to pick from. */
 function BluetoothCar() {
   const info = useLive((s) => s.carLink);
+  const nearby = useLive((s) => s.nearbyCars);
   const carName = useSettings((s) => s.carName);
   const carDeviceId = useSettings((s) => s.carDeviceId);
+  const carScanName = useSettings((s) => s.carScanName);
+  const auto = useSettings((s) => s.carAuto);
   const serverAddress = useSettings((s) => s.serverAddress);
   const [blocked, setBlocked] = useState(false);
 
-  const phase = info?.phase ?? 'searching';
+  const phase = info?.phase ?? 'choose';
+  const linked = phase === 'connected' || phase === 'car-offline';
+  const remembered = carDeviceId !== null;
   const name = info?.hello?.car ?? carName ?? strings.carLink.noCar;
   const offered = info?.hello?.server_url ? normalizeServerAddress(info.hello.server_url) : null;
-  const icon = phase === 'connected' ? 'bluetooth-connect' : phase === 'off' ? 'bluetooth-off' : 'bluetooth';
+  const icon = linked ? 'bluetooth-connect' : phase === 'off' ? 'bluetooth-off' : 'bluetooth';
+  const mine = (car: NearbyCar) =>
+    remembered && (car.id === carDeviceId || (carScanName !== null && car.name === carScanName));
 
   async function allow() {
     const result = await requestCarLinkPermission();
@@ -84,7 +91,7 @@ function BluetoothCar() {
       <Card flush>
         <ListRow
           icon={icon}
-          iconColor={phase === 'connected' ? colors.ok : colors.muted}
+          iconColor={linked ? colors.ok : colors.muted}
           title={name}
           subtitle={blocked ? strings.carLink.blocked : strings.carLink.phase[phase]}
           right={<StatusPill />}
@@ -117,8 +124,40 @@ function BluetoothCar() {
         )
       ) : phase === 'off' ? (
         <Button label={strings.carLink.openBluetooth} icon="bluetooth-settings" onPress={() => void openBluetoothSettings()} />
-      ) : phase !== 'connected' ? (
+      ) : linked ? (
+        <Button label={strings.carLink.disconnect} icon="bluetooth-off" variant="secondary" onPress={disconnectCar} />
+      ) : remembered && !auto ? (
+        <Button label={strings.carLink.connectTo(carName ?? strings.carLink.yourCar)} icon="bluetooth-connect" onPress={reconnectCar} />
+      ) : phase === 'searching' ? (
         <Button label={strings.carLink.searchAgain} icon="bluetooth-connect" variant="secondary" onPress={retryCarLink} />
+      ) : null}
+
+      {phase === 'choose' || phase === 'searching' ? (
+        <>
+          <SectionLabel>{strings.carLink.nearby}</SectionLabel>
+          <Card flush>
+            {nearby.length === 0 ? (
+              <ListRow
+                icon="radar"
+                title={strings.carLink.nearbyEmpty}
+                subtitle={strings.carLink.nearbyEmptyHint}
+                right={<ActivityIndicator color={colors.muted} />}
+              />
+            ) : (
+              nearby.map((car, i) => (
+                <View key={car.id}>
+                  {i > 0 ? <Divider /> : null}
+                  <ListRow
+                    icon="car"
+                    title={(mine(car) ? carName : null) ?? car.name ?? strings.carLink.unnamed}
+                    subtitle={strings.carLink.signal(car.rssi, mine(car))}
+                    right={<Button size="sm" label={strings.carLink.connect} onPress={() => connectToCar(car)} />}
+                  />
+                </View>
+              ))
+            )}
+          </Card>
+        </>
       ) : null}
     </>
   );

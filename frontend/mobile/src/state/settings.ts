@@ -6,10 +6,14 @@ export type CarLinkMode = 'bluetooth' | 'wifi';
 
 export interface Settings {
   carLink: CarLinkMode;
-  /** The car this phone connected to over Bluetooth last (its Bluetooth address), tried first on the next start. */
+  /** The car the driver picked: its Bluetooth address at the last connection (Windows changes it now and then). */
   carDeviceId: string | null;
   /** That car's name from its hello, for the Settings row. */
   carName: string | null;
+  /** The name that car advertises (Windows: the laptop's Bluetooth name). Finds it again after an address change. */
+  carScanName: string | null;
+  /** Reconnect to that car by itself when it's in range: on once the driver connects, off after Disconnect. */
+  carAuto: boolean;
   /** "host:port" of the car computer for the Wi-Fi link (and USB with adb reverse). */
   address: string;
   /**
@@ -39,6 +43,8 @@ export const settingsStore = createStore<SettingsState>({
   carLink: 'bluetooth',
   carDeviceId: null,
   carName: null,
+  carScanName: null,
+  carAuto: false,
   address: DEFAULT_ADDRESS,
   serverAddress: DEFAULT_SERVER_ADDRESS,
   sound: true,
@@ -54,6 +60,8 @@ export async function loadSettings() {
     'carLink',
     'carDeviceId',
     'carName',
+    'carScanName',
+    'carAuto',
     'address',
     'serverAddress',
     'sound',

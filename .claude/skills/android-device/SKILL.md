@@ -89,7 +89,7 @@ adb logcat -v time -s BluetoothGatt                               # connect, MTU
 ```
 - The gateway's log is the other half (`backend/coordinator/car_link/gateway.py -v`): "phone … connected (frames up to N B)",
   "hello from mobile", every request with its status, and a delivery line every 10 s.
-- The app's own view: Settings → Car connection (phase, car name, "Search again", "Forget this car").
+- The app's own view: Settings → Car connection (phase, car name, Cars nearby with Connect, Disconnect, "Forget this car"; D43).
 - Test reconnects like this: kill and restart the gateway (the phone reconnects within ~10 s: 7 s watchdog + reconnect), and
   `cmd bluetooth_manager disable`, then `enable` (the module sees the adapter broadcast and retries at once).
 - Tapping a system dialog: `uiautomator dump /sdcard/ui.xml`, `cat` it and tap the center of the button's `bounds`
