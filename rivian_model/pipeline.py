@@ -36,7 +36,6 @@ from scoring import DriverScorer
 from features import Pose, phone_ok, DriverLogic
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = r"C:\Users\PC\Downloads\Hackathon dataset 2026\Hackathon dataset 2026"
 ROI_FILE = os.path.join(HERE, "rois.json")
 FACE_MODEL = os.path.join(HERE, "face_landmarker.task")
 TEST_CLIPS = ["08_14_62_092916", "08_14_62_084339", "08_14_62_085956", "05_23_62_031246"]
@@ -46,6 +45,16 @@ PHONE_CLS = 67           # COCO "cell phone"
 SKELETON = [(5, 6), (5, 7), (7, 9), (6, 8), (8, 10), (5, 11), (6, 12), (11, 12), (0, 1), (0, 2), (1, 3), (2, 4)]
 ORT_THREADS = int(os.environ.get("ORT_THREADS", "4"))
 RULES_VERSION = "v1"     # verzija pravila (features.py + scoring.py), ide u trip_start poruku
+def dataset_dir():
+    """Klipovi dataseta (*_video_inCabin.mp4): $DATASET_DIR, inace folder `dataset` pored repoa, inace Dusanov put."""
+    for d in (os.environ.get("DATASET_DIR"), os.path.join(os.path.dirname(os.path.dirname(HERE)), "dataset"),
+              r"C:\Users\PC\Downloads\Hackathon dataset 2026\Hackathon dataset 2026"):
+        if d and os.path.isdir(d):
+            return d
+    return os.environ.get("DATASET_DIR") or os.path.join(os.path.dirname(os.path.dirname(HERE)), "dataset")
+
+
+DATA = dataset_dir()
 _HW = None        # opis hardvera za izveštaj; čita se tek kad zatreba (PowerShell upit traje ~1-2 s)
 
 

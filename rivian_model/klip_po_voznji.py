@@ -21,8 +21,16 @@ import urllib.request
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PY = os.path.join(REPO, "backend", ".venv", "Scripts", "python.exe")
 CAMERA = os.path.join(REPO, "tools", "camera_stream.py")
-DATASET = r"C:\Users\PC\Downloads\Hackathon dataset 2026\Hackathon dataset 2026"
-KLIPOVI = ["05_23_62_022338", "05_23_62_032409", "05_23_62_032617", "05_23_62_005853"]
+KLIPOVI = ["05_23_62_031246", "05_23_62_021254", "05_23_62_005853"]   # kolaps, telefon, telefon u krilu
+
+
+def dataset_dir():
+    """Klipovi dataseta (*_video_inCabin.mp4): $DATASET_DIR, inace folder `dataset` pored repoa, inace Dusanov put."""
+    for d in (os.environ.get("DATASET_DIR"), os.path.join(os.path.dirname(REPO), "dataset"),
+              r"C:\Users\PC\Downloads\Hackathon dataset 2026\Hackathon dataset 2026"):
+        if d and os.path.isdir(d):
+            return d
+    return os.environ.get("DATASET_DIR") or os.path.join(os.path.dirname(REPO), "dataset")
 
 
 def status(port):
@@ -48,7 +56,7 @@ def main():
     ap = argparse.ArgumentParser(description="Svaka nova voznja dobija sledeci klip.")
     ap.add_argument("--klipovi", nargs="+", default=KLIPOVI)
     ap.add_argument("--port", type=int, default=8000)
-    ap.add_argument("--dataset", default=DATASET)
+    ap.add_argument("--dataset", default=dataset_dir())
     a = ap.parse_args()
 
     serije = {k[:5] for k in a.klipovi}

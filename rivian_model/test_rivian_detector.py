@@ -26,11 +26,11 @@ import time
 import cv2
 from websockets.asyncio.server import serve
 
+from pipeline import DATA  # $DATASET_DIR, inace ../../dataset, inace Dusanov put
 from rivian_detector import CATEGORY_MAP
 from scoring import DriverScorer
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-DATA = r"C:\Users\PC\Downloads\Hackathon dataset 2026\Hackathon dataset 2026"
 EXPECTED = {    # pipeline.py na punoj rezoluciji (ATRIBUTI.md)
     "08_14_62_092916": "39 red, phone 12.5-24.2",
     "08_14_62_084339": "29 red, phone + look_away od ~10 s",
