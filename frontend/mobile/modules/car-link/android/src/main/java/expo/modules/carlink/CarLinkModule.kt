@@ -341,7 +341,9 @@ class CarLinkModule : Module() {
       becomeReady() // no CCCD: the stack delivers notifications without one
       return
     }
-    val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+    // The car's rx uses indications (every frame acknowledged, docs/BLUETOOTH.md); notifications if it only offers those.
+    val indicate = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_INDICATE != 0
+    val value = if (indicate) BluetoothGattDescriptor.ENABLE_INDICATION_VALUE else BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
     val started =
       if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         g.writeDescriptor(cccd, value) == BluetoothStatusCodes.SUCCESS

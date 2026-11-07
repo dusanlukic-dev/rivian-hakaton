@@ -14,8 +14,8 @@ const APP_VERSION = Constants.expoConfig?.version ?? '0';
 const SCAN_MS = 10_000;
 /** Android allows 5 scan starts per 30 s per app; one every 7 s stays clear of it. */
 const SCAN_SPACING_MS = 7_000;
-/** The remembered car didn't show up this long after another car did: Windows may have changed its address. */
-const PREFERRED_GRACE_MS = 3_000;
+/** The remembered car didn't show up this long after another car did: Windows has likely changed its address. */
+const PREFERRED_GRACE_MS = 1_500;
 const CONNECT_MS = 15_000;
 const HELLO_MS = 4_000;
 const RECHECK_MS = 3_000;
@@ -269,24 +269,21 @@ export function connectCarLink(preferredId: string | null, handlers: CarLinkHand
         continue;
       }
 
-      // Straight to the remembered car first; scan when there is none or it failed twice in a row.
-      let car: { id: string; name: string | null } | null =
-        knownId && failures < 2 ? { id: knownId, name: info.deviceName } : null;
+      // Always scan first. Windows advertises from a new random address now and then (A3:5D, EB:7A, 6E:9E within
+      // minutes on the demo laptop), so connecting straight to the last address mostly ends in a 10 s timeout
+      // (status 147). The last address is only preferred among what the scan finds.
+      setInfo({ phase: 'searching', hello: null });
+      handlers.onStatus('connecting');
+      const wait = lastScanAt + SCAN_SPACING_MS - Date.now();
+      if (wait > 0) await hold(wait);
+      if (stopped) break;
+      const car = await scan(knownId);
+      if (stopped) break;
       if (!car) {
-        setInfo({ phase: 'searching', hello: null });
-        handlers.onStatus('connecting');
-        const wait = lastScanAt + SCAN_SPACING_MS - Date.now();
-        if (wait > 0) await hold(wait);
-        if (stopped) break;
-        car = await scan(knownId);
-        if (stopped) break;
-        if (!car) {
-          failures += 1;
-          handlers.onStatus('closed');
-          await pause(Math.min(1000 * failures, 5000));
-          continue;
-        }
-        if (car.id !== knownId) failures = 0;
+        failures += 1;
+        handlers.onStatus('closed');
+        await pause(Math.min(1000 * failures, 5000));
+        continue;
       }
 
       setInfo({ phase: 'connecting', deviceId: car.id, deviceName: car.name ?? info.deviceName });
